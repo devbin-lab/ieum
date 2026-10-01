@@ -16,8 +16,12 @@ class MergeResult {
 class TaskStore extends ChangeNotifier {
   final Database db;
   final String filename;
-  TaskStore(this.filename, {List<dynamic> seed = const []})
-    : db = sqlite3.open(filename) {
+  TaskStore(
+    this.filename, {
+    List<dynamic> seed = const [],
+    ProjectManifest? project,
+    Person? identity,
+  }) : db = sqlite3.open(filename) {
     db.execute('PRAGMA journal_mode=WAL');
     db.execute('PRAGMA busy_timeout=3000');
     for (final name in ['tasks', 'baseline_tasks']) {
@@ -28,7 +32,12 @@ class TaskStore extends ChangeNotifier {
     db.execute(
       'CREATE TABLE IF NOT EXISTS metadata(key TEXT PRIMARY KEY,value TEXT NOT NULL)',
     );
-    for (final name in ['activity', 'notification_outbox']) {
+    for (final name in [
+      'activity',
+      'notification_outbox',
+      'github_queue',
+      'github_sent',
+    ]) {
       db.execute(
         'CREATE TABLE IF NOT EXISTS $name(id TEXT PRIMARY KEY,body TEXT NOT NULL)',
       );
@@ -46,7 +55,92 @@ class TaskStore extends ChangeNotifier {
         }
       });
     }
+    if (project != null) {
+      if (meta('project').isNotEmpty && meta('projectId') != project.id) {
+        db.close();
+        throw StateError('다른 프로젝트의 DB입니다. 새 폴더를 선택하세요.');
+      }
+      transaction(() {
+        setMeta('project', jsonEncode(project.json));
+        setMeta('projectId', project.id);
+        if (identity != null) {
+          setMeta('identity', jsonEncode(identity.json));
+          setMeta('profile', identity.id);
+        }
+      });
+    }
   }
+  bool get isProject => meta('project').isNotEmpty;
+  ProjectManifest? get project => isProject
+      ? ProjectManifest.fromJson(
+          Map<String, dynamic>.from(jsonDecode(meta('project'))),
+        )
+      : null;
+  List<Person> get people {
+    if (!isProject) return members;
+    final list = [...project!.people];
+    if (!list.any((p) => p.id == profileId) && meta('identity').isNotEmpty) {
+      final self = Person.fromJson(
+        Map<String, dynamic>.from(jsonDecode(meta('identity'))),
+      );
+      list.add(
+        Person(
+          self.id,
+          self.name,
+          self.initials,
+          'pending',
+          self.color,
+          login: self.login,
+        ),
+      );
+    }
+    return list;
+  }
+
+  Person member(String id) => people.firstWhere(
+    (p) => p.id == id,
+    orElse: () => Person(id, '미등록 참여자', '?', 'disabled', 0xff9990a5),
+  );
+  Person get actor => member(profileId);
+  bool get manages => actor.manages;
+  bool get owns => actor.role == 'owner';
+  bool get canCreate => !isProject || manages;
+  bool canEdit(WorkTask task) =>
+      manages || actor.role == 'worker' && actor.id == task.assigneeId;
+  List<PartRule> get partRules => !isProject
+      ? rules
+      : rules.map((r) {
+          final candidates =
+              people
+                  .where(
+                    (p) =>
+                        p.active &&
+                        p.role != 'viewer' &&
+                        p.parts.contains(r.part),
+                  )
+                  .toList()
+                ..sort(
+                  (a, b) => (a.role == 'worker' ? 0 : 1).compareTo(
+                    b.role == 'worker' ? 0 : 1,
+                  ),
+                );
+          return PartRule(
+            r.part,
+            candidates.isEmpty ? project!.ownerId : candidates.first.id,
+            project!.ownerId,
+            r.nextPart,
+          );
+        }).toList();
+  void updateProject(ProjectManifest value) {
+    if (!isProject ||
+        value.id != project!.id ||
+        value.ownerId != project!.ownerId) {
+      throw StateError('연결된 프로젝트 정보가 다릅니다.');
+    }
+    setMeta('project', jsonEncode(value.json));
+    notifyListeners();
+  }
+
   String meta(String key) {
     final rows = db.select('SELECT value FROM metadata WHERE key=?', [key]);
     return rows.isEmpty ? '' : rows.first['value'] as String;
@@ -100,6 +194,7 @@ class TaskStore extends ChangeNotifier {
   }
 
   void setProfile(String id) {
+    if (isProject) throw StateError('다른 사용자로 전환할 수 없습니다. 다시 로그인하세요.');
     person(id);
     setMeta('profile', id);
     notifyListeners();
@@ -140,11 +235,14 @@ class TaskStore extends ChangeNotifier {
 
   WorkTask save(Map<String, dynamic> input, {int? expectedVersion}) {
     final old = input['id'] == null ? null : find(input['id']);
-    final actor = person(profileId);
+    final actor = member(profileId);
+    if (isProject && !actor.active || old == null && !canCreate) {
+      throw StateError('작업 등록은 개설자 또는 PD / PM에게 허용됩니다.');
+    }
     if (old != null && old.version != expectedVersion) {
       throw StateError('작업이 변경되었습니다. 다시 열어 확인하세요.');
     }
-    if (old != null && actor.id != old.assigneeId && actor.role != 'manager') {
+    if (old != null && !canEdit(old)) {
       throw StateError('작업자 또는 PD / PM만 내용을 수정할 수 있습니다.');
     }
     final next = WorkTask.fromJson({
@@ -156,6 +254,26 @@ class TaskStore extends ChangeNotifier {
       'version': (old?.version ?? 0) + 1,
       'updatedAt': DateTime.now().toUtc().toIso8601String(),
     });
+    if (isProject) {
+      for (final id in [next.assigneeId, next.reviewerId]) {
+        final assigned = member(id);
+        if (!assigned.active || assigned.role == 'viewer') {
+          throw StateError('승인된 작업자 또는 관리자를 담당자로 지정하세요.');
+        }
+      }
+      if (old != null &&
+          !manages &&
+          [
+            'part',
+            'assigneeId',
+            'reviewerId',
+            'assignedDate',
+            'dueDate',
+            'priority',
+          ].any((key) => old.data[key] != next.data[key])) {
+        throw StateError('배정·일정·우선순위 변경은 PD / PM에게 허용됩니다.');
+      }
+    }
     if (old != null && old.same(next)) return old;
     transaction(() {
       put(next);
@@ -164,15 +282,17 @@ class TaskStore extends ChangeNotifier {
         old == null ? '새 작업을 등록했습니다.' : '작업내용을 수정했습니다.',
         eventType: old == null ? 'task.created' : null,
       );
+      queueGitHub(next);
     });
     notifyListeners();
     return next;
   }
 
   bool canMove(WorkTask task, String status) {
-    final p = person(profileId);
-    final worker = p.id == task.assigneeId || p.role == 'manager';
-    final reviewer = p.id == task.reviewerId || p.role == 'manager';
+    final p = member(profileId);
+    if (!p.active || p.role == 'viewer') return false;
+    final worker = p.id == task.assigneeId || p.manages;
+    final reviewer = p.id == task.reviewerId || p.manages;
     return status == 'doing' &&
             ['todo', 'rework'].contains(task.status) &&
             worker ||
@@ -217,8 +337,54 @@ class TaskStore extends ChangeNotifier {
         }[status]!,
         eventType: 'task.$status',
       );
+      queueGitHub(next);
     });
     notifyListeners();
+  }
+
+  void queueGitHub(WorkTask task) {
+    final rawConfig = meta('github.config');
+    if (rawConfig.isEmpty) return;
+    final config = jsonDecode(rawConfig) as Map;
+    if (config['enabled'] != true) return;
+    final proposal = exportChanges();
+    proposal['changes'] = (proposal['changes'] as List)
+        .where((change) => change['taskId'] == task.id)
+        .toList();
+    // A revert to the baseline still needs to replace an earlier submitted
+    // proposal. Otherwise the open PR would keep the discarded change.
+    if ((proposal['changes'] as List).isEmpty) {
+      final base = baseline[task.id];
+      proposal['changes'] = [
+        {
+          'taskId': task.id,
+          'kind': 'update',
+          'title': task.title,
+          'baseVersion': base?.version,
+          'fields': <dynamic>[],
+          'base': base?.data,
+          'task': task.data,
+        },
+      ];
+    }
+    db.execute(
+      'INSERT INTO github_queue VALUES (?,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body',
+      [
+        task.id,
+        jsonEncode({
+          'taskId': task.id,
+          'title': task.title,
+          'revision': const Uuid().v4(),
+          'repository': config['repository'],
+          'proposal': proposal,
+          'configuration': config,
+          'githubLogin': meta('github.login'),
+          'state': 'pending',
+          'error': '',
+          'createdAt': task.data['updatedAt'],
+        }),
+      ],
+    );
   }
 
   List<Map<String, dynamic>> get changes {
@@ -259,7 +425,10 @@ class TaskStore extends ChangeNotifier {
     'authorId': profileId,
     'changes': changes,
   };
-  MergeResult importSnapshot(dynamic snapshot) {
+  MergeResult importSnapshot(
+    dynamic snapshot, {
+    Map<String, WorkTask>? acknowledgedBases,
+  }) {
     if (snapshot is! Map ||
         snapshot['schemaVersion'] != 1 ||
         snapshot['projectId'] != meta('projectId') ||
@@ -277,7 +446,7 @@ class TaskStore extends ChangeNotifier {
       if (incoming.containsKey(t.id)) throw StateError('통합본에 중복 작업 ID가 있습니다.');
       incoming[t.id] = t;
     }
-    final bases = baseline;
+    final bases = acknowledgedBases ?? baseline;
     final locals = {for (final t in tasks) t.id: t};
     final merged = <WorkTask>[];
     final conflicts = <Map<String, dynamic>>[];

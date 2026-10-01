@@ -7,8 +7,14 @@ Push-Location -LiteralPath $taskProject
 try {
     & $taskFlutter pub get
     if ($LASTEXITCODE -ne 0) { throw 'Flutter 의존성 준비에 실패했습니다.' }
-    $taskOutput = & $taskFlutter build windows --release 2>&1
-    $taskCode = $LASTEXITCODE
+    # Windows PowerShell 5 treats redirected native stderr as an error record.
+    # Capture the exit code so the supported CMake fallback can still run.
+    $taskSavedErrorPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        $taskOutput = & $taskFlutter build windows --release 2>&1
+        $taskCode = $LASTEXITCODE
+    } finally { $ErrorActionPreference = $taskSavedErrorPreference }
     $taskOutput | ForEach-Object { Write-Host $_ }
     if ($taskCode -eq 0) { exit 0 }
     if (($taskOutput -join "`n") -notmatch 'Unable to find suitable Visual Studio toolchain') { throw 'Flutter 빌드에 실패했습니다.' }

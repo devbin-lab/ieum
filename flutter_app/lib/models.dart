@@ -36,7 +36,104 @@ const priorities = {'high': '높음', 'normal': '보통', 'low': '낮음'};
 class Person {
   final String id, name, initials, role;
   final int color;
-  const Person(this.id, this.name, this.initials, this.role, this.color);
+  final String login;
+  final List<String> parts;
+  const Person(
+    this.id,
+    this.name,
+    this.initials,
+    this.role,
+    this.color, {
+    this.login = '',
+    this.parts = const [],
+  });
+  bool get manages => role == 'owner' || role == 'manager';
+  bool get active => ['owner', 'manager', 'worker', 'viewer'].contains(role);
+  Map<String, dynamic> get json => {
+    'id': id,
+    'name': name,
+    'role': role,
+    'login': login,
+    'parts': parts,
+  };
+  factory Person.fromJson(Map<String, dynamic> data) {
+    final id = data['id'],
+        name = data['name'],
+        role = data['role'],
+        login = data['login'];
+    if (id is! String ||
+        !RegExp(r'^gh-[0-9]+$').hasMatch(id) ||
+        name is! String ||
+        name.trim().isEmpty ||
+        name.length > 40 ||
+        login is! String ||
+        !RegExp(r'^[A-Za-z0-9-]+$').hasMatch(login) ||
+        !roleLabels.containsKey(role) ||
+        data['parts'] is! List) {
+      throw StateError('참여자 정보가 올바르지 않습니다.');
+    }
+    final parts = List<String>.from(data['parts']);
+    if (parts.any((p) => !rules.any((r) => r.part == p))) {
+      throw StateError('담당 파트가 올바르지 않습니다.');
+    }
+    return Person(
+      id,
+      name.trim(),
+      name.trim().substring(0, 1),
+      role as String,
+      0xff7963d5,
+      login: login,
+      parts: List.unmodifiable(parts),
+    );
+  }
+}
+
+const roleLabels = {
+  'owner': '개설자',
+  'manager': 'PD / PM',
+  'worker': '작업자',
+  'viewer': '열람자',
+  'pending': '가입 승인 대기',
+  'disabled': '참여 중지',
+};
+
+class ProjectManifest {
+  final String id, name, ownerId;
+  final List<Person> people;
+  const ProjectManifest(this.id, this.name, this.ownerId, this.people);
+  Map<String, dynamic> get json => {
+    'schemaVersion': 1,
+    'projectId': id,
+    'name': name,
+    'ownerId': ownerId,
+    'members': people.map((p) => p.json).toList(),
+  };
+  factory ProjectManifest.fromJson(Map<String, dynamic> raw) {
+    if (raw['schemaVersion'] != 1 ||
+        raw['projectId'] is! String ||
+        !RegExp(r'^[a-zA-Z0-9_-]{1,80}$').hasMatch(raw['projectId']) ||
+        raw['name'] is! String ||
+        (raw['name'] as String).trim().isEmpty ||
+        (raw['name'] as String).length > 80 ||
+        raw['members'] is! List ||
+        (raw['members'] as List).length > 200) {
+      throw StateError('프로젝트 설정 형식이 올바르지 않습니다.');
+    }
+    final people = (raw['members'] as List)
+        .map((p) => Person.fromJson(Map<String, dynamic>.from(p)))
+        .toList();
+    if (people.map((p) => p.id).toSet().length != people.length ||
+        people.where((p) => p.role == 'owner').length != 1 ||
+        !people.any((p) => p.id == raw['ownerId'] && p.role == 'owner')) {
+      throw StateError('프로젝트 개설자와 참여자 정보를 확인하세요.');
+    }
+    return ProjectManifest(
+      raw['projectId'],
+      (raw['name'] as String).trim(),
+      raw['ownerId'],
+      List.unmodifiable(people),
+    );
+  }
 }
 
 const members = [
@@ -101,8 +198,11 @@ class WorkTask {
         !priorities.containsKey(t['priority'])) {
       throw StateError('담당 파트, 상태, 우선순위를 확인하세요.');
     }
-    person(t['assigneeId']);
-    person(t['reviewerId']);
+    for (final key in ['assigneeId', 'reviewerId']) {
+      if (!RegExp(r'^[A-Za-z0-9_-]{1,80}$').hasMatch(t[key])) {
+        throw StateError('담당자 ID가 올바르지 않습니다.');
+      }
+    }
     t['assignedDate'] = validDate(t['assignedDate'], '작업 지정일', required: true);
     t['dueDate'] = validDate(t['dueDate'], '마감일');
     t['completedDate'] = validDate(t['completedDate'], '완료일');

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'app.dart' show purple, muted, border;
 import 'models.dart';
 import 'store.dart';
+import 'popup_ui.dart';
 
 class ReworkDialog extends StatefulWidget {
   const ReworkDialog({super.key});
@@ -19,8 +20,9 @@ class _ReworkDialogState extends State<ReworkDialog> {
   }
 
   @override
-  Widget build(BuildContext context) => AlertDialog(
+  Widget build(BuildContext context) => IeumDialog(
     title: const Text('재작업 요청'),
+    icon: Icons.rate_review_outlined,
     content: SizedBox(
       width: 400,
       child: TextField(
@@ -69,10 +71,10 @@ class _TaskEditorState extends State<TaskEditor> {
     assigned = TextEditingController(text: t?.assignedDate ?? localDate());
     due = TextEditingController(text: t?.dueDate ?? '');
     description = TextEditingController(text: t?.description ?? '');
-    part = t?.part ?? rules.first.part;
+    part = t?.part ?? widget.store.partRules.first.part;
     priority = t?.priority ?? 'normal';
-    assigneeId = t?.assigneeId ?? rules.first.assigneeId;
-    reviewerId = t?.reviewerId ?? rules.first.reviewerId;
+    assigneeId = t?.assigneeId ?? widget.store.partRules.first.assigneeId;
+    reviewerId = t?.reviewerId ?? widget.store.partRules.first.reviewerId;
   }
 
   @override
@@ -85,13 +87,11 @@ class _TaskEditorState extends State<TaskEditor> {
 
   Future<void> date(TextEditingController c) async {
     final current = DateTime.tryParse(c.text) ?? DateTime.now();
-    final result = await showDatePicker(
+    final result = await showDialog<DateTime>(
       context: context,
-      initialDate: current,
-      firstDate: DateTime(2000),
-      lastDate: DateTime(2100),
+      builder: (_) => IeumDateDialog(initialDate: current),
     );
-    if (result != null) {
+    if (result != null && mounted) {
       c.text =
           '${result.year.toString().padLeft(4, '0')}-${result.month.toString().padLeft(2, '0')}-${result.day.toString().padLeft(2, '0')}';
     }
@@ -103,15 +103,24 @@ class _TaskEditorState extends State<TaskEditor> {
     String value,
     Map<String, String> values,
     ValueChanged<String> change,
-  ) => DropdownButtonFormField<String>(
-    key: ValueKey('$key-$value'),
-    initialValue: value,
-    decoration: InputDecoration(labelText: label),
-    style: const TextStyle(fontSize: 12, color: Color(0xff756183)),
-    items: values.entries
-        .map((e) => DropdownMenuItem(value: e.key, child: Text(e.value)))
-        .toList(),
-    onChanged: (v) => setState(() => change(v!)),
+  ) => IgnorePointer(
+    ignoring: widget.store.isProject && !widget.store.manages,
+    child: IeumSelect(
+      key: ValueKey('$key-$value'),
+      value: value,
+      label: label,
+      values: values,
+      colors: key == 'task-priority'
+          ? const {
+              'high': Color(0xffbe8951),
+              'normal': Color(0xff7963d5),
+              'low': Color(0xff7b9b84),
+            }
+          : key == 'task-assignee' || key == 'task-reviewer'
+          ? {for (final m in widget.store.people) m.id: Color(m.color)}
+          : const {},
+      onChanged: (v) => setState(() => change(v)),
+    ),
   );
   void save() {
     if (!formKey.currentState!.validate()) return;
@@ -201,10 +210,15 @@ class _TaskEditorState extends State<TaskEditor> {
                         'task-part',
                         '담당 파트',
                         part,
-                        {for (final r in rules) r.part: r.part},
+                        {
+                          for (final r in widget.store.partRules)
+                            r.part: r.part,
+                        },
                         (v) {
                           part = v;
-                          final rule = rules.firstWhere((r) => r.part == v);
+                          final rule = widget.store.partRules.firstWhere(
+                            (r) => r.part == v,
+                          );
                           assigneeId = rule.assigneeId;
                           reviewerId = rule.reviewerId;
                         },
@@ -227,13 +241,19 @@ class _TaskEditorState extends State<TaskEditor> {
                   children: [
                     Expanded(
                       child: select('task-assignee', '담당자', assigneeId, {
-                        for (final p in members) p.id: p.name,
+                        for (final p in widget.store.people.where(
+                          (p) => p.active && p.role != 'viewer',
+                        ))
+                          p.id: p.name,
                       }, (v) => assigneeId = v),
                     ),
                     const SizedBox(width: 15),
                     Expanded(
                       child: select('task-reviewer', '검토자', reviewerId, {
-                        for (final p in members) p.id: p.name,
+                        for (final p in widget.store.people.where(
+                          (p) => p.active && p.role != 'viewer',
+                        ))
+                          p.id: p.name,
                       }, (v) => reviewerId = v),
                     ),
                   ],
@@ -245,11 +265,16 @@ class _TaskEditorState extends State<TaskEditor> {
                       child: TextFormField(
                         key: const Key('task-assigned'),
                         controller: assigned,
+                        readOnly:
+                            widget.store.isProject && !widget.store.manages,
                         decoration: InputDecoration(
                           labelText: '작업 지정일',
                           hintText: 'YYYY-MM-DD',
                           suffixIcon: IconButton(
-                            onPressed: () => date(assigned),
+                            onPressed:
+                                widget.store.isProject && !widget.store.manages
+                                ? null
+                                : () => date(assigned),
                             icon: const Icon(
                               Icons.calendar_month_outlined,
                               size: 16,
@@ -271,11 +296,16 @@ class _TaskEditorState extends State<TaskEditor> {
                       child: TextFormField(
                         key: const Key('task-due'),
                         controller: due,
+                        readOnly:
+                            widget.store.isProject && !widget.store.manages,
                         decoration: InputDecoration(
                           labelText: '마감일',
                           hintText: 'YYYY-MM-DD',
                           suffixIcon: IconButton(
-                            onPressed: () => date(due),
+                            onPressed:
+                                widget.store.isProject && !widget.store.manages
+                                ? null
+                                : () => date(due),
                             icon: const Icon(
                               Icons.calendar_month_outlined,
                               size: 16,

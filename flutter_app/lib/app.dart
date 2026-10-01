@@ -8,6 +8,12 @@ import 'package:file_selector/file_selector.dart';
 import 'models.dart';
 import 'store.dart';
 import 'task_editor.dart';
+import 'window_frame.dart';
+import 'popup_ui.dart';
+import 'github_sync.dart';
+import 'github_panel.dart';
+import 'project_service.dart';
+import 'team_panel.dart';
 
 const purple = Color(0xff7963d5),
     ink = Color(0xff302b3c),
@@ -34,8 +40,7 @@ Widget badge(String text, {Color color = muted}) => Container(
   ),
   child: Text(text, style: TextStyle(color: color, fontSize: 10)),
 );
-Widget avatar(String id, {double size = 28}) {
-  final p = person(id);
+Widget avatar(Person p, {double size = 28}) {
   return CircleAvatar(
     radius: size / 2,
     backgroundColor: Color(p.color).withValues(alpha: .10),
@@ -70,11 +75,23 @@ String shortDate(String date) => date.isEmpty
 
 class IeumApp extends StatelessWidget {
   final TaskStore store;
-  const IeumApp({super.key, required this.store});
+  final GitHubSync? sync;
+  final Widget? home;
+  final VoidCallback? onSignOut;
+  final GitHubSession? session;
+  const IeumApp({
+    super.key,
+    required this.store,
+    this.sync,
+    this.home,
+    this.onSignOut,
+    this.session,
+  });
   @override
   Widget build(BuildContext context) => MaterialApp(
     title: '이음 · Flutter',
     debugShowCheckedModeBanner: false,
+    builder: (context, child) => DesktopFrame(child: child!),
     theme: ThemeData(
       useMaterial3: true,
       fontFamily: 'Malgun Gothic',
@@ -83,6 +100,32 @@ class IeumApp extends StatelessWidget {
         surface: Colors.white,
       ),
       scaffoldBackgroundColor: canvas,
+      dialogTheme: DialogThemeData(
+        backgroundColor: Colors.white,
+        surfaceTintColor: Colors.transparent,
+        elevation: 24,
+        shadowColor: ink.withValues(alpha: .20),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: const BorderSide(color: border),
+        ),
+      ),
+      tooltipTheme: TooltipThemeData(
+        decoration: BoxDecoration(
+          color: ink,
+          borderRadius: BorderRadius.circular(6),
+        ),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+        textStyle: const TextStyle(fontSize: 11, color: Colors.white),
+        waitDuration: const Duration(milliseconds: 450),
+      ),
+      textButtonTheme: TextButtonThemeData(
+        style: TextButton.styleFrom(
+          foregroundColor: purple,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+        ),
+      ),
       textTheme: const TextTheme(
         bodyMedium: TextStyle(fontSize: 13, color: ink),
       ),
@@ -117,26 +160,44 @@ class IeumApp extends StatelessWidget {
         ),
       ),
     ),
-    home: Workspace(store: store),
+    home:
+        home ??
+        Workspace(
+          store: store,
+          sync: sync,
+          onSignOut: onSignOut,
+          session: session,
+        ),
   );
 }
 
 class Workspace extends StatefulWidget {
   final TaskStore store;
-  const Workspace({super.key, required this.store});
+  final GitHubSync? sync;
+  final VoidCallback? onSignOut;
+  final GitHubSession? session;
+  const Workspace({
+    super.key,
+    required this.store,
+    this.sync,
+    this.onSignOut,
+    this.session,
+  });
   @override
   State<Workspace> createState() => _WorkspaceState();
 }
 
+enum TaskView { list, kanban }
+
 class _WorkspaceState extends State<Workspace> {
   int page = 0;
+  TaskView taskView = TaskView.list;
   String search = '', part = '', scope = 'all';
   bool fileBusy = false;
   TaskStore get s => widget.store;
-  static const titles = ['칸반보드', '일정 · 작업', '내 변경내역', '연결 설정'];
+  static const titles = ['일정 · 작업', '내 변경내역', '연결 설정'];
   static const subtitles = [
-    '작업의 흐름을 한눈에.',
-    '담당자와 날짜를 함께 확인하세요.',
+    '작업과 일정을 목록 또는 칸반으로 확인하세요.',
     '개인 작업을 팀의 통합본으로 연결하세요.',
     '팀의 다음 단계를 준비하세요.',
   ];
@@ -149,6 +210,10 @@ class _WorkspaceState extends State<Workspace> {
           content: Text(text),
           behavior: SnackBarBehavior.floating,
           width: 520,
+          backgroundColor: ink,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(10),
+          ),
         ),
       );
   }
@@ -254,8 +319,10 @@ class _WorkspaceState extends State<Workspace> {
       } else if (mounted) {
         await showDialog<void>(
           context: context,
-          builder: (ctx) => AlertDialog(
+          builder: (ctx) => IeumDialog(
             title: const Text('통합 전 확인이 필요해요'),
+            width: 580,
+            icon: Icons.merge_outlined,
             content: SizedBox(
               width: 530,
               child: SingleChildScrollView(
@@ -314,8 +381,9 @@ class _WorkspaceState extends State<Workspace> {
   void notifications() {
     showDialog<void>(
       context: context,
-      builder: (ctx) => AlertDialog(
+      builder: (ctx) => IeumDialog(
         title: const Text('알림 미리보기'),
+        icon: Icons.notifications_none_rounded,
         content: SizedBox(
           width: 470,
           height: 440,
@@ -353,7 +421,7 @@ class _WorkspaceState extends State<Workspace> {
                         ),
                         const SizedBox(height: 8),
                         Text(
-                          '${n['eventType'] == 'task.created' ? '새 작업 등록' : statuses[n['status']]!} → ${person(n['recipientId']).name}',
+                          '${n['eventType'] == 'task.created' ? '새 작업 등록' : statuses[n['status']]!} → ${s.member(n['recipientId']).name}',
                           style: const TextStyle(fontSize: 11, color: muted),
                         ),
                       ],
@@ -449,7 +517,9 @@ class _WorkspaceState extends State<Workspace> {
                                   ),
                                   FilledButton.icon(
                                     key: const Key('new-task'),
-                                    onPressed: () => edit(),
+                                    onPressed: s.canCreate
+                                        ? () => edit()
+                                        : null,
                                     icon: const Icon(Icons.add, size: 18),
                                     label: const Text(
                                       '작업 등록',
@@ -459,7 +529,11 @@ class _WorkspaceState extends State<Workspace> {
                                 ],
                               ),
                               const SizedBox(height: 30),
-                              if (page < 2) ...[
+                              if (s.isProject && s.actor.role == 'pending')
+                                info(
+                                  '가입 승인 대기 중입니다. 개설자가 역할을 부여하면 자동 동기화 후 작업을 진행할 수 있습니다.',
+                                ),
+                              if (page == 0) ...[
                                 stats(all),
                                 const SizedBox(height: 27),
                                 toolbar(),
@@ -490,13 +564,13 @@ class _WorkspaceState extends State<Workspace> {
                                   ],
                                 ),
                                 const SizedBox(height: 15),
-                                if (page == 0)
+                                if (taskView == TaskView.kanban)
                                   board(filtered, constraints.maxWidth - 68)
                                 else
                                   schedule(filtered),
                               ],
-                              if (page == 2) changesPanel(),
-                              if (page == 3) settingsPanel(),
+                              if (page == 1) changesPanel(),
+                              if (page == 2) settingsPanel(),
                             ],
                           ),
                         ),
@@ -539,7 +613,7 @@ class _WorkspaceState extends State<Workspace> {
       color: Colors.white,
       border: Border(right: BorderSide(color: border)),
     ),
-    padding: const EdgeInsets.fromLTRB(18, 30, 18, 20),
+    padding: const EdgeInsets.fromLTRB(18, 20, 18, 20),
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -583,7 +657,7 @@ class _WorkspaceState extends State<Workspace> {
             ],
           ),
         ),
-        const SizedBox(height: 35),
+        const SizedBox(height: 25),
         Container(
           padding: const EdgeInsets.all(13),
           decoration: BoxDecoration(
@@ -605,16 +679,25 @@ class _WorkspaceState extends State<Workspace> {
                 ),
               ),
               const SizedBox(width: 9),
-              const Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    '졸업작품 팀',
-                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
-                  ),
-                  SizedBox(height: 4),
-                  Text('예시 프로젝트', style: TextStyle(fontSize: 10, color: muted)),
-                ],
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      s.project?.name ?? '졸업작품 팀',
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      s.isProject ? 'GitHub 연결 프로젝트' : '예시 프로젝트',
+                      style: const TextStyle(fontSize: 10, color: muted),
+                    ),
+                  ],
+                ),
               ),
             ],
           ),
@@ -626,7 +709,7 @@ class _WorkspaceState extends State<Workspace> {
         ),
         const SizedBox(height: 10),
         ...List.generate(
-          4,
+          titles.length,
           (i) => Padding(
             padding: const EdgeInsets.only(bottom: 5),
             child: Material(
@@ -645,7 +728,6 @@ class _WorkspaceState extends State<Workspace> {
                     children: [
                       Icon(
                         [
-                          Icons.dashboard_outlined,
                           Icons.calendar_month_outlined,
                           Icons.merge_outlined,
                           Icons.link,
@@ -664,7 +746,7 @@ class _WorkspaceState extends State<Workspace> {
                               : FontWeight.normal,
                         ),
                       ),
-                      if (i == 2 && s.changes.isNotEmpty) ...[
+                      if (i == 1 && s.changes.isNotEmpty) ...[
                         const Spacer(),
                         badge('${s.changes.length}', color: purple),
                       ],
@@ -700,42 +782,54 @@ class _WorkspaceState extends State<Workspace> {
           ),
         ),
         const Divider(color: border, height: 35),
-        const Row(
+        Row(
           children: [
-            Text('테스트 사용자', style: TextStyle(fontSize: 10, color: muted)),
-            Spacer(),
             Text(
-              'DEMO',
-              style: TextStyle(fontSize: 9, color: muted, letterSpacing: 1),
+              s.isProject ? '로그인한 사용자' : '테스트 사용자',
+              style: const TextStyle(fontSize: 10, color: muted),
+            ),
+            const Spacer(),
+            Text(
+              s.isProject ? roleLabels[s.actor.role]! : 'DEMO',
+              style: const TextStyle(
+                fontSize: 9,
+                color: muted,
+                letterSpacing: 1,
+              ),
             ),
           ],
         ),
         const SizedBox(height: 8),
         Row(
           children: [
-            avatar(s.profileId),
+            avatar(s.actor),
             const SizedBox(width: 9),
             Expanded(
-              child: DropdownButton<String>(
-                key: const Key('profile'),
-                value: s.profileId,
-                isExpanded: true,
-                underline: const SizedBox(),
-                style: const TextStyle(fontSize: 12, color: ink),
-                items: members
-                    .map(
-                      (m) => DropdownMenuItem(value: m.id, child: Text(m.name)),
+              child: s.isProject
+                  ? Text(
+                      s.actor.name,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 12),
                     )
-                    .toList(),
-                onChanged: (value) => s.setProfile(value!),
-              ),
+                  : IeumSelect(
+                      key: const Key('profile'),
+                      value: s.profileId,
+                      values: {for (final m in s.people) m.id: m.name},
+                      colors: {for (final m in s.people) m.id: Color(m.color)},
+                      onChanged: s.setProfile,
+                    ),
             ),
           ],
         ),
-        const Text(
-          '역할을 바꿔 검토 과정을 테스트하세요.',
-          style: TextStyle(fontSize: 9, color: muted),
+        Text(
+          s.isProject ? '@${s.actor.login}' : '역할을 바꿔 검토 과정을 테스트하세요.',
+          style: const TextStyle(fontSize: 9, color: muted),
         ),
+        if (widget.onSignOut != null)
+          TextButton(
+            onPressed: widget.onSignOut,
+            child: const Text('로그아웃 / 프로젝트 선택'),
+          ),
       ],
     ),
   );
@@ -748,7 +842,13 @@ class _WorkspaceState extends State<Workspace> {
     ),
     child: Row(
       children: [
-        const Text('졸업작품 팀', style: TextStyle(fontSize: 11, color: muted)),
+        Flexible(
+          child: Text(
+            s.project?.name ?? '졸업작품 팀',
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontSize: 11, color: muted),
+          ),
+        ),
         const Padding(
           padding: EdgeInsets.symmetric(horizontal: 13),
           child: Text('/', style: TextStyle(color: border)),
@@ -772,7 +872,7 @@ class _WorkspaceState extends State<Workspace> {
           ),
         ),
         const SizedBox(width: 10),
-        avatar(s.profileId),
+        avatar(s.actor),
       ],
     ),
   );
@@ -877,6 +977,37 @@ class _WorkspaceState extends State<Workspace> {
             ),
         ],
       ),
+      SegmentedButton<TaskView>(
+        key: const Key('task-view-selector'),
+        showSelectedIcon: false,
+        style: SegmentedButton.styleFrom(
+          foregroundColor: muted,
+          selectedForegroundColor: purple,
+          backgroundColor: Colors.white,
+          selectedBackgroundColor: const Color(0xffeee8fb),
+          side: const BorderSide(color: border),
+          textStyle: const TextStyle(fontSize: 11),
+          iconSize: 16,
+          padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 10),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(7)),
+        ),
+        segments: const [
+          ButtonSegment(
+            value: TaskView.list,
+            label: Text('목록', key: Key('view-list')),
+            icon: Icon(Icons.view_list_outlined),
+            tooltip: '담당자와 날짜를 목록으로 보기',
+          ),
+          ButtonSegment(
+            value: TaskView.kanban,
+            label: Text('칸반보드', key: Key('view-kanban')),
+            icon: Icon(Icons.view_kanban_outlined),
+            tooltip: '작업 상태를 칸반보드로 보기',
+          ),
+        ],
+        selected: {taskView},
+        onSelectionChanged: (value) => setState(() => taskView = value.single),
+      ),
       Row(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -896,17 +1027,14 @@ class _WorkspaceState extends State<Workspace> {
           const SizedBox(width: 9),
           SizedBox(
             width: 140,
-            child: DropdownButtonFormField<String>(
+            child: IeumSelect(
               key: ValueKey('filter-$part'),
-              initialValue: part,
-              style: const TextStyle(fontSize: 11, color: ink),
-              items: [
-                const DropdownMenuItem(value: '', child: Text('모든 파트')),
-                ...rules.map(
-                  (r) => DropdownMenuItem(value: r.part, child: Text(r.part)),
-                ),
-              ],
-              onChanged: (value) => setState(() => part = value!),
+              value: part,
+              values: {
+                '': '모든 파트',
+                for (final r in s.partRules) r.part: r.part,
+              },
+              onChanged: (value) => setState(() => part = value),
             ),
           ),
         ],
@@ -914,6 +1042,7 @@ class _WorkspaceState extends State<Workspace> {
     ],
   );
   Widget board(List<WorkTask> tasks, double available) => SingleChildScrollView(
+    key: const Key('task-kanban'),
     scrollDirection: Axis.horizontal,
     child: SizedBox(
       width: max(available, 980),
@@ -1084,8 +1213,8 @@ class _WorkspaceState extends State<Workspace> {
                 ),
                 const Spacer(),
                 Tooltip(
-                  message: person(t.currentId).name,
-                  child: avatar(t.currentId, size: 25),
+                  message: s.member(t.currentId).name,
+                  child: avatar(s.member(t.currentId), size: 25),
                 ),
               ],
             ),
@@ -1101,7 +1230,7 @@ class _WorkspaceState extends State<Workspace> {
                   const SizedBox(width: 4),
                   Expanded(
                     child: Text(
-                      '${person(t.reviewerId).name} 검토 대기',
+                      '${s.member(t.reviewerId).name} 검토 대기',
                       style: TextStyle(
                         fontSize: 9,
                         color: statusColor('review'),
@@ -1117,6 +1246,7 @@ class _WorkspaceState extends State<Workspace> {
     ),
   );
   Widget schedule(List<WorkTask> tasks) => Container(
+    key: const Key('task-list'),
     width: double.infinity,
     decoration: BoxDecoration(
       color: Colors.white,
@@ -1173,8 +1303,8 @@ class _WorkspaceState extends State<Workspace> {
                   DataCell(
                     badge(statuses[t.status]!, color: statusColor(t.status)),
                   ),
-                  DataCell(Text(person(t.assigneeId).name)),
-                  DataCell(Text(person(t.currentId).name)),
+                  DataCell(Text(s.member(t.assigneeId).name)),
+                  DataCell(Text(s.member(t.currentId).name)),
                   DataCell(
                     badge(
                       priorities[t.priority]!,
@@ -1371,17 +1501,27 @@ class _WorkspaceState extends State<Workspace> {
   Widget settingsPanel() => Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
+      if (s.isProject && widget.session != null && widget.sync != null) ...[
+        TeamPanel(store: s, sync: widget.sync!, session: widget.session!),
+        const SizedBox(height: 24),
+      ],
+      if (widget.sync != null) ...[
+        GitHubPanel(sync: widget.sync!),
+        const SizedBox(height: 24),
+      ],
       Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Expanded(
             child: integration(
               'GitHub',
-              '앱 연동 예정',
+              widget.sync?.config.enabled == true ? '자동 동기화 켜짐' : '연결 필요',
               Icons.merge_outlined,
               '개인 브랜치와 PR로 변경을 검토하고,\n승인된 통합본을 팀과 공유합니다.',
-              'devbin-lab / ieum',
-              '현재는 JSON 내보내기 / 가져오기를 지원합니다.',
+              widget.sync?.config.repository.isNotEmpty == true
+                  ? widget.sync!.config.slug
+                  : '팀 데이터 저장소를 지정하세요',
+              '작업별 자동 커밋·PR과 승인된 통합본 가져오기를 지원합니다.',
             ),
           ),
           const SizedBox(width: 22),
@@ -1424,13 +1564,13 @@ class _WorkspaceState extends State<Workspace> {
             '검토자',
             '후속 파트 (설계)',
           ].map((v) => DataColumn(label: Text(v))).toList(),
-          rows: rules
+          rows: s.partRules
               .map(
                 (r) => DataRow(
                   cells: [
                     DataCell(Text(r.part)),
-                    DataCell(Text(person(r.assigneeId).name)),
-                    DataCell(Text(person(r.reviewerId).name)),
+                    DataCell(Text(s.member(r.assigneeId).name)),
+                    DataCell(Text(s.member(r.reviewerId).name)),
                     DataCell(Text(r.nextPart.isEmpty ? '—' : r.nextPart)),
                   ],
                 ),
@@ -1439,7 +1579,7 @@ class _WorkspaceState extends State<Workspace> {
         ),
       ),
       info(
-        '공유 서버 없이 개인 SQLite를 사용합니다. GitHub 인증·자동 PR, Discord 전송, 후속 파트의 새 작업 생성은 다음 구현 단계입니다.',
+        '공유 서버 없이 개인 SQLite를 사용합니다. GitHub 연결 후 변경을 자동 제출합니다. Discord 전송과 후속 파트의 새 작업 생성은 다음 구현 단계입니다.',
       ),
     ],
   );
@@ -1498,8 +1638,7 @@ class _WorkspaceState extends State<Workspace> {
     ),
   );
   Widget detailBody(BuildContext ctx, WorkTask t) {
-    final actor = person(s.profileId);
-    final canEdit = actor.id == t.assigneeId || actor.role == 'manager';
+    final canEdit = s.canEdit(t);
     final history = s.activity.where((a) => a['taskId'] == t.id);
     return ListView(
       padding: const EdgeInsets.all(31),
@@ -1536,9 +1675,9 @@ class _WorkspaceState extends State<Workspace> {
         const SizedBox(height: 26),
         ...{
           '담당 파트': t.part,
-          '작업 담당자': person(t.assigneeId).name,
-          '검토 담당자': person(t.reviewerId).name,
-          '현재 처리자': person(t.currentId).name,
+          '작업 담당자': s.member(t.assigneeId).name,
+          '검토 담당자': s.member(t.reviewerId).name,
+          '현재 처리자': s.member(t.currentId).name,
           '우선순위': priorities[t.priority]!,
           '작업 지정일': t.assignedDate,
           '마감일': t.dueDate.isEmpty ? '미정' : t.dueDate,
@@ -1640,7 +1779,7 @@ class _WorkspaceState extends State<Workspace> {
           (a) => Padding(
             padding: const EdgeInsets.symmetric(vertical: 9),
             child: Text(
-              '${person(a['actorId']).name} · ${a['message']}',
+              '${s.member(a['actorId']).name} · ${a['message']}',
               style: const TextStyle(fontSize: 11, color: muted),
             ),
           ),
