@@ -16,7 +16,11 @@ import 'github_oauth_test.dart' show MemoryVault;
 
 import 'package:ieum_flutter/github_oauth.dart';
 
-const config = GitHubConfig(repository: 'team/data', enabled: true);
+const config = GitHubConfig(
+  repository: 'team/data',
+  enabled: true,
+  autoMerge: false,
+);
 Person member(int id, String role) => Person.fromJson({
   'id': 'gh-$id',
   'login': id == 1 ? 'tester' : 'guest',

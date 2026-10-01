@@ -222,6 +222,11 @@ class _ProjectGateState extends State<ProjectGate> {
       base: recent!['base'] ?? 'main',
       branch: recent!['branch'] ?? '',
       enabled: true,
+      autoMerge: next.meta('github.config').isEmpty
+          ? true
+          : GitHubConfig.fromJson(
+              jsonDecode(next.meta('github.config')) as Map<String, dynamic>,
+            ).autoMerge,
     );
     try {
       final project = await session.loadProject(config);

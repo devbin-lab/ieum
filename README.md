@@ -1,6 +1,6 @@
 # 이음 · IEUM
 
-현재 개발 대상은 Flutter Windows 앱입니다. GitHub 로그인, 빈 프로젝트 생성·참여, 개인 DB 폴더 선택, 가입 승인과 역할 지정, 작업별 자동 커밋·PR·통합본 가져오기를 제공합니다. 실행은 `Start-Ieum-Flutter.bat`, 사용 안내는 [flutter_app](flutter_app/README.md)을 참고하세요. 테스트 데이터 저장소는 [ieum-test-fresh](https://github.com/devbin-lab/ieum-test-fresh)입니다.
+현재 개발 대상은 Flutter Windows 앱입니다. GitHub 로그인, 빈 프로젝트 생성·참여, 개인 DB 폴더 선택, 가입 승인과 역할 지정, 작업별 자동 커밋·PR·검증 후 자동 통합·통합본 가져오기를 제공합니다. 실행은 `Start-Ieum-Flutter.bat`, 사용 안내는 [flutter_app](flutter_app/README.md)을 참고하세요. 테스트 데이터 저장소는 [ieum-test-fresh](https://github.com/devbin-lab/ieum-test-fresh)입니다.
 
 Electron 기준본은 `codex/electron-prototype`, Flutter 작업은 `codex/flutter-desktop`에 분리했습니다. 아래 내용은 기존 Electron 예시 버전에 대한 안내입니다.
 

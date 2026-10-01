@@ -3,9 +3,12 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:uuid/uuid.dart';
 
 import 'store.dart';
 import 'models.dart';
+
+part 'github_auto_merge.dart';
 
 class GitHubConfig {
   const GitHubConfig({
@@ -14,9 +17,10 @@ class GitHubConfig {
     this.branch = '',
     this.enabled = false,
     this.separatePr = true,
+    this.autoMerge = true,
   });
   final String repository, base, branch;
-  final bool enabled, separatePr;
+  final bool enabled, separatePr, autoMerge;
 
   String get slug => repository
       .trim()
@@ -49,6 +53,7 @@ class GitHubConfig {
     'branch': branch,
     'enabled': enabled,
     'separatePr': separatePr,
+    'autoMerge': autoMerge,
   };
   factory GitHubConfig.fromJson(Map<String, dynamic> json) => GitHubConfig(
     repository: json['repository'] as String? ?? '',
@@ -56,6 +61,7 @@ class GitHubConfig {
     branch: json['branch'] as String? ?? '',
     enabled: json['enabled'] == true,
     separatePr: json['separatePr'] != false,
+    autoMerge: json['autoMerge'] != false,
   );
 }
 
@@ -145,11 +151,11 @@ class GitHubPublisher {
   final GitHubApi api;
   final Map<String, Map<String, dynamic>> _blobCache = {};
 
-  Future<ProjectManifest> project(GitHubConfig config) async {
+  Future<ProjectManifest> project(GitHubConfig config, {String? ref}) async {
     final file = await api.call(
       'GET',
       '/repos/${config.slug}/contents/.ieum/project.json',
-      query: {'ref': config.base},
+      query: {'ref': ref ?? config.base},
     );
     if (file['encoding'] != 'base64') {
       throw const GitHubFailure('프로젝트 설정 인코딩이 올바르지 않습니다.');
@@ -343,7 +349,7 @@ class GitHubPublisher {
           'title': config.separatePr
               ? '이음 작업 등록 · ${job['title']}'
               : '이음 · $login 작업 등록',
-          'body': '등록한 작업의 JSON 변경안입니다. 승인 후 프로젝트 통합본에 반영해 주세요.\n\nSQLite DB와 인증 정보는 포함하지 않습니다.',
+          'body': '등록한 작업의 JSON 변경안입니다. 이음 앱에서 작성자·역할·최신 작업 기준을 확인한 뒤 자동 통합합니다. 수동 통합 모드에서는 변경을 확인하고 승인해 주세요.\n\nSQLite DB와 인증 정보는 포함하지 않습니다.',
         },
       );
       return SyncReceipt(pr['html_url'] as String, commitSha, branch);
@@ -472,6 +478,7 @@ class GitHubPublisher {
       'title': pr['title'],
       'sha': pr['head']['sha'],
       'files': files,
+      'request': pr,
     };
   }
 
@@ -497,6 +504,9 @@ class GitHubSync extends ChangeNotifier {
   bool busy = false, pulling = false, _disposed = false;
   Timer? _timer;
   String pullMessage = '';
+  String autoMergeMessage = '';
+  final Map<String, String> autoMergeErrors = {};
+  bool get autoMergeEnabled => store.isProject && config.autoMerge;
   List<Map<String, dynamic>> openRequests = [];
   String login = '', _sessionToken = '';
 
@@ -598,7 +608,73 @@ class GitHubSync extends ChangeNotifier {
 
   Future<void> cycle({bool retryFailed = false}) async {
     await drain(retryFailed: retryFailed);
+    if (!_disposed) await integratePending();
     if (!_disposed) await pullLatest();
+  }
+
+  void setAutoMerge(bool enabled) {
+    if (busy || pulling || _disposed) return;
+    store.setMeta(
+      'github.config',
+      jsonEncode({...config.toJson(), 'autoMerge': enabled}),
+    );
+    _notify();
+    if (enabled) unawaited(cycle());
+  }
+
+  Future<void> integratePending() async {
+    if (_disposed || busy || pulling || !config.enabled || !autoMergeEnabled) {
+      return;
+    }
+    busy = true;
+    _notify();
+    final settings = config;
+    try {
+      final manifest = await publisher.project(settings);
+      final executor = await publisher.projectActor(settings, manifest);
+      if (!executor.active || executor.role == 'viewer') return;
+      final requests = await publisher.openRequests(settings);
+      if (_disposed || !config.enabled) return;
+      autoMergeErrors.removeWhere(
+        (url, _) => !requests.any((pr) => pr['html_url'] == url),
+      );
+      var merged = 0;
+      for (final pr in requests.reversed) {
+        if (_disposed || !config.enabled || !autoMergeEnabled) break;
+        if (!(pr['head']['ref'] as String).startsWith('ieum/tasks/')) continue;
+        if (!executor.manages &&
+            pr['user']?['id'] != int.parse(executor.id.substring(3))) {
+          continue;
+        }
+        final url = pr['html_url'] as String;
+        try {
+          await publisher.integrateTask(
+            settings,
+            url,
+            projectId: store.project!.id,
+            ownerId: store.project!.ownerId,
+          );
+          autoMergeErrors.remove(url);
+          merged++;
+        } catch (e) {
+          autoMergeErrors[url] = e is GitHubFailure
+              ? e.message
+              : '작업 JSON을 검증하지 못했습니다. 자동 통합을 보류했습니다.';
+        }
+      }
+      autoMergeMessage = autoMergeErrors.isNotEmpty
+          ? '자동 통합 보류 ${autoMergeErrors.length}건 · 이유를 확인하세요.'
+          : merged > 0
+          ? '작업 PR $merged건을 자동 통합했습니다.'
+          : '작업 PR을 검사한 뒤 자동 통합합니다.';
+    } catch (e) {
+      autoMergeMessage = e is GitHubFailure
+          ? e.message
+          : '자동 통합을 확인하지 못했습니다. 다음 동기화 때 재시도합니다.';
+    } finally {
+      busy = false;
+      _notify();
+    }
   }
 
   void disable() {
@@ -623,6 +699,7 @@ class GitHubSync extends ChangeNotifier {
     busy = true;
     _notify();
     final settings = config;
+    var submitted = false;
     try {
       final pending = jobs
           .where(
@@ -651,6 +728,7 @@ class GitHubSync extends ChangeNotifier {
                   Map<String, dynamic>.from(job['configuration'] as Map),
                 );
           final receipt = await publisher.publish(original, job);
+          submitted = true;
           _put({
             ...job,
             'state': 'sent',
@@ -671,6 +749,10 @@ class GitHubSync extends ChangeNotifier {
       busy = false;
       _notify();
     }
+    if (submitted && !_disposed && autoMergeEnabled && config.enabled) {
+      await integratePending();
+      await pullLatest();
+    }
     if (!_disposed &&
         config.enabled &&
         jobs.any((job) => job['state'] == 'pending')) {
@@ -680,6 +762,12 @@ class GitHubSync extends ChangeNotifier {
 
   void _put(Map<String, dynamic> job) {
     if (_disposed) return;
+    if (job['state'] == 'sent') {
+      store.db.execute(
+        'INSERT INTO github_sent VALUES (?,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body',
+        [job['revision'], jsonEncode(job)],
+      );
+    }
     final rows = store.db.select('SELECT body FROM github_queue WHERE id=?', [
       job['taskId'],
     ]);
@@ -693,12 +781,6 @@ class GitHubSync extends ChangeNotifier {
         jsonEncode(job),
         job['taskId'],
       ]);
-      if (job['state'] == 'sent') {
-        store.db.execute(
-          'INSERT INTO github_sent VALUES (?,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body',
-          [job['revision'], jsonEncode(job)],
-        );
-      }
     });
     _notify();
   }
@@ -801,6 +883,26 @@ class GitHubSync extends ChangeNotifier {
                 WorkTask.fromJson(Map<String, dynamic>.from(submitted)),
               )) {
             _put({...job, 'state': 'merged'});
+          }
+        }
+        // Rebase newer local edits on the acknowledged submission. Their old
+        // queued proposal may have been captured while the previous PR merged.
+        if (autoMergeEnabled) {
+          for (final job in jobs) {
+            final local = store.tasks.where((t) => t.id == job['taskId']);
+            final remote = remoteTasks[job['taskId']];
+            if (local.isEmpty || remote == null || local.single.same(remote)) {
+              continue;
+            }
+            final submitted =
+                (job['proposal']['changes'] as List).single as Map;
+            final oldBase = submitted['base'];
+            if (oldBase == null ||
+                oldBase['version'] != remote.version ||
+                !WorkTask.fromJson(Map<String, dynamic>.from(oldBase))
+                    .same(remote)) {
+              store.queueGitHub(local.single);
+            }
           }
         }
       }

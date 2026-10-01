@@ -132,7 +132,7 @@ class GitHubPanel extends StatelessWidget {
             const SizedBox(height: 12),
             Text(
               config.enabled
-                  ? '${config.slug} · 작업별 PR · 통합본 자동 가져오기'
+                  ? '${config.slug} · 작업별 PR · ${sync.autoMergeEnabled ? '자동 통합' : '통합 승인 대기'} · 자동 가져오기'
                   : '저장소를 연결하면 등록·수정·상태 변경을 자동으로 제출합니다.',
               style: const TextStyle(fontSize: 12, color: _muted),
             ),
@@ -248,7 +248,7 @@ class GitHubPanel extends StatelessWidget {
             if (sync.openRequests.isNotEmpty) ...[
               const Divider(height: 30, color: _border),
               const Text(
-                '팀의 통합 승인 대기',
+                '팀의 통합 대기',
                 style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
               ),
               for (final pr in sync.openRequests)
@@ -274,6 +274,46 @@ class GitHubPanel extends StatelessWidget {
                         ),
                     ],
                   ),
+                ),
+              for (final pr in sync.openRequests)
+                if (sync.autoMergeErrors[pr['html_url']] != null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: Text(
+                      '#${pr['number']} · ${sync.autoMergeErrors[pr['html_url']]}',
+                      style: const TextStyle(
+                        fontSize: 11,
+                        color: Color(0xffbd6b7a),
+                      ),
+                    ),
+                  ),
+            ],
+            if (sync.store.isProject) ...[
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 12,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  Text(
+                    sync.autoMergeEnabled
+                        ? '정상 작업 PR은 자동으로 통합합니다.'
+                        : 'PR 통합은 수동 승인합니다.',
+                    style: const TextStyle(fontSize: 11, color: _muted),
+                  ),
+                  TextButton(
+                    onPressed: busy
+                        ? null
+                        : () => sync.setAutoMerge(!config.autoMerge),
+                    child: Text(
+                      sync.autoMergeEnabled ? '자동 통합 끄기' : '자동 통합 켜기',
+                    ),
+                  ),
+                ],
+              ),
+              if (sync.autoMergeMessage.isNotEmpty)
+                Text(
+                  sync.autoMergeMessage,
+                  style: const TextStyle(fontSize: 11, color: _muted),
                 ),
             ],
           ],
@@ -325,6 +365,7 @@ class _GitHubConfigDialogState extends State<GitHubConfigDialog> {
           branch: branch.text.trim(),
           enabled: true,
           separatePr: true,
+          autoMerge: widget.sync.config.autoMerge,
         ),
         token: token.text,
       );
