@@ -1,5 +1,7 @@
 # 이음 · IEUM
 
+이 브랜치는 Flutter 비교 버전을 포함합니다. Electron 기준본은 `codex/electron-prototype`, Flutter 작업은 `codex/flutter-desktop`에 분리했습니다. Flutter 실행은 `Start-Ieum-Flutter.bat`, 소스와 안내는 [flutter_app](flutter_app/README.md)을 참고하세요. 두 앱은 서로 다른 개인 DB를 사용합니다.
+
 팀의 작업과 일정을 연결하는 Electron 데스크톱 프로토타입입니다.
 React + TypeScript로 화면을 구성하고 Electron 메인 프로세스에서 개인 SQLite를 관리합니다. 공유 서버 없이 각자 수정한 데이터를 JSON 변경안으로 내보내고, 승인된 통합본을 다시 가져오는 구조입니다.
 

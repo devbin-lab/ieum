@@ -12,3 +12,6 @@ dist/
 .env.*
 !.env.example
 test-results/
+flutter_app/build/
+flutter_app/.dart_tool/
+flutter_app/windows/flutter/ephemeral/

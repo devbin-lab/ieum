@@ -1,0 +1,347 @@
+import 'package:flutter/material.dart';
+
+import 'app.dart' show purple, muted, border;
+import 'models.dart';
+import 'store.dart';
+
+class ReworkDialog extends StatefulWidget {
+  const ReworkDialog({super.key});
+  @override
+  State<ReworkDialog> createState() => _ReworkDialogState();
+}
+
+class _ReworkDialogState extends State<ReworkDialog> {
+  final controller = TextEditingController();
+  @override
+  void dispose() {
+    controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: const Text('재작업 요청'),
+    content: SizedBox(
+      width: 400,
+      child: TextField(
+        key: const Key('rework-reason'),
+        controller: controller,
+        autofocus: true,
+        maxLines: 4,
+        maxLength: 2000,
+        onChanged: (_) => setState(() {}),
+        decoration: const InputDecoration(labelText: '재작업 사유'),
+      ),
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.pop(context),
+        child: const Text('취소'),
+      ),
+      FilledButton(
+        onPressed: controller.text.trim().isEmpty
+            ? null
+            : () => Navigator.pop(context, controller.text),
+        child: const Text('재작업 요청'),
+      ),
+    ],
+  );
+}
+
+class TaskEditor extends StatefulWidget {
+  final TaskStore store;
+  final WorkTask? task;
+  const TaskEditor({super.key, required this.store, this.task});
+  @override
+  State<TaskEditor> createState() => _TaskEditorState();
+}
+
+class _TaskEditorState extends State<TaskEditor> {
+  final formKey = GlobalKey<FormState>();
+  late TextEditingController title, assigned, due, description;
+  late String part, priority, assigneeId, reviewerId;
+  String error = '';
+  @override
+  void initState() {
+    super.initState();
+    final t = widget.task;
+    title = TextEditingController(text: t?.title ?? '');
+    assigned = TextEditingController(text: t?.assignedDate ?? localDate());
+    due = TextEditingController(text: t?.dueDate ?? '');
+    description = TextEditingController(text: t?.description ?? '');
+    part = t?.part ?? rules.first.part;
+    priority = t?.priority ?? 'normal';
+    assigneeId = t?.assigneeId ?? rules.first.assigneeId;
+    reviewerId = t?.reviewerId ?? rules.first.reviewerId;
+  }
+
+  @override
+  void dispose() {
+    for (final c in [title, assigned, due, description]) {
+      c.dispose();
+    }
+    super.dispose();
+  }
+
+  Future<void> date(TextEditingController c) async {
+    final current = DateTime.tryParse(c.text) ?? DateTime.now();
+    final result = await showDatePicker(
+      context: context,
+      initialDate: current,
+      firstDate: DateTime(2000),
+      lastDate: DateTime(2100),
+    );
+    if (result != null) {
+      c.text =
+          '${result.year.toString().padLeft(4, '0')}-${result.month.toString().padLeft(2, '0')}-${result.day.toString().padLeft(2, '0')}';
+    }
+  }
+
+  Widget select(
+    String key,
+    String label,
+    String value,
+    Map<String, String> values,
+    ValueChanged<String> change,
+  ) => DropdownButtonFormField<String>(
+    key: ValueKey('$key-$value'),
+    initialValue: value,
+    decoration: InputDecoration(labelText: label),
+    style: const TextStyle(fontSize: 12, color: Color(0xff756183)),
+    items: values.entries
+        .map((e) => DropdownMenuItem(value: e.key, child: Text(e.value)))
+        .toList(),
+    onChanged: (v) => setState(() => change(v!)),
+  );
+  void save() {
+    if (!formKey.currentState!.validate()) return;
+    try {
+      widget.store.save({
+        if (widget.task != null) 'id': widget.task!.id,
+        'title': title.text,
+        'part': part,
+        'priority': priority,
+        'assigneeId': assigneeId,
+        'reviewerId': reviewerId,
+        'assignedDate': assigned.text,
+        'dueDate': due.text,
+        'description': description.text,
+      }, expectedVersion: widget.task?.version);
+      Navigator.pop(context);
+    } catch (e) {
+      setState(() => error = e.toString().replaceFirst('Bad state: ', ''));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => Dialog(
+    child: SizedBox(
+      width: 560,
+      child: SingleChildScrollView(
+        child: Padding(
+          padding: const EdgeInsets.all(30),
+          child: Form(
+            key: formKey,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'YOUR NEXT TASK',
+                            style: TextStyle(
+                              fontSize: 9,
+                              letterSpacing: 2,
+                              color: muted,
+                            ),
+                          ),
+                          const SizedBox(height: 9),
+                          Text(
+                            widget.task == null ? '새 작업 등록' : '작업 수정',
+                            style: const TextStyle(
+                              fontSize: 22,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: '작업 등록 닫기',
+                      onPressed: () => Navigator.pop(context),
+                      icon: const Icon(Icons.close, size: 20),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 28),
+                TextFormField(
+                  key: const Key('task-title'),
+                  controller: title,
+                  autofocus: true,
+                  maxLength: 200,
+                  decoration: const InputDecoration(
+                    labelText: '작업내용',
+                    hintText: '어떤 작업을 진행하나요?',
+                    counterText: '',
+                  ),
+                  validator: (value) => value == null || value.trim().isEmpty
+                      ? '작업내용을 입력하세요.'
+                      : null,
+                ),
+                const SizedBox(height: 19),
+                Row(
+                  children: [
+                    Expanded(
+                      child: select(
+                        'task-part',
+                        '담당 파트',
+                        part,
+                        {for (final r in rules) r.part: r.part},
+                        (v) {
+                          part = v;
+                          final rule = rules.firstWhere((r) => r.part == v);
+                          assigneeId = rule.assigneeId;
+                          reviewerId = rule.reviewerId;
+                        },
+                      ),
+                    ),
+                    const SizedBox(width: 15),
+                    Expanded(
+                      child: select(
+                        'task-priority',
+                        '우선순위',
+                        priority,
+                        priorities,
+                        (v) => priority = v,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 19),
+                Row(
+                  children: [
+                    Expanded(
+                      child: select('task-assignee', '담당자', assigneeId, {
+                        for (final p in members) p.id: p.name,
+                      }, (v) => assigneeId = v),
+                    ),
+                    const SizedBox(width: 15),
+                    Expanded(
+                      child: select('task-reviewer', '검토자', reviewerId, {
+                        for (final p in members) p.id: p.name,
+                      }, (v) => reviewerId = v),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 19),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextFormField(
+                        key: const Key('task-assigned'),
+                        controller: assigned,
+                        decoration: InputDecoration(
+                          labelText: '작업 지정일',
+                          hintText: 'YYYY-MM-DD',
+                          suffixIcon: IconButton(
+                            onPressed: () => date(assigned),
+                            icon: const Icon(
+                              Icons.calendar_month_outlined,
+                              size: 16,
+                            ),
+                          ),
+                        ),
+                        validator: (v) {
+                          try {
+                            validDate(v, '작업 지정일', required: true);
+                            return null;
+                          } catch (_) {
+                            return 'YYYY-MM-DD 형식을 확인하세요.';
+                          }
+                        },
+                      ),
+                    ),
+                    const SizedBox(width: 15),
+                    Expanded(
+                      child: TextFormField(
+                        key: const Key('task-due'),
+                        controller: due,
+                        decoration: InputDecoration(
+                          labelText: '마감일',
+                          hintText: 'YYYY-MM-DD',
+                          suffixIcon: IconButton(
+                            onPressed: () => date(due),
+                            icon: const Icon(
+                              Icons.calendar_month_outlined,
+                              size: 16,
+                            ),
+                          ),
+                        ),
+                        validator: (v) {
+                          try {
+                            validDate(v, '마감일');
+                            return null;
+                          } catch (_) {
+                            return 'YYYY-MM-DD 형식을 확인하세요.';
+                          }
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 13),
+                const Text(
+                  '파트를 선택하면 기본 담당자와 검토자가 자동 배정됩니다.',
+                  style: TextStyle(fontSize: 10, color: muted),
+                ),
+                const SizedBox(height: 22),
+                TextFormField(
+                  key: const Key('task-description'),
+                  controller: description,
+                  maxLines: 3,
+                  maxLength: 10000,
+                  decoration: const InputDecoration(
+                    labelText: '설명',
+                    hintText: '완료 조건이나 참고 내용을 적어 주세요.',
+                    counterText: '',
+                  ),
+                ),
+                if (error.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 15),
+                    child: Text(
+                      error,
+                      style: const TextStyle(fontSize: 12, color: Colors.red),
+                    ),
+                  ),
+                const Divider(height: 40, color: border),
+                Row(
+                  children: [
+                    const Icon(Icons.storage_outlined, size: 15, color: muted),
+                    const SizedBox(width: 6),
+                    const Text(
+                      '내 컴퓨터에 저장',
+                      style: TextStyle(fontSize: 10, color: muted),
+                    ),
+                    const Spacer(),
+                    FilledButton(
+                      key: const Key('task-save'),
+                      onPressed: save,
+                      style: FilledButton.styleFrom(backgroundColor: purple),
+                      child: const Text('작업 저장'),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+}
