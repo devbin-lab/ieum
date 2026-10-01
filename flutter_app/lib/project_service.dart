@@ -5,19 +5,33 @@ import 'package:uuid/uuid.dart';
 
 import 'github_sync.dart';
 import 'models.dart';
+import 'github_oauth.dart';
 
 /// Authentication belongs to GitHub. IEUM stores a nickname, never a password.
 class GitHubSession {
-  GitHubSession({GitHubApi? api}) {
+  GitHubSession({GitHubApi? api, GitHubOAuth? oauth})
+    : oauth = oauth ?? GitHubOAuth() {
     this.api = api ?? HttpGitHubApi(credential);
   }
   late final GitHubApi api;
+  final GitHubOAuth oauth;
+  OAuthTokens? _oauthTokens;
+  bool _remember = false;
+  String? _oauthUserId;
+  int _authGeneration = 0;
+  Future<String>? _refreshing;
+  Future<void> _vaultQueue = Future<void>.value();
   String _token = '';
+  bool _allowGitCredential = false;
   Person? user;
   String get sessionToken => _token;
 
   Future<String> credential() async {
+    if (_oauthTokens != null) return oauthCredential();
     if (_token.isNotEmpty) return _token;
+    if (!_allowGitCredential) {
+      throw const GitHubFailure('GitHub에 다시 로그인하세요.', 401);
+    }
     Process process;
     try {
       process = await Process.start(
@@ -51,9 +65,176 @@ class GitHubSession {
     throw const GitHubFailure('GitHub 로그인이 필요합니다. 저장된 Git 인증 또는 세션 토큰을 사용하세요.');
   }
 
+  Future<void> _vault(Future<void> Function() operation) {
+    final next = _vaultQueue.then((_) => operation());
+    _vaultQueue = next.catchError((Object _) {});
+    return next;
+  }
+
+  Future<void> _saveOAuth(int generation) => _vault(() async {
+    if (generation != _authGeneration ||
+        !_remember ||
+        _oauthTokens == null ||
+        (user?.id ?? _oauthUserId) == null) {
+      return;
+    }
+    await oauth.vault.write(
+      jsonEncode({
+        'schema': 1,
+        'clientId': githubOAuthClientId,
+        'userId': user?.id ?? _oauthUserId,
+        'tokens': _oauthTokens!.toJson(),
+      }),
+    );
+  });
+
+  Future<String> oauthCredential() {
+    final current = _oauthTokens;
+    if (current == null) return Future.value(_token);
+    if (current.expiresAt == null ||
+        oauth
+            .now()
+            .add(const Duration(minutes: 2))
+            .isBefore(current.expiresAt!)) {
+      return Future.value(current.access);
+    }
+    if (_refreshing != null) return _refreshing!;
+    final generation = _authGeneration;
+    final expectedId = user?.id ?? _oauthUserId;
+    final future = () async {
+      try {
+        final next = await oauth.refresh(current);
+        if (generation != _authGeneration) {
+          throw const GitHubFailure('로그인이 변경되었습니다.', 401);
+        }
+        // Revalidate the identity with the new token before publishing it to callers.
+        final verifier = api is HttpGitHubApi
+            ? HttpGitHubApi(() async => next.access)
+            : api;
+        final identity = await verifier.call('GET', '/user');
+        if (expectedId != null && 'gh-${identity['id']}' != expectedId) {
+          throw const GitHubFailure('GitHub 계정이 변경되었습니다. 다시 로그인하세요.', 401);
+        }
+        if (generation != _authGeneration) {
+          throw const GitHubFailure('로그인이 변경되었습니다.', 401);
+        }
+        _oauthTokens = next;
+        _token = next.access;
+        await _saveOAuth(generation);
+        return next.access;
+      } on GitHubFailure catch (e) {
+        if (e.status == 401 && generation == _authGeneration) await logout();
+        rethrow;
+      } finally {
+        if (generation == _authGeneration) _refreshing = null;
+      }
+    }();
+    _refreshing = future;
+    return future;
+  }
+
+  Future<Person> _identity() async {
+    final data = await api.call('GET', '/user');
+    if (data['id'] is! int || data['id'] <= 0) {
+      throw const GitHubFailure('GitHub 계정 ID를 확인하지 못했습니다.');
+    }
+    return Person.fromJson({
+      'id': 'gh-${data['id']}',
+      'login': data['login'],
+      'name': data['login'],
+      'role': 'pending',
+      'parts': <String>[],
+    });
+  }
+
+  Future<Person> signInOAuth({
+    required bool remember,
+    required void Function(DeviceGrant) onCode,
+  }) async {
+    await logout();
+    final generation = _authGeneration;
+    final grant = await oauth.start();
+    if (generation != _authGeneration) {
+      throw const GitHubFailure('로그인을 취소했습니다.');
+    }
+    onCode(grant);
+    final tokens = await oauth.poll(grant, () => generation != _authGeneration);
+    if (generation != _authGeneration) {
+      throw const GitHubFailure('로그인을 취소했습니다.');
+    }
+    _oauthTokens = tokens;
+    _token = tokens.access;
+    try {
+      final identity = await _identity();
+      if (generation != _authGeneration) {
+        throw const GitHubFailure('로그인을 취소했습니다.');
+      }
+      user = identity;
+      _oauthUserId = identity.id;
+      _remember = remember;
+      await _saveOAuth(generation);
+      return identity;
+    } catch (_) {
+      if (generation == _authGeneration) await logout();
+      rethrow;
+    }
+  }
+
+  Future<bool> restoreOAuth() async {
+    final generation = _authGeneration;
+    final raw = await oauth.vault.read();
+    if (raw == null || generation != _authGeneration) return false;
+    String expected;
+    try {
+      final data = jsonDecode(raw) as Map<String, dynamic>;
+      if (data['schema'] != 1 || data['clientId'] != githubOAuthClientId) {
+        throw const FormatException();
+      }
+      expected = data['userId'] as String;
+      _oauthUserId = expected;
+      _oauthTokens = OAuthTokens.fromStored(
+        Map<String, dynamic>.from(data['tokens']),
+      );
+      if (_oauthTokens!.access.isEmpty ||
+          !_oauthTokens!.scope.split(RegExp(r'[ ,]+')).contains('repo')) {
+        throw const FormatException();
+      }
+      _remember = true;
+    } catch (_) {
+      await logout();
+      throw const GitHubFailure('저장된 로그인을 확인하지 못했습니다. GitHub에 다시 로그인하세요.');
+    }
+    try {
+      final identity = await _identity();
+      if (generation != _authGeneration) return false;
+      if (identity.id != expected) {
+        throw const GitHubFailure('GitHub 계정이 변경되었습니다. 다시 로그인하세요.', 401);
+      }
+      user = identity;
+      _token = _oauthTokens!.access;
+      await _saveOAuth(generation);
+      return true;
+    } on GitHubFailure catch (e) {
+      if (generation == _authGeneration) {
+        if (e.status == 401) {
+          await logout();
+        } else {
+          signOut(); // Keep the vault on a temporary network failure.
+        }
+      }
+      rethrow;
+    }
+  }
+
+  Future<void> logout() async {
+    signOut();
+    await _vault(() => oauth.vault.delete());
+  }
+
   Future<Person> signIn({String token = ''}) async {
     signOut();
     _token = token.trim();
+    _allowGitCredential = _token.isEmpty;
     try {
       final data = await api.call('GET', '/user');
       if (data['id'] is! int || data['id'] <= 0) {
@@ -74,7 +255,13 @@ class GitHubSession {
   }
 
   void signOut() {
+    _authGeneration++;
+    _oauthTokens = null;
+    _remember = false;
+    _oauthUserId = null;
+    _refreshing = null;
     _token = '';
+    _allowGitCredential = false;
     user = null;
   }
 

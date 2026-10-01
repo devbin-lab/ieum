@@ -1,4 +1,4 @@
-param([string]$BuildId = (Get-Date -Format 'yyyyMMdd-HHmmss'))
+﻿param([string]$BuildId = (Get-Date -Format 'yyyyMMdd-HHmmss'))
 $ErrorActionPreference = 'Stop'
 if ($BuildId -notmatch '^[0-9]{8}-[0-9]{6}$') { throw '잘못된 빌드 ID입니다.' }
 $taskRoot = Split-Path $PSScriptRoot -Parent
@@ -49,7 +49,7 @@ ZIP 배포본을 사용할 때에는 전체 압축을 풀고 ieum_flutter.exe를
 비공개 저장소이므로 개설자가 먼저 참여자의 GitHub 계정을 협업자로 초대해야 합니다.
 개설자가 참여 요청을 승인하고 역할을 지정합니다.
 같은 GitHub 계정이면 두 PC에서도 같은 참여자로 취급합니다.
-Git이 없는 PC는 로그인 화면의 세션 토큰 입력을 사용하세요.
+Git이 없는 PC도 GitHub로 로그인을 누르고 브라우저에서 앱의 인증 코드를 입력하면 됩니다. 로그인 유지를 켜면 Windows 자격 증명 관리자에 안전하게 보관합니다.
 계정 토큰과 기존 프로젝트 DB, 작업 데이터는 배포본에 포함하지 않았습니다.
 앱 버전: $taskVersion
 앱 시작 시와 4시간마다 새 배포 버전을 자동 확인하고 검증하여 다운로드합니다.

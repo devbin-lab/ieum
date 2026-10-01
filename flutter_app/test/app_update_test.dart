@@ -13,21 +13,28 @@ class FakeUpdates implements UpdateSource {
   String version = '0.2.0+3';
   bool corrupt = false, fail = false;
   int downloads = 0;
+  int checks = 0;
+  Completer<void>? pauseCheck;
   Completer<void>? pause;
   @override
-  Future<UpdateRelease?> latest() async => UpdateRelease.fromJson({
-    'tag_name': 'v$version',
-    'draft': false,
-    'prerelease': false,
-    'assets': [
-      {
-        'name': 'Ieum-Windows-x64.exe',
-        'id': 42,
-        'size': bytes.length,
-        'digest': 'sha256:${sha256.convert(bytes)}',
-      },
-    ],
-  });
+  Future<UpdateRelease?> latest() async {
+    checks++;
+    if (pauseCheck != null) await pauseCheck!.future;
+    return UpdateRelease.fromJson({
+      'tag_name': 'v$version',
+      'draft': false,
+      'prerelease': false,
+      'assets': [
+        {
+          'name': 'Ieum-Windows-x64.exe',
+          'id': 42,
+          'size': bytes.length,
+          'digest': 'sha256:${sha256.convert(bytes)}',
+        },
+      ],
+    });
+  }
+
   @override
   Future<void> download(
     UpdateRelease release,
@@ -84,6 +91,24 @@ void main() {
       expect(() => ReleaseVersion(value), throwsFormatException);
     }
   });
+  test(
+    'login during an update check schedules another check with new credentials',
+    () async {
+      source.pauseCheck = Completer<void>();
+      final first = updater.check();
+      while (source.checks == 0) {
+        await Future<void>.delayed(const Duration(milliseconds: 1));
+      }
+      updater.credentialsChanged();
+      source.pauseCheck!.complete();
+      await first;
+      while (source.checks < 2 || updater.busy) {
+        await Future<void>.delayed(const Duration(milliseconds: 1));
+      }
+      expect(source.checks, 2);
+      expect(source.downloads, 1);
+    },
+  );
   test('only trusted HTTPS release hosts are allowed', () {
     expect(
       GitHubUpdateSource.trusted(

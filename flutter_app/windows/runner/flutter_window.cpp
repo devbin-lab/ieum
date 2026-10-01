@@ -1,6 +1,56 @@
 #include "flutter_window.h"
 
 #include <optional>
+#include <wincred.h>
+#include <flutter/standard_method_codec.h>
+
+namespace {
+// Only this application's credential is accessible through the channel.
+constexpr wchar_t kCredentialTarget[] = L"Ieum/GitHub/OAuth/Ov23liDTP1YEtuI7SAx0";
+void HandleCredential(
+    const flutter::MethodCall<flutter::EncodableValue>& call,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  if (call.method_name() == "read") {
+    PCREDENTIALW stored = nullptr;
+    if (!CredReadW(kCredentialTarget, CRED_TYPE_GENERIC, 0, &stored)) {
+      if (GetLastError() == ERROR_NOT_FOUND) result->Success();
+      else result->Error("vault_read", "Windows 인증 정보를 읽지 못했습니다.");
+      return;
+    }
+    const std::string value(reinterpret_cast<const char*>(stored->CredentialBlob),
+                            stored->CredentialBlobSize);
+    CredFree(stored);
+    result->Success(flutter::EncodableValue(value));
+  } else if (call.method_name() == "write") {
+    const auto* value = call.arguments()
+        ? std::get_if<std::string>(call.arguments()) : nullptr;
+    if (!value || value->empty() || value->size() > CRED_MAX_CREDENTIAL_BLOB_SIZE) {
+      result->Error("vault_value", "저장할 인증 정보가 올바르지 않습니다.");
+      return;
+    }
+    CREDENTIALW credential{};
+    credential.Type = CRED_TYPE_GENERIC;
+    credential.TargetName = const_cast<wchar_t*>(kCredentialTarget);
+    credential.CredentialBlobSize = static_cast<DWORD>(value->size());
+    credential.CredentialBlob = reinterpret_cast<LPBYTE>(const_cast<char*>(value->data()));
+    credential.Persist = CRED_PERSIST_LOCAL_MACHINE;
+    if (!CredWriteW(&credential, 0)) {
+      result->Error("vault_write", "Windows에 인증 정보를 안전하게 저장하지 못했습니다.");
+      return;
+    }
+    result->Success();
+  } else if (call.method_name() == "delete") {
+    if (!CredDeleteW(kCredentialTarget, CRED_TYPE_GENERIC, 0) &&
+        GetLastError() != ERROR_NOT_FOUND) {
+      result->Error("vault_delete", "Windows에 저장된 로그인을 지우지 못했습니다.");
+      return;
+    }
+    result->Success();
+  } else {
+    result->NotImplemented();
+  }
+}
+}  // namespace
 
 #include "flutter/generated_plugin_registrant.h"
 
@@ -25,6 +75,10 @@ bool FlutterWindow::OnCreate() {
     return false;
   }
   RegisterPlugins(flutter_controller_->engine());
+  credentials_ = std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
+      flutter_controller_->engine()->messenger(), "ieum/oauth_credentials",
+      &flutter::StandardMethodCodec::GetInstance());
+  credentials_->SetMethodCallHandler(HandleCredential);
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
 
   // Dart configures the custom title bar through window_manager before showing
@@ -35,6 +89,7 @@ bool FlutterWindow::OnCreate() {
 }
 
 void FlutterWindow::OnDestroy() {
+  credentials_ = nullptr;
   if (flutter_controller_) {
     flutter_controller_ = nullptr;
   }

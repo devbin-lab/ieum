@@ -3,17 +3,25 @@ import 'dart:io';
 
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import 'app.dart';
 import 'github_sync.dart';
+import 'github_oauth.dart';
 import 'project_service.dart';
 import 'store.dart';
 import 'update_ui.dart';
 
 class ProjectGate extends StatefulWidget {
-  const ProjectGate({super.key, required this.preferences, this.session});
+  const ProjectGate({
+    super.key,
+    required this.preferences,
+    this.session,
+    this.openBrowser,
+  });
   final File preferences;
   final GitHubSession? session;
+  final Future<void> Function(String)? openBrowser;
   @override
   State<ProjectGate> createState() => _ProjectGateState();
 }
@@ -26,6 +34,8 @@ class _ProjectGateState extends State<ProjectGate> {
   final projectName = TextEditingController();
   final folder = TextEditingController();
   bool busy = false, creating = true;
+  bool rememberLogin = true, advancedLogin = false;
+  DeviceGrant? grant;
   String error = '';
   Map<String, dynamic>? recent;
   TaskStore? store;
@@ -46,6 +56,9 @@ class _ProjectGateState extends State<ProjectGate> {
     if (recent != null) {
       repo.text = recent!['repository'] as String? ?? repo.text;
     }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) restoreLogin();
+    });
   }
 
   @override
@@ -81,12 +94,56 @@ class _ProjectGateState extends State<ProjectGate> {
   }
 
   Future<void> signIn() => run(() async {
+    await session.logout();
     final user = await session.signIn(token: token.text);
     token.clear();
     nickname.text = user.name;
     if (mounted) {
       setState(() {});
-      UpdateScope.of(context)?.notifier?.check();
+      UpdateScope.of(context)?.notifier?.credentialsChanged();
+    }
+  });
+
+  void authenticated() {
+    nickname.text = session.user!.name;
+    if (mounted) {
+      setState(() {});
+      UpdateScope.of(context)?.notifier?.credentialsChanged();
+    }
+  }
+
+  Future<void> restoreLogin() => run(() async {
+    if (await session.restoreOAuth() && mounted) authenticated();
+  });
+
+  Future<void> openGitHub(String url) async {
+    if (widget.openBrowser != null) {
+      await widget.openBrowser!(url);
+      return;
+    }
+    try {
+      await Process.start('rundll32.exe', ['url.dll,FileProtocolHandler', url]);
+    } catch (_) {
+      if (mounted) setState(() => error = '브라우저에서 $url 을 직접 열어주세요.');
+    }
+  }
+
+  Future<void> oauthLogin() => run(() async {
+    try {
+      await session.signInOAuth(
+        remember: rememberLogin,
+        onCode: (value) {
+          if (!mounted) {
+            session.signOut();
+            return;
+          }
+          setState(() => grant = value);
+          openGitHub(githubDeviceUrl);
+        },
+      );
+      if (mounted) authenticated();
+    } finally {
+      if (mounted) setState(() => grant = null);
     }
   });
 
@@ -181,9 +238,10 @@ class _ProjectGateState extends State<ProjectGate> {
     sync = null;
     store?.dispose();
     store = null;
-    session.signOut();
     token.clear();
-    setState(() {});
+    run(() async {
+      await session.logout();
+    });
   }
 
   @override
@@ -231,48 +289,157 @@ class _ProjectGateState extends State<ProjectGate> {
                   ),
                   const SizedBox(height: 24),
                   if (!signedIn) ...[
-                    TextField(
-                      key: const Key('login-token'),
-                      enabled: !busy,
-                      controller: token,
-                      obscureText: true,
-                      autocorrect: false,
-                      enableSuggestions: false,
-                      decoration: const InputDecoration(
-                        labelText: '세션 토큰 (선택)',
-                        hintText: '비워 두면 컴퓨터에 저장된 Git 인증 사용',
+                    const Text(
+                      'GitHub에서 이음의 저장소 접근을 승인하면 로그인됩니다.\n작업 등록·PR·동기화를 위해 저장소 권한을 요청합니다.',
+                      style: TextStyle(fontSize: 12, color: muted, height: 1.7),
+                    ),
+                    const SizedBox(height: 12),
+                    Material(
+                      color: Colors.transparent,
+                      child: CheckboxListTile(
+                        contentPadding: EdgeInsets.zero,
+                        controlAffinity: ListTileControlAffinity.leading,
+                        title: const Text(
+                          '이 컴퓨터에서 로그인 유지',
+                          style: TextStyle(fontSize: 12),
+                        ),
+                        subtitle: const Text(
+                          'Windows 자격 증명 관리자에 안전하게 보관합니다.',
+                          style: TextStyle(fontSize: 11, color: muted),
+                        ),
+                        value: rememberLogin,
+                        onChanged: busy
+                            ? null
+                            : (value) => setState(
+                                () => rememberLogin = value ?? false,
+                              ),
                       ),
                     ),
-                    const SizedBox(height: 14),
-                    const Text(
-                      '토큰은 앱 메모리에만 보관합니다. 이음 비밀번호는 만들지 않습니다.\nGitHub 계정이 없다면 GitHub에서 계정을 만든 뒤 저장소 초대를 받으세요.',
-                      style: TextStyle(fontSize: 11, color: muted, height: 1.7),
-                    ),
-                    const SizedBox(height: 24),
-                    TextButton(
-                      onPressed: busy
-                          ? null
-                          : () async {
-                              try {
-                                await Process.start('rundll32.exe', [
-                                  'url.dll,FileProtocolHandler',
-                                  'https://github.com/signup',
-                                ]);
-                              } catch (_) {
-                                if (mounted) {
-                                  setState(
-                                    () => error = '브라우저에서 https://github.com/signup 을 열어 계정을 생성하세요.',
-                                  );
-                                }
-                              }
-                            },
-                      child: const Text('GitHub 계정 만들기'),
-                    ),
-                    FilledButton(
+                    const SizedBox(height: 12),
+                    if (grant != null) ...[
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(18),
+                        decoration: BoxDecoration(
+                          color: purple.withValues(alpha: .06),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: border),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'GitHub 인증 코드',
+                              style: TextStyle(fontSize: 12, color: muted),
+                            ),
+                            const SizedBox(height: 8),
+                            SelectableText(
+                              grant!.userCode,
+                              key: const Key('oauth-code'),
+                              style: const TextStyle(
+                                fontSize: 26,
+                                fontWeight: FontWeight.w700,
+                                letterSpacing: 3,
+                                color: purple,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            const Text(
+                              '브라우저에 위 코드를 입력하고 이음의 접근을 승인하세요.\n인증 코드가 만료되면 다시 로그인할 수 있습니다.',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: muted,
+                                height: 1.7,
+                              ),
+                            ),
+                            const SizedBox(height: 10),
+                            Wrap(
+                              spacing: 8,
+                              children: [
+                                OutlinedButton(
+                                  onPressed: () async {
+                                    await Clipboard.setData(
+                                      ClipboardData(text: grant!.userCode),
+                                    );
+                                  },
+                                  child: const Text('코드 복사'),
+                                ),
+                                OutlinedButton(
+                                  onPressed: () => openGitHub(githubDeviceUrl),
+                                  child: const Text('GitHub 인증 페이지 열기'),
+                                ),
+                                TextButton(
+                                  key: const Key('oauth-cancel'),
+                                  onPressed: session.signOut,
+                                  child: const Text('로그인 취소'),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                    ],
+                    FilledButton.icon(
                       key: const Key('github-login'),
-                      onPressed: busy ? null : signIn,
-                      child: Text(busy ? '계정 확인 중…' : 'GitHub 연결 / 로그인'),
+                      icon: const Icon(Icons.login, size: 18),
+                      onPressed: busy ? null : oauthLogin,
+                      label: Text(
+                        busy
+                            ? (grant == null ? '로그인 확인 중…' : 'GitHub 승인 대기 중…')
+                            : 'GitHub로 로그인',
+                      ),
                     ),
+                    const SizedBox(height: 12),
+                    Wrap(
+                      spacing: 8,
+                      children: [
+                        TextButton(
+                          onPressed: busy
+                              ? null
+                              : () => openGitHub('https://github.com/signup'),
+                          child: const Text('GitHub 계정 만들기'),
+                        ),
+                        TextButton(
+                          onPressed: busy
+                              ? null
+                              : () => setState(
+                                  () => advancedLogin = !advancedLogin,
+                                ),
+                          child: Text(advancedLogin ? '고급 연결 닫기' : '고급 연결'),
+                        ),
+                      ],
+                    ),
+                    if (advancedLogin) ...[
+                      const SizedBox(height: 12),
+                      TextField(
+                        key: const Key('login-token'),
+                        enabled: !busy,
+                        controller: token,
+                        obscureText: true,
+                        autocorrect: false,
+                        enableSuggestions: false,
+                        decoration: const InputDecoration(
+                          labelText: '세션 토큰 (선택)',
+                          hintText: '비워 두면 컴퓨터에 저장된 Git 인증 사용',
+                        ),
+                      ),
+                      const SizedBox(height: 14),
+                      const Text(
+                        '토큰은 앱 메모리에만 보관합니다. 이음 비밀번호는 만들지 않습니다.\nGitHub 계정이 없다면 GitHub에서 계정을 만든 뒤 저장소 초대를 받으세요.',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: muted,
+                          height: 1.7,
+                        ),
+                      ),
+                      const SizedBox(height: 24),
+                      FilledButton(
+                        key: const Key('github-advanced-login'),
+                        onPressed: busy ? null : signIn,
+                        child: Text(busy ? '계정 확인 중…' : 'GitHub 연결 / 로그인'),
+                      ),
+                    ],
                   ] else ...[
                     if (recent != null) ...[
                       OutlinedButton(

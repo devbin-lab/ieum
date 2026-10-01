@@ -12,6 +12,9 @@ import 'package:ieum_flutter/project_service.dart';
 import 'package:ieum_flutter/store.dart';
 
 import 'github_sync_test.dart' show FakeGitHubApi, idle;
+import 'github_oauth_test.dart' show MemoryVault;
+
+import 'package:ieum_flutter/github_oauth.dart';
 
 const config = GitHubConfig(repository: 'team/data', enabled: true);
 Person member(int id, String role) => Person.fromJson({
@@ -38,7 +41,10 @@ void main() {
   late GitHubSession session;
   setUp(() {
     api = FakeGitHubApi();
-    session = GitHubSession(api: api);
+    session = GitHubSession(
+      api: api,
+      oauth: GitHubOAuth(vault: MemoryVault()),
+    );
   });
   tearDown(() => session.signOut());
 
@@ -376,8 +382,18 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(find.text('이음에 로그인'), findsOneWidget);
-      await tester.tap(find.byKey(const Key('github-login')));
+      await tester.tap(find.text('고급 연결'));
       await tester.pumpAndSettle();
+      await tester.ensureVisible(
+        find.byKey(const Key('github-advanced-login')),
+      );
+      await tester.runAsync(() async {
+        await tester.tap(find.byKey(const Key('github-advanced-login')));
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      });
+      await tester.pumpAndSettle();
+      expect(session.user, isNotNull);
+      await tester.ensureVisible(find.byKey(const Key('project-name')));
       await tester.enterText(
         find.byKey(const Key('project-name')),
         '빈 테스트 프로젝트',
@@ -407,11 +423,20 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('참여자 · 역할과 권한'), findsOneWidget);
       expect(tester.takeException(), isNull);
-      await tester.tap(find.text('로그아웃 / 프로젝트 선택'));
+      await tester.runAsync(() async {
+        await tester.tap(find.text('로그아웃 / 프로젝트 선택'));
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      });
       await tester.pumpAndSettle();
       expect(find.text('이음에 로그인'), findsOneWidget);
       expect(session.sessionToken, isEmpty);
-      await tester.tap(find.byKey(const Key('github-login')));
+      await tester.ensureVisible(
+        find.byKey(const Key('github-advanced-login')),
+      );
+      await tester.runAsync(() async {
+        await tester.tap(find.byKey(const Key('github-advanced-login')));
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      });
       await tester.pumpAndSettle();
       await tester.runAsync(() async {
         await tester.tap(find.byKey(const Key('reopen-project')));

@@ -70,7 +70,7 @@ abstract interface class UpdateSource {
 class GitHubUpdateSource implements UpdateSource {
   GitHubUpdateSource(this.repository, {this.credential});
   final String repository;
-  final String Function()? credential;
+  final FutureOr<String> Function()? credential;
   static bool trusted(Uri uri) =>
       uri.scheme == 'https' &&
       uri.userInfo.isEmpty &&
@@ -94,7 +94,7 @@ class GitHubUpdateSource implements UpdateSource {
       request.headers.set('Accept', accept);
       if (uri.host == 'api.github.com') {
         request.headers.set('X-GitHub-Api-Version', '2022-11-28');
-        final token = credential?.call() ?? '';
+        final token = await credential?.call() ?? '';
         if (token.isNotEmpty) {
           request.headers.set('Authorization', 'Bearer $token');
         }
@@ -204,6 +204,7 @@ class AppUpdater extends ChangeNotifier {
   final Future<void> Function(File) launch;
   String message = '자동 업데이트', readyVersion = '';
   bool busy = false, ready = false, _disposed = false;
+  bool _checkAgain = false;
   double progress = 0;
   Timer? _timer;
   File get pointer =>
@@ -318,6 +319,19 @@ class AppUpdater extends ChangeNotifier {
     } finally {
       busy = false;
       _changed();
+      if (_checkAgain && !_disposed) {
+        _checkAgain = false;
+        unawaited(check());
+      }
+    }
+  }
+
+  void credentialsChanged() {
+    if (_disposed) return;
+    if (busy) {
+      _checkAgain = true;
+    } else {
+      unawaited(check());
     }
   }
 

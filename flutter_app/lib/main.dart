@@ -23,7 +23,7 @@ Future<void> main() async {
     currentVersion: appVersion,
     source: GitHubUpdateSource(
       updateRepository,
-      credential: () => session.sessionToken,
+      credential: session.oauthCredential,
     ),
   );
   if (Platform.environment['IEUM_DISABLE_UPDATES'] != '1' &&
