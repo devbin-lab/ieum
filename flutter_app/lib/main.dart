@@ -12,6 +12,7 @@ import 'project_service.dart';
 import 'app_update.dart';
 import 'app_release.dart';
 import 'update_ui.dart';
+import 'startup_health.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -80,16 +81,11 @@ Future<void> main() async {
   final startupMarker = Platform.environment['IEUM_STARTUP_MARKER'];
   if (appStarted && startupMarker != null) {
     try {
-      final root = Directory(
+      final marker = startupHealthFile(
         '${Platform.environment['LOCALAPPDATA']}${Platform.pathSeparator}Ieum${Platform.pathSeparator}builds',
-      ).absolute.uri.normalizePath().toFilePath();
-      final marker = File(
-        File(startupMarker).absolute.uri.normalizePath().toFilePath(),
+        startupMarker,
       );
-      if (marker.path.toLowerCase().startsWith(
-            '${root.toLowerCase()}${Platform.pathSeparator}',
-          ) &&
-          marker.uri.pathSegments.last.startsWith('.startup-')) {
+      if (marker != null) {
         await marker.writeAsString(appVersion, flush: true);
       }
     } catch (_) {

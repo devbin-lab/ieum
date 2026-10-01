@@ -1,6 +1,6 @@
 # 이음 · Flutter 데스크톱 0.2.0
 
-GitHub와 개인 SQLite로 팀 작업을 공유하는 Windows 앱입니다. 개발 브랜치는 `codex/flutter-desktop`, 앱 버전은 `0.2.0+5`입니다. 이전 Electron 구현은 `codex/electron-prototype`에 보존합니다.
+GitHub와 개인 SQLite로 팀 작업을 공유하는 Windows 앱입니다. 개발 브랜치는 `codex/flutter-desktop`, 앱 버전은 `0.2.0+6`입니다. 이전 Electron 구현은 `codex/electron-prototype`에 보존합니다.
 
 ## 0.2.0 변경 사항
 
