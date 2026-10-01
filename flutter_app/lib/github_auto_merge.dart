@@ -6,11 +6,15 @@ extension AutoTaskIntegration on GitHubPublisher {
     String url, {
     required String projectId,
     required String ownerId,
+    String? expectedHead,
   }) async {
     final reviewed = await review(config, url);
     final pr = reviewed['request'] as Map;
     if (pr['draft'] == true) throw const GitHubFailure('초안 PR은 자동 통합하지 않습니다.');
     final head = reviewed['sha'] as String;
+    if (expectedHead != null && head != expectedHead) {
+      throw const GitHubFailure('검토 이후 PR이 변경되었습니다. 다시 확인하세요.');
+    }
     final root = '/repos/${config.slug}';
     final snapshot = (await pull(config, ''))!;
     final revision = snapshot['revision'] as String;
@@ -55,15 +59,7 @@ extension AutoTaskIntegration on GitHubPublisher {
       '$root/contents/$path',
       query: {'ref': head},
     );
-    if (file['encoding'] != 'base64' ||
-        (file['content'] as String).length > 2 * 1024 * 1024) {
-      throw const GitHubFailure('작업 JSON 형식이나 크기를 확인하세요.');
-    }
-    final proposal = jsonDecode(
-      utf8.decode(
-        base64Decode((file['content'] as String).replaceAll(RegExp(r'\s'), '')),
-      ),
-    ) as Map;
+    final proposal = _decodeTaskProposal(file, path: path);
     if (proposal['schemaVersion'] != 1 ||
         proposal['projectId'] != projectId ||
         proposal['authorId'] != author.id ||
@@ -77,28 +73,13 @@ extension AutoTaskIntegration on GitHubPublisher {
     if (change['taskId'] != taskId || task.id != taskId) {
       throw const GitHubFailure('작업 ID가 변경안과 일치하지 않습니다.');
     }
-    final remote = <String, WorkTask>{};
-    for (final payload in snapshot['proposals'] as List) {
-      if (payload['projectId'] != projectId) continue;
-      if (payload['schemaVersion'] != 1 || payload['changes'] is! List) {
-        throw const GitHubFailure('통합본 형식을 확인하세요.');
-      }
-      for (final item in payload['changes'] as List) {
-        final value = WorkTask.fromJson(
-          Map<String, dynamic>.from(item['task']),
-        );
-        final previous = remote[value.id];
-        if (previous != null &&
-            previous.version == value.version &&
-            !previous.same(value)) {
-          throw const GitHubFailure('통합본에 동일 버전의 서로 다른 작업이 있습니다.');
-        }
-        if (previous == null || previous.version < value.version) {
-          remote[value.id] = value;
-        }
-      }
+    final remote = _RemoteTasks(snapshot, projectId);
+    if (remote.uncertain || remote.blocked.contains(taskId)) {
+      throw const GitHubFailure(
+        '이 작업의 통합 데이터가 손상되었거나 서로 다릅니다. 해당 파일을 복구한 뒤 다시 통합하세요.',
+      );
     }
-    final current = remote[taskId];
+    final current = remote.tasks[taskId];
     final base = change['base'] == null
         ? null
         : WorkTask.fromJson(Map<String, dynamic>.from(change['base']));
@@ -113,52 +94,15 @@ extension AutoTaskIntegration on GitHubPublisher {
     if (current != null && task.version <= current.version) {
       throw const GitHubFailure('작업 버전이 통합본보다 새롭지 않습니다.');
     }
-    if (!author.manages) {
-      if (author.role != 'worker' || current == null) {
-        throw const GitHubFailure('작업 등록 권한이 없습니다.');
-      }
-      const assigned = [
-        'part',
-        'assigneeId',
-        'reviewerId',
-        'assignedDate',
-        'dueDate',
-        'priority',
-      ];
-      if (assigned.any((key) => current.data[key] != task.data[key])) {
-        throw const GitHubFailure('배정·일정·우선순위 변경은 PD / PM에게 허용됩니다.');
-      }
-      final worker = current.assigneeId == author.id;
-      final reviewer = current.reviewerId == author.id;
-      if (task.status == current.status) {
-        if (!worker ||
-            task.completedDate != current.completedDate ||
-            task.reworkReason != current.reworkReason) {
-          throw const GitHubFailure('작업 내용을 수정할 권한이 없습니다.');
-        }
-      } else {
-        final allowed =
-            task.status == 'doing' &&
-                ['todo', 'rework'].contains(current.status) &&
-                worker ||
-            task.status == 'review' &&
-                ['todo', 'doing', 'rework'].contains(current.status) &&
-                worker ||
-            ['done', 'rework'].contains(task.status) &&
-                current.status == 'review' &&
-                reviewer;
-        if (!allowed ||
-            !worker &&
-                [
-                  'title',
-                  'description',
-                ].any((key) => current.data[key] != task.data[key])) {
-          throw const GitHubFailure('담당 작업·검토 범위 밖의 상태 변경입니다.');
-        }
-      }
-    }
-    if (task.status == 'rework' && task.reworkReason.trim().isEmpty) {
-      throw const GitHubFailure('재작업 사유를 입력하세요.');
+    try {
+      validateTaskMutation(
+        actor: author,
+        next: task,
+        current: current,
+        allowCollapsedTransitions: true,
+      );
+    } on StateError catch (e) {
+      throw GitHubFailure(e.message.toString());
     }
     for (final id in [task.assigneeId, task.reviewerId]) {
       if (!manifest.people.any(
@@ -200,6 +144,17 @@ extension AutoTaskIntegration on GitHubPublisher {
       );
       if (merged?['sha'] is! String) {
         throw const GitHubFailure('통합 커밋을 확인하지 못했습니다. 다음 동기화 때 재시도합니다.');
+      }
+      final stagedFile = await api.call(
+        'GET',
+        '$root/contents/$path',
+        query: {'ref': merged['sha'] as String},
+      );
+      _decodeTaskProposal(stagedFile, path: path);
+      if (file['sha'] is! String || stagedFile['sha'] != file['sha']) {
+        throw const GitHubFailure(
+          'Git 통합 과정에서 검증한 작업 내용이 변경되었습니다. 최신 내용을 가져와 다시 제출하세요.',
+        );
       }
       final latest = await api.call('GET', '$root/pulls/${pr['number']}');
       final main = await api.call('GET', '$root/git/ref/heads/${config.base}');

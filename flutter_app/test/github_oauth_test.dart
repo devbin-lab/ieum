@@ -186,14 +186,15 @@ void main() {
     expect(await session.restoreOAuth(), isFalse);
   });
   test(
-    'temporary restore network failure keeps the vault for a later retry',
+    'temporary restore network failure opens the remembered local identity',
     () async {
       await login();
       session.signOut();
       final original = vault.value;
       session = GitHubSession(api: FailingIdentityApi(), oauth: oauth);
-      await expectLater(session.restoreOAuth(), throwsA(isA<GitHubFailure>()));
-      expect(session.user, isNull);
+      expect(await session.restoreOAuth(), isTrue);
+      expect(session.offline, isTrue);
+      expect(session.user!.id, 'gh-1');
       expect(vault.value, original);
       session = GitHubSession(api: api, oauth: oauth);
       expect(await session.restoreOAuth(), isTrue);

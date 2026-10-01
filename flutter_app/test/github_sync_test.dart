@@ -318,7 +318,7 @@ void main() {
     expect(sync.jobs.single['state'], 'sent');
     sync.disable();
     store.save(newTask('로컬만'));
-    expect(sync.jobs, hasLength(1));
+    expect(sync.jobs, hasLength(2));
   });
 
   test(
@@ -385,36 +385,33 @@ void main() {
     },
   );
 
-  test(
-    'automatic pull keeps conflicting local edits and stops whole import',
-    () async {
-      sync.dispose();
-      final original = store.find('IE-101');
-      store.setProfile('pm');
-      store.save({
-        ...original.data,
-        'title': '개인 제목',
-      }, expectedVersion: original.version);
-      final remote = original.copy({
-        'title': '팀 제목',
-        'version': original.version + 1,
-      });
-      api.addMainProposal({
-        'schemaVersion': 1,
-        'projectId': 'ieum-demo',
-        'changes': [
-          {'task': remote.data},
-        ],
-      }, remote.id);
-      sync = GitHubSync(store, publisher: publisher);
-      await sync.pullLatest();
-      expect(store.find(original.id).title, '개인 제목');
-      expect(store.baseline[original.id]!.title, original.title);
-      expect(sync.pullMessage, contains('충돌'));
-      expect(store.meta('github.pullRevision'), isEmpty);
-      expect(store.meta('github.pullConflicts'), isNotEmpty);
-    },
-  );
+  test('automatic pull isolates conflicting local edits and records remote revision', () async {
+    sync.dispose();
+    final original = store.find('IE-101');
+    store.setProfile('pm');
+    store.save({
+      ...original.data,
+      'title': '개인 제목',
+    }, expectedVersion: original.version);
+    final remote = original.copy({
+      'title': '팀 제목',
+      'version': original.version + 1,
+    });
+    api.addMainProposal({
+      'schemaVersion': 1,
+      'projectId': 'ieum-demo',
+      'changes': [
+        {'task': remote.data},
+      ],
+    }, remote.id);
+    sync = GitHubSync(store, publisher: publisher);
+    await sync.pullLatest();
+    expect(store.find(original.id).title, '개인 제목');
+    expect(store.baseline[original.id]!.title, original.title);
+    expect(sync.pullMessage, contains('충돌'));
+    expect(store.meta('github.pullRevision'), isNotEmpty);
+    expect(store.meta('github.pullConflicts'), isNotEmpty);
+  });
 
   test(
     'submission queue survives reopening and stores no session token',

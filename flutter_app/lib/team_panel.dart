@@ -250,7 +250,7 @@ class _TeamPanelState extends State<TeamPanel> {
             ),
           ),
         Text(
-          '내 역할: ${roleLabels[widget.store.actor.role]} · DB: ${widget.store.filename}',
+          '내 역할: ${roleLabels[widget.store.actor.role]} · ${widget.store.people.length}명 참여',
           style: const TextStyle(fontSize: 11),
         ),
         const SizedBox(height: 12),
@@ -278,9 +278,17 @@ class _TeamPanelState extends State<TeamPanel> {
         if (widget.store.owns) ...[
           const Divider(height: 24),
           const Text(
-            '가입 승인 대기 · 새로고침으로 요청을 확인하세요.',
+            '가입 승인 대기 · 요청을 자동으로 확인합니다.',
             style: TextStyle(fontSize: 12),
           ),
+          for (final warning in widget.session.requestWarnings)
+            Padding(
+              padding: const EdgeInsets.only(top: 10),
+              child: Text(
+                warning,
+                style: const TextStyle(fontSize: 11, color: Color(0xffbd6b7a)),
+              ),
+            ),
           for (final request in requests.where(
             (r) => r['projectId'] == widget.store.project!.id,
           ))

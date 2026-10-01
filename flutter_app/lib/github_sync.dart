@@ -9,6 +9,7 @@ import 'store.dart';
 import 'models.dart';
 
 part 'github_auto_merge.dart';
+part 'sync_payload.dart';
 
 class GitHubConfig {
   const GitHubConfig({
@@ -66,9 +67,10 @@ class GitHubConfig {
 }
 
 class GitHubFailure implements Exception {
-  const GitHubFailure(this.message, [this.status = 0]);
+  const GitHubFailure(this.message, [this.status = 0, this.retryAfter]);
   final String message;
   final int status;
+  final Duration? retryAfter;
   @override
   String toString() => message;
 }
@@ -118,7 +120,6 @@ class HttpGitHubApi implements GitHubApi {
           .bind(response)
           .join()
           .timeout(const Duration(seconds: 30));
-      final data = raw.isEmpty ? null : jsonDecode(raw);
       if (response.statusCode < 200 || response.statusCode >= 300) {
         final explanation = switch (response.statusCode) {
           401 => 'GitHub 인증이 만료되었거나 토큰이 올바르지 않습니다.',
@@ -128,9 +129,18 @@ class HttpGitHubApi implements GitHubApi {
           422 => 'GitHub가 변경을 거부했습니다. 브랜치·PR 상태를 확인하세요.',
           _ => 'GitHub 요청에 실패했습니다. HTTP ${response.statusCode}',
         };
-        throw GitHubFailure(explanation, response.statusCode);
+        throw GitHubFailure(
+          explanation,
+          response.statusCode,
+          githubRetryDelay(
+            response.statusCode,
+            response.headers.value('retry-after'),
+            response.headers.value('x-ratelimit-remaining'),
+            response.headers.value('x-ratelimit-reset'),
+          ),
+        );
       }
-      return data;
+      return raw.isEmpty ? null : jsonDecode(raw);
     } on SocketException {
       throw const GitHubFailure('네트워크에 연결할 수 없습니다. 작업은 로컬에 보관됩니다.');
     } on TimeoutException {
@@ -142,7 +152,13 @@ class HttpGitHubApi implements GitHubApi {
 }
 
 class SyncReceipt {
-  const SyncReceipt(this.prUrl, this.commitSha, this.branch);
+  const SyncReceipt(
+    this.prUrl,
+    this.commitSha,
+    this.branch, {
+    this.integrated = false,
+  });
+  final bool integrated;
   final String prUrl, commitSha, branch;
 }
 
@@ -150,6 +166,17 @@ class GitHubPublisher {
   GitHubPublisher(this.api);
   final GitHubApi api;
   final Map<String, Map<String, dynamic>> _blobCache = {};
+  final Map<String, String> _badBlobs = {};
+  final Map<String, Map<String, dynamic>> _snapshots = {};
+  Map<String, dynamic>? _checkedIdentity;
+
+  Future<String> head(GitHubConfig config) async {
+    final ref = await api.call(
+      'GET',
+      '/repos/${config.slug}/git/ref/heads/${config.base}',
+    );
+    return ref['object']['sha'] as String;
+  }
 
   Future<ProjectManifest> project(GitHubConfig config, {String? ref}) async {
     final file = await api.call(
@@ -170,9 +197,10 @@ class GitHubPublisher {
 
   Future<Person> projectActor(
     GitHubConfig config,
-    ProjectManifest manifest,
-  ) async {
-    final identity = await api.call('GET', '/user');
+    ProjectManifest manifest, {
+    Map<String, dynamic>? checkedIdentity,
+  }) async {
+    final identity = checkedIdentity ?? await api.call('GET', '/user');
     final people = manifest.people.where((p) => p.id == 'gh-${identity['id']}');
     if (people.isEmpty || !people.first.active) {
       throw const GitHubFailure('가입 승인을 받거나 현재 역할을 확인하세요.');
@@ -180,14 +208,20 @@ class GitHubPublisher {
     return people.first;
   }
 
-  Future<String> check(GitHubConfig config) async {
+  Future<String> check(GitHubConfig config, {bool readBase = true}) async {
     config.validate();
-    final user = await api.call('GET', '/user');
-    final repository = await api.call('GET', '/repos/${config.slug}');
+    final checked = await Future.wait([
+      api.call('GET', '/user'),
+      api.call('GET', '/repos/${config.slug}'),
+      if (readBase)
+        api.call('GET', '/repos/${config.slug}/git/ref/heads/${config.base}'),
+    ]);
+    final user = checked[0];
+    final repository = checked[1];
+    _checkedIdentity = Map<String, dynamic>.from(user);
     if (repository['permissions']?['push'] != true) {
       throw const GitHubFailure('이 저장소에 개인 브랜치를 올릴 수 있는 쓰기 권한이 필요합니다.');
     }
-    await api.call('GET', '/repos/${config.slug}/git/ref/heads/${config.base}');
     return user['login'] as String;
   }
 
@@ -195,41 +229,36 @@ class GitHubPublisher {
     GitHubConfig config,
     Map<String, dynamic> job,
   ) async {
-    final login = await check(config);
+    final login = await check(config, readBase: false);
     if (job['githubLogin'] != null && job['githubLogin'] != login) {
       throw const GitHubFailure('이 작업을 등록한 GitHub 계정으로 다시 연결하세요.');
     }
     final proposal = job['proposal'] as Map;
     if (proposal['projectId'] != 'ieum-demo') {
       final manifest = await project(config);
-      final actor = await projectActor(config, manifest);
+      final actor = await projectActor(
+        config,
+        manifest,
+        checkedIdentity: _checkedIdentity,
+      );
       if (manifest.id != proposal['projectId'] ||
           actor.id != proposal['authorId']) {
         throw const GitHubFailure('프로젝트 또는 로그인한 작업 작성자가 다릅니다.');
       }
       final change = (proposal['changes'] as List).single as Map;
       final task = WorkTask.fromJson(Map<String, dynamic>.from(change['task']));
-      final base = change['base'];
-      if (!actor.manages) {
-        if (actor.role != 'worker' || base is! Map) {
-          throw const GitHubFailure('작업 등록·전송 권한이 없습니다.');
-        }
-        final worker = base['assigneeId'] == actor.id;
-        final reviewer = base['reviewerId'] == actor.id;
-        final assignments = [
-          'part',
-          'assigneeId',
-          'reviewerId',
-          'assignedDate',
-          'dueDate',
-          'priority',
-        ];
-        if (assignments.any((f) => base[f] != task.data[f]) ||
-            (!worker && !reviewer) ||
-            ['done', 'rework'].contains(task.status) && !reviewer ||
-            !['done', 'rework'].contains(task.status) && !worker) {
-          throw const GitHubFailure('배정된 작업·검토 범위 밖의 변경입니다.');
-        }
+      final base = change['base'] == null
+          ? null
+          : WorkTask.fromJson(Map<String, dynamic>.from(change['base']));
+      try {
+        validateTaskMutation(
+          actor: actor,
+          next: task,
+          current: base,
+          allowCollapsedTransitions: true,
+        );
+      } on StateError catch (e) {
+        throw GitHubFailure(e.message.toString());
       }
       for (final id in [task.assigneeId, task.reviewerId]) {
         if (!manifest.people.any(
@@ -258,7 +287,7 @@ class GitHubPublisher {
       'head': '${config.slug.split('/').first}:$branch',
       'base': config.base,
     };
-    var prs = await api.call('GET', '$root/pulls', query: query) as List;
+    List prs;
     final baseRef = await api.call('GET', '$root/git/ref/heads/${config.base}');
     try {
       await api.call('GET', '$root/git/ref/heads/$branch');
@@ -301,6 +330,10 @@ class GitHubPublisher {
       'githubLogin': login,
     };
     final content = '${const JsonEncoder.withIndent('  ').convert(payload)}\n';
+    _validateTaskProposal(payload);
+    if (utf8.encode(content).length > _maxTaskJsonBytes) {
+      throw const GitHubFailure('작업 JSON은 1MB 이하만 지원합니다.');
+    }
     String? fileSha;
     bool unchanged = false;
     try {
@@ -339,6 +372,36 @@ class GitHubPublisher {
     if (prs.isNotEmpty) {
       return SyncReceipt(prs.first['html_url'] as String, commitSha, branch);
     }
+    // A POST response can be lost after another app already integrated the PR.
+    // Check the authoritative file before attempting another no-diff PR.
+    if (unchanged) {
+      try {
+        final mainFile = await api.call(
+          'GET',
+          path,
+          query: {'ref': config.base},
+        );
+        if (mainFile['encoding'] == 'base64' &&
+            utf8.decode(
+                  base64Decode(
+                    (mainFile['content'] as String).replaceAll(
+                      RegExp(r'\s'),
+                      '',
+                    ),
+                  ),
+                ) ==
+                content) {
+          return SyncReceipt(
+            job['prUrl'] as String? ?? '',
+            commitSha,
+            branch,
+            integrated: true,
+          );
+        }
+      } on GitHubFailure catch (e) {
+        if (e.status != 404) rethrow;
+      }
+    }
     try {
       final pr = await api.call(
         'POST',
@@ -361,80 +424,183 @@ class GitHubPublisher {
     }
   }
 
-  Future<Map<String, dynamic>?> pull(
-    GitHubConfig config,
-    String previous,
-  ) async {
-    config.validate();
-    final root = '/repos/${config.slug}';
-    final ref = await api.call('GET', '$root/git/ref/heads/${config.base}');
-    final revision = ref['object']['sha'] as String;
-    if (revision == previous) return null;
+  Future<List<Map<String, dynamic>>> _taskFiles(
+    String root,
+    String revision, {
+    bool Function()? cancelled,
+  }) async {
+    if (cancelled?.call() == true) throw const _SyncInterrupted();
     final commit = await api.call('GET', '$root/git/commits/$revision');
-    final tree = await api.call(
+    final rootTree = await api.call(
       'GET',
       '$root/git/trees/${commit['tree']['sha']}',
-      query: {'recursive': '1'},
     );
-    if (tree['truncated'] == true) {
-      throw const GitHubFailure('저장소가 커서 통합 데이터를 모두 확인하지 못했습니다.');
+    if (rootTree['truncated'] == true) {
+      throw const GitHubFailure('저장소 최상위 파일 목록을 모두 확인하지 못했습니다.');
     }
-    final files = (tree['tree'] as List)
-        .where(
-          (entry) =>
-              entry['type'] == 'blob' &&
-              (entry['path'] as String).startsWith('.ieum/changes/') &&
-              (entry['path'] as String).endsWith('.json'),
-        )
-        .toList();
-    if (files.length > 1000) {
-      throw const GitHubFailure('현재 자동 통합은 작업 파일 1000개까지 지원합니다.');
+    final entries = rootTree['tree'] as List;
+    // Older fixtures and compatible Git providers return flattened trees.
+    if (entries.any(
+      (e) => (e['path'] as String).startsWith('.ieum/changes/'),
+    )) {
+      return entries
+          .where(
+            (e) =>
+                e['type'] == 'blob' &&
+                (e['path'] as String).startsWith('.ieum/changes/') &&
+                (e['path'] as String).endsWith('.json'),
+          )
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
     }
+    final ieum = entries.where(
+      (e) => e['path'] == '.ieum' && e['type'] == 'tree',
+    );
+    if (ieum.isEmpty) return [];
+    final settings = await api.call(
+      'GET',
+      '$root/git/trees/${ieum.single['sha']}',
+    );
+    if (settings['truncated'] == true) {
+      throw const GitHubFailure('프로젝트 폴더 목록을 모두 확인하지 못했습니다.');
+    }
+    final changes = (settings['tree'] as List).where(
+      (e) => e['path'] == 'changes' && e['type'] == 'tree',
+    );
+    if (changes.isEmpty) return [];
+    final result = <Map<String, dynamic>>[];
+    Future<void> visit(String sha, String prefix, int depth) async {
+      if (cancelled?.call() == true) throw const _SyncInterrupted();
+      if (depth > 5) throw const GitHubFailure('작업 폴더의 구조가 너무 깊습니다.');
+      final tree = await api.call('GET', '$root/git/trees/$sha');
+      if (tree['truncated'] == true) {
+        throw const GitHubFailure('작업 폴더 목록을 모두 확인하지 못했습니다.');
+      }
+      for (final entry in tree['tree'] as List) {
+        final path = '$prefix/${entry['path']}';
+        if (entry['type'] == 'tree') {
+          await visit(entry['sha'] as String, path, depth + 1);
+        } else if (entry['type'] == 'blob' && path.endsWith('.json')) {
+          result.add({...Map<String, dynamic>.from(entry), 'path': path});
+        }
+      }
+    }
+
+    await visit(changes.single['sha'] as String, '.ieum/changes', 0);
+    return result;
+  }
+
+  Future<Map<String, dynamic>?> pull(
+    GitHubConfig config,
+    String previous, {
+    String? revision,
+    bool Function()? cancelled,
+  }) async {
+    config.validate();
+    final root = '/repos/${config.slug}';
+    revision ??= await head(config);
+    if (revision == previous) return null;
+    final key = '${config.slug}:$revision';
+    if (_snapshots.containsKey(key)) return _snapshots[key];
+    final files = await _taskFiles(root, revision, cancelled: cancelled);
     final proposals = <Map<String, dynamic>>[];
+    final quarantined = <Map<String, dynamic>>[];
     for (final file in files) {
-      final cached = _blobCache[file['sha']];
-      if (cached != null) {
-        proposals.add(cached);
-        continue;
+      if (cancelled?.call() == true) throw const _SyncInterrupted();
+      final sha = file['sha'] as String;
+      final path = file['path'] as String;
+      String? error = _badBlobs['$sha:$path'];
+      var proposal = _blobCache['$sha:$path'];
+      if (error == null && proposal == null) {
+        if ((file['size'] as int? ?? 0) > _maxTaskJsonBytes) {
+          error = '작업 JSON은 1MB 이하만 지원합니다.';
+        } else {
+          // Transport errors must not be mistaken for corrupt data: retry this
+          // revision instead of committing an incomplete authoritative snapshot.
+          final blob = await api.call('GET', '$root/git/blobs/$sha');
+          try {
+            proposal = _decodeTaskProposal(blob, path: path);
+          } catch (e) {
+            error = e is GitHubFailure
+                ? e.message
+                : '작업 JSON의 형식·버전·항목을 확인하세요.';
+          }
+        }
       }
-      if ((file['size'] as int? ?? 0) > 1024 * 1024) {
-        throw const GitHubFailure('작업 JSON은 1MB 이하만 지원합니다.');
+      if (error != null) {
+        _badBlobs['$sha:$path'] = error;
+        quarantined.add({
+          'path': path,
+          'taskId': _taskIdAtPath(path),
+          'error': error,
+        });
+      } else if (proposal != null) {
+        _blobCache['$sha:$path'] = proposal;
+        proposals.add(proposal);
       }
-      final blob = await api.call('GET', '$root/git/blobs/${file['sha']}');
-      if (blob['encoding'] != 'base64') {
-        throw const GitHubFailure('작업 파일 형식을 확인하세요.');
-      }
-      final content = utf8.decode(
-        base64Decode((blob['content'] as String).replaceAll(RegExp(r'\s'), '')),
-      );
-      final data = jsonDecode(content);
-      if (data is! Map) throw const GitHubFailure('통합 작업 JSON이 올바르지 않습니다.');
-      final proposal = Map<String, dynamic>.from(data);
-      _blobCache[file['sha'] as String] = proposal;
-      proposals.add(proposal);
     }
-    return {'revision': revision, 'proposals': proposals};
+    if (_blobCache.length > 20000) _blobCache.clear();
+    if (_badBlobs.length > 20000) _badBlobs.clear();
+    if (_snapshots.length >= 4) _snapshots.remove(_snapshots.keys.first);
+    return _snapshots[key] = {
+      'revision': revision,
+      'proposals': proposals,
+      'quarantined': quarantined,
+    };
   }
 
   Future<List<Map<String, dynamic>>> openRequests(GitHubConfig config) async {
-    final prs = await api.call(
-      'GET',
-      '/repos/${config.slug}/pulls',
-      query: {'state': 'open', 'base': config.base, 'per_page': '100'},
-    ) as List;
-    return prs
-        .where(
-          (pr) =>
-              !((pr['head']['ref'] as String).startsWith('ieum/members/') &&
-                  (pr['head']['ref'] as String).split('/').length == 3) &&
-              ((pr['head']['ref'] as String).startsWith('ieum/') ||
-                  config.branch.isNotEmpty &&
-                      (pr['head']['ref'] as String).startsWith(
-                        '${config.branch}/',
-                      )),
-        )
-        .map((pr) => Map<String, dynamic>.from(pr))
-        .toList();
+    final all = <Map<String, dynamic>>[];
+    final seen = <dynamic>{};
+    for (var page = 1; ; page++) {
+      final prs = await api.call(
+        'GET',
+        '/repos/${config.slug}/pulls',
+        query: {
+          'state': 'open',
+          'base': config.base,
+          'per_page': '100',
+          'page': '$page',
+          'sort': 'created',
+          'direction': 'asc',
+        },
+      ) as List;
+      var added = 0;
+      for (final raw in prs) {
+        final pr = Map<String, dynamic>.from(raw);
+        if (!seen.add(pr['number'])) continue;
+        added++;
+        final branch = pr['head']['ref'] as String;
+        if (branch.startsWith('ieum/members/') &&
+            branch.split('/').length == 3) {
+          continue;
+        }
+        if (branch.startsWith('ieum/') ||
+            config.branch.isNotEmpty &&
+                branch.startsWith('${config.branch}/')) {
+          all.add(pr);
+        }
+      }
+      if (prs.length < 100 || added == 0) break;
+    }
+    return all;
+  }
+
+  Future<Map<String, dynamic>> requestState(
+    GitHubConfig config,
+    String url,
+  ) async {
+    final prefix = 'https://github.com/${config.slug}/pull/';
+    if (!url.startsWith(prefix) ||
+        !RegExp(r'^\d+$').hasMatch(url.substring(prefix.length))) {
+      throw const GitHubFailure('이 프로젝트의 PR 주소가 아닙니다.');
+    }
+    return Map<String, dynamic>.from(
+      await api.call(
+        'GET',
+        '/repos/${config.slug}/pulls/${url.substring(prefix.length)}',
+      ),
+    );
   }
 
   Future<Map<String, dynamic>> review(GitHubConfig config, String url) async {
@@ -482,11 +648,33 @@ class GitHubPublisher {
     };
   }
 
-  Future<void> approve(GitHubConfig config, Map<String, dynamic> review) async {
+  Future<void> approve(
+    GitHubConfig config,
+    Map<String, dynamic> reviewed, {
+    bool demo = false,
+  }) async {
+    ProjectManifest? manifest;
+    try {
+      manifest = await project(config);
+    } on GitHubFailure catch (e) {
+      if (e.status != 404 || !demo) rethrow;
+    }
+    if (manifest != null) {
+      await integrateTask(
+        config,
+        reviewed['url'] as String,
+        projectId: manifest.id,
+        ownerId: manifest.ownerId,
+        expectedHead: reviewed['sha'] as String,
+      );
+      return;
+    }
+    // The bundled offline demo has no project manifest. Keep its preview flow;
+    // real project callers require their manifest before reaching this method.
     final result = await api.call(
       'PUT',
-      '/repos/${config.slug}/pulls/${review['number']}/merge',
-      body: {'sha': review['sha'], 'merge_method': 'merge'},
+      '/repos/${config.slug}/pulls/${reviewed['number']}/merge',
+      body: {'sha': reviewed['sha'], 'merge_method': 'merge'},
     );
     if (result['merged'] != true) {
       throw const GitHubFailure('PR을 통합하지 못했습니다. 충돌·승인 조건을 확인하세요.');
@@ -502,6 +690,56 @@ class GitHubSync extends ChangeNotifier {
   final TaskStore store;
   late final GitHubPublisher publisher;
   bool busy = false, pulling = false, _disposed = false;
+  bool _paused = false, _cycling = false;
+  DateTime? _retryUntil;
+  final Map<String, ({String key, DateTime at})> _integrationAttempts = {};
+  static const pollInterval = Duration(seconds: 5);
+  DateTime? get retryAt => _retryUntil;
+  bool get _waiting => _retryUntil?.isAfter(DateTime.now()) == true;
+
+  Future<void> quiesce() async {
+    _paused = true;
+    _timer?.cancel();
+    _timer = null;
+    while (!_disposed && (busy || pulling || _cycling)) {
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+    }
+  }
+
+  void resume() {
+    if (_disposed) return;
+    _paused = false;
+    start();
+  }
+
+  void _recordFailure(Object error) {
+    if (error is GitHubFailure && error.retryAfter != null) {
+      _retryUntil = DateTime.now().add(error.retryAfter!);
+    }
+  }
+
+  void _backfill() {
+    if (_disposed || !config.enabled) return;
+    final queued = {for (final job in jobs) job['taskId']: job};
+    for (final change in store.changes) {
+      final id = change['taskId'] as String;
+      final job = queued[id];
+      if (job == null) {
+        store.queueGitHub(store.find(id));
+      } else {
+        final submitted = WorkTask.fromJson(
+          Map<String, dynamic>.from(
+            (job['proposal']['changes'] as List).single['task'],
+          ),
+        );
+        final local = store.find(id);
+        if (!submitted.same(local) && job['state'] != 'sending') {
+          store.queueGitHub(local);
+        }
+      }
+    }
+  }
+
   Timer? _timer;
   String pullMessage = '';
   String autoMergeMessage = '';
@@ -577,6 +815,7 @@ class GitHubSync extends ChangeNotifier {
           throw const GitHubFailure('이 DB와 연결된 프로젝트 저장소가 아닙니다.');
         }
         final user = await publisher.api.call('GET', '/user');
+        if (_disposed) return;
         if ('gh-${user['id']}' != store.profileId) {
           throw const GitHubFailure('이 DB를 등록한 GitHub 계정으로 로그인하세요.');
         }
@@ -598,18 +837,45 @@ class GitHubSync extends ChangeNotifier {
   }
 
   void start() {
-    if (_disposed) return;
+    if (_disposed || _paused) return;
+    _backfill();
     _timer ??= Timer.periodic(
-      const Duration(seconds: 30),
-      (_) => unawaited(cycle(retryFailed: true)),
+      pollInterval,
+      (_) => unawaited(cycle(retryFailed: true, background: true)),
     );
-    unawaited(cycle());
+    unawaited(cycle(retryFailed: true));
   }
 
-  Future<void> cycle({bool retryFailed = false}) async {
-    await drain(retryFailed: retryFailed);
-    if (!_disposed) await integratePending();
-    if (!_disposed) await pullLatest();
+  Future<void> cycle({
+    bool retryFailed = false,
+    bool background = false,
+  }) async {
+    if (_disposed ||
+        _paused ||
+        _cycling ||
+        busy ||
+        pulling ||
+        _waiting ||
+        !config.enabled) {
+      return;
+    }
+    _cycling = true;
+    try {
+      _backfill();
+      // One main-head read and one paginated PR listing while nothing changed.
+      // Download manifests/JSON and validate merges only when there is new work.
+      await pullLatest();
+      if (_disposed || _paused || _waiting) return;
+      await drain(retryFailed: retryFailed, respectRetrySchedule: background);
+      if (!_disposed && !_paused && !_waiting) {
+        await integratePending(
+          requests: openRequests,
+          skipUnchanged: background,
+        );
+      }
+    } finally {
+      _cycling = false;
+    }
   }
 
   void setAutoMerge(bool enabled) {
@@ -622,41 +888,76 @@ class GitHubSync extends ChangeNotifier {
     if (enabled) unawaited(cycle());
   }
 
-  Future<void> integratePending() async {
-    if (_disposed || busy || pulling || !config.enabled || !autoMergeEnabled) {
+  Future<void> integratePending({
+    List<Map<String, dynamic>>? requests,
+    bool skipUnchanged = false,
+  }) async {
+    if (_disposed ||
+        _paused ||
+        busy ||
+        pulling ||
+        _waiting ||
+        !config.enabled ||
+        !autoMergeEnabled) {
       return;
     }
     busy = true;
     _notify();
     final settings = config;
+    final projectId = store.project!.id, ownerId = store.project!.ownerId;
+    final executor = store.actor;
+    var merged = 0, attempted = 0;
     try {
-      final manifest = await publisher.project(settings);
-      final executor = await publisher.projectActor(settings, manifest);
-      if (!executor.active || executor.role == 'viewer') return;
-      final requests = await publisher.openRequests(settings);
-      if (_disposed || !config.enabled) return;
+      requests ??= await publisher.openRequests(settings);
+      if (_disposed || _paused || !config.enabled) return;
+      openRequests = requests;
       autoMergeErrors.removeWhere(
-        (url, _) => !requests.any((pr) => pr['html_url'] == url),
+        (url, _) => !requests!.any((pr) => pr['html_url'] == url),
       );
-      var merged = 0;
-      for (final pr in requests.reversed) {
-        if (_disposed || !config.enabled || !autoMergeEnabled) break;
+      _integrationAttempts.removeWhere(
+        (url, _) => !requests!.any((pr) => pr['html_url'] == url),
+      );
+      if (!executor.active || executor.role == 'viewer') return;
+      for (final pr in requests) {
+        if (_disposed ||
+            _paused ||
+            !config.enabled ||
+            !autoMergeEnabled ||
+            _waiting) {
+          break;
+        }
         if (!(pr['head']['ref'] as String).startsWith('ieum/tasks/')) continue;
         if (!executor.manages &&
-            pr['user']?['id'] != int.parse(executor.id.substring(3))) {
+            pr['user']?['id'].toString() !=
+                executor.id.replaceFirst('gh-', '')) {
           continue;
         }
         final url = pr['html_url'] as String;
+        final key = '${pr['head']['sha']}:${store.meta('github.pullRevision')}';
+        final attempt = _integrationAttempts[url];
+        if (skipUnchanged &&
+            attempt?.key == key &&
+            DateTime.now().difference(attempt!.at) <
+                const Duration(minutes: 1)) {
+          continue;
+        }
+        _integrationAttempts[url] = (key: key, at: DateTime.now());
+        attempted++;
         try {
           await publisher.integrateTask(
             settings,
             url,
-            projectId: store.project!.id,
-            ownerId: store.project!.ownerId,
+            projectId: projectId,
+            ownerId: ownerId,
           );
+          if (_disposed) return;
           autoMergeErrors.remove(url);
+          openRequests = openRequests
+              .where((p) => p['html_url'] != url)
+              .toList();
           merged++;
         } catch (e) {
+          _recordFailure(e);
           autoMergeErrors[url] = e is GitHubFailure
               ? e.message
               : '작업 JSON을 검증하지 못했습니다. 자동 통합을 보류했습니다.';
@@ -668,6 +969,7 @@ class GitHubSync extends ChangeNotifier {
           ? '작업 PR $merged건을 자동 통합했습니다.'
           : '작업 PR을 검사한 뒤 자동 통합합니다.';
     } catch (e) {
+      _recordFailure(e);
       autoMergeMessage = e is GitHubFailure
           ? e.message
           : '자동 통합을 확인하지 못했습니다. 다음 동기화 때 재시도합니다.';
@@ -675,6 +977,7 @@ class GitHubSync extends ChangeNotifier {
       busy = false;
       _notify();
     }
+    if (attempted > 0 && !_disposed && !_paused) await pullLatest();
   }
 
   void disable() {
@@ -687,15 +990,27 @@ class GitHubSync extends ChangeNotifier {
   }
 
   void _onStoreChange() {
-    if (config.enabled && !pulling) unawaited(drain());
+    if (!_disposed && !_paused && config.enabled && !pulling) {
+      unawaited(drain());
+    }
   }
 
   void _notify() {
     if (!_disposed) notifyListeners();
   }
 
-  Future<void> drain({bool retryFailed = false}) async {
-    if (busy || pulling || _disposed || !config.enabled) return;
+  Future<void> drain({
+    bool retryFailed = false,
+    bool respectRetrySchedule = false,
+  }) async {
+    if (busy ||
+        pulling ||
+        _disposed ||
+        _paused ||
+        _waiting ||
+        !config.enabled) {
+      return;
+    }
     busy = true;
     _notify();
     final settings = config;
@@ -706,12 +1021,17 @@ class GitHubSync extends ChangeNotifier {
             (job) =>
                 job['state'] == 'pending' ||
                 job['state'] == 'sending' ||
-                retryFailed && job['state'] == 'failed',
+                retryFailed &&
+                    job['state'] == 'failed' &&
+                    (!respectRetrySchedule ||
+                        DateTime.tryParse(job['retryAt'] as String? ?? '')
+                                ?.isAfter(DateTime.now()) !=
+                            true),
           )
           .toList()
           .reversed;
       for (final job in pending) {
-        if (_disposed || !config.enabled) break;
+        if (_disposed || _paused || _waiting || !config.enabled) break;
         if (job['repository'] != settings.slug) {
           _put({
             ...job,
@@ -731,7 +1051,9 @@ class GitHubSync extends ChangeNotifier {
           submitted = true;
           _put({
             ...job,
-            'state': 'sent',
+            'state': receipt.integrated ? 'merged' : 'sent',
+            'attempts': 0,
+            'retryAt': '',
             'error': '',
             'prUrl': receipt.prUrl,
             'commitSha': receipt.commitSha,
@@ -742,18 +1064,35 @@ class GitHubSync extends ChangeNotifier {
           final message = e is GitHubFailure
               ? e.message
               : '전송하지 못했습니다. 연결 설정을 확인하고 재시도하세요.';
-          _put({...job, 'state': 'failed', 'error': message});
+          _recordFailure(e);
+          final attempts = ((job['attempts'] as int? ?? 0) + 1).clamp(1, 10);
+          final delay = e is GitHubFailure && e.retryAfter != null
+              ? e.retryAfter!
+              : Duration(seconds: (5 * (1 << (attempts - 1))).clamp(5, 300));
+          _put({
+            ...job,
+            'state': 'failed',
+            'error': message,
+            'attempts': attempts,
+            'retryAt': DateTime.now().add(delay).toUtc().toIso8601String(),
+          });
         }
       }
     } finally {
       busy = false;
       _notify();
     }
-    if (submitted && !_disposed && autoMergeEnabled && config.enabled) {
+    if (submitted &&
+        !_disposed &&
+        !_paused &&
+        autoMergeEnabled &&
+        config.enabled) {
       await integratePending();
       await pullLatest();
     }
     if (!_disposed &&
+        !_paused &&
+        !_waiting &&
         config.enabled &&
         jobs.any((job) => job['state'] == 'pending')) {
       unawaited(drain());
@@ -762,7 +1101,7 @@ class GitHubSync extends ChangeNotifier {
 
   void _put(Map<String, dynamic> job) {
     if (_disposed) return;
-    if (job['state'] == 'sent') {
+    if (job['state'] == 'sent' || job['state'] == 'merged') {
       store.db.execute(
         'INSERT INTO github_sent VALUES (?,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body',
         [job['revision'], jsonEncode(job)],
@@ -785,128 +1124,208 @@ class GitHubSync extends ChangeNotifier {
     _notify();
   }
 
+  Future<void> _reconcileRequests(
+    GitHubConfig settings,
+    Map<String, WorkTask> remoteTasks,
+  ) async {
+    final urls = openRequests.map((pr) => pr['html_url']).toSet();
+    for (final job in jobs) {
+      if (_disposed || _paused) return;
+      if (job['repository'] != settings.slug || job['state'] == 'merged') {
+        continue;
+      }
+      final submitted = WorkTask.fromJson(
+        Map<String, dynamic>.from(
+          (job['proposal']['changes'] as List).single['task'],
+        ),
+      );
+      final remote = remoteTasks[job['taskId']];
+      if (remote != null && remote.same(submitted)) {
+        _put({
+          ...job,
+          'state': 'merged',
+          'error': '',
+          'retryAt': '',
+          'attempts': 0,
+        });
+        continue;
+      }
+      final url = job['prUrl'] as String? ?? '';
+      if (url.isEmpty || urls.contains(url) || job['state'] != 'sent') continue;
+      final pr = await publisher.requestState(settings, url);
+      if (_disposed || _paused) return;
+      if (pr['merged'] == true || pr['merged_at'] != null) {
+        _put({...job, 'state': 'merged', 'error': ''});
+      } else if (pr['state'] == 'closed') {
+        // The change still exists locally. A fresh PR can be created without
+        // duplicating the commit, rather than leaving a permanent sent state.
+        _put({
+          ...job,
+          'state': 'pending',
+          'prUrl': '',
+          'error': '',
+          'attempts': 0,
+          'retryAt': '',
+        });
+      }
+    }
+  }
+
   Future<void> pullLatest() async {
-    if (_disposed || busy || pulling || !config.enabled) return;
+    if (_disposed ||
+        _paused ||
+        busy ||
+        pulling ||
+        _waiting ||
+        !config.enabled) {
+      return;
+    }
     pulling = true;
     _notify();
     final settings = config;
+    final previousRevision = store.meta('github.pullRevision');
+    final previousConflicts = store.meta('github.pullConflicts');
     try {
-      if (store.isProject) {
-        final manifest = await publisher.project(settings);
-        if (_disposed || !config.enabled) return;
-        store.updateProject(manifest);
-      }
+      final revision = await publisher.head(settings);
+      if (_disposed || _paused || !config.enabled) return;
       final data = await publisher.pull(
         settings,
-        store.meta('github.pullRevision'),
+        previousConflicts.isEmpty ? previousRevision : '',
+        revision: revision,
+        cancelled: () => _disposed || _paused,
       );
+      if (_disposed || _paused) return;
       final requests = await publisher.openRequests(settings);
-      if (_disposed || !config.enabled) return;
+      if (_disposed || _paused || !config.enabled) return;
       openRequests = requests;
-      if (data == null) return;
+      if (store.isProject &&
+          (revision != previousRevision || previousRevision.isEmpty)) {
+        final manifest = await publisher.project(settings, ref: revision);
+        if (_disposed || _paused || !config.enabled) return;
+        store.updateProject(manifest);
+      }
+      if (data == null) {
+        await _reconcileRequests(settings, store.baseline);
+        return;
+      }
+      final remote = _RemoteTasks(data, store.meta('projectId'));
+      store.setMeta(
+        'github.quarantined',
+        jsonEncode(data['quarantined'] ?? []),
+      );
+      if (remote.uncertain) {
+        pullMessage =
+            '작업 ID를 확인할 수 없는 손상 파일이 있습니다. 해당 파일을 복구해 주세요. ${remote.warnings.join(' / ')}';
+        return;
+      }
+      await _reconcileRequests(settings, remote.tasks);
+      if (_disposed || _paused || !config.enabled) return;
       final incoming = Map<String, WorkTask>.from(store.baseline);
       final acknowledged = Map<String, WorkTask>.from(store.baseline);
-      final sent = store.db
-          .select('SELECT body FROM github_sent')
-          .map(
-            (row) =>
-                Map<String, dynamic>.from(jsonDecode(row['body'] as String)),
-          )
-          .where((job) => job['repository'] == settings.slug)
-          .toList();
-      final remoteTasks = <String, WorkTask>{};
+      final receipts = [
+        ...store.db
+            .select('SELECT body FROM github_sent')
+            .map(
+              (row) =>
+                  Map<String, dynamic>.from(jsonDecode(row['body'] as String)),
+            ),
+        ...jobs,
+      ].where((job) => job['repository'] == settings.slug).toList();
       for (final proposal in data['proposals'] as List) {
         if (proposal['projectId'] != store.meta('projectId')) continue;
-        if (proposal['schemaVersion'] != 1 || proposal['changes'] is! List) {
-          throw const GitHubFailure('프로젝트 변경안 형식이 올바르지 않습니다.');
-        }
-        for (final change in proposal['changes'] as List) {
-          final task = WorkTask.fromJson(
-            Map<String, dynamic>.from(change['task'] as Map),
-          );
-          // A team may approve our PR and then advance the same task before
-          // our next poll. Treat our accepted proposal as a baseline first,
-          // so the later update does not conflict with our already-approved edit.
-          final base = acknowledged[task.id];
-          if ((base == null || base.version <= task.version) &&
-              sent.any((job) {
-                if (job['taskId'] != task.id ||
-                    job['githubLogin'] != proposal['githubLogin']) {
-                  return false;
-                }
-                final own = WorkTask.fromJson(
-                  Map<String, dynamic>.from(
-                    (job['proposal']['changes'] as List).single['task'],
-                  ),
-                );
-                return own.version == task.version && own.same(task);
-              })) {
-            acknowledged[task.id] = task;
-          }
-          final previous = remoteTasks[task.id];
-          if (previous != null &&
-              previous.version == task.version &&
-              !previous.same(task)) {
-            throw const GitHubFailure('동일 작업의 서로 다른 변경이 통합되어 있습니다. 확인이 필요합니다.');
-          }
-          if (previous == null || previous.version < task.version) {
-            remoteTasks[task.id] = task;
-          }
+        final task = WorkTask.fromJson(
+          Map<String, dynamic>.from(
+            (proposal['changes'] as List).single['task'],
+          ),
+        );
+        if (remote.blocked.contains(task.id)) continue;
+        final base = acknowledged[task.id];
+        if ((base == null || base.version <= task.version) &&
+            receipts.any((job) {
+              if (job['taskId'] != task.id ||
+                  job['githubLogin'] != proposal['githubLogin']) {
+                return false;
+              }
+              final own = WorkTask.fromJson(
+                Map<String, dynamic>.from(
+                  (job['proposal']['changes'] as List).single['task'],
+                ),
+              );
+              return own.version == task.version && own.same(task);
+            })) {
+          acknowledged[task.id] = task;
         }
       }
-      for (final task in remoteTasks.values) {
+      // A merged receipt can have been superseded in its author file already.
+      // Its exact submission is still the base against which newer local edits
+      // were made; only a confirmed merged PR may advance that acknowledgment.
+      for (final job in receipts.where((j) => j['state'] == 'merged')) {
+        final own = WorkTask.fromJson(
+          Map<String, dynamic>.from(
+            (job['proposal']['changes'] as List).single['task'],
+          ),
+        );
+        final latest = remote.tasks[own.id], base = acknowledged[own.id];
+        if (latest != null &&
+            latest.version >= own.version &&
+            (base == null || own.version > base.version)) {
+          acknowledged[own.id] = own;
+        }
+      }
+      for (final task in remote.tasks.values) {
         final base = incoming[task.id];
         if (base == null || base.version <= task.version) {
           incoming[task.id] = task;
         }
       }
-      final result = store.importSnapshot({
-        'schemaVersion': 1,
-        'projectId': store.meta('projectId'),
-        'revision': data['revision'],
-        'tasks': incoming.values.map((t) => t.data).toList(),
-      }, acknowledgedBases: acknowledged);
-      if (!result.applied) {
-        pullMessage =
-            '통합 충돌 ${result.conflicts.length}건: 개인 변경을 보존했습니다. 아래 충돌 내용을 확인하세요.';
-        store.setMeta('github.pullConflicts', jsonEncode(result.conflicts));
-      } else {
-        store.setMeta('github.pullRevision', data['revision'] as String);
-        store.setMeta('github.pullConflicts', '');
-        pullMessage = '승인된 통합본을 자동으로 가져왔습니다.';
+      final result = store.importSnapshot(
+        {
+          'schemaVersion': 1,
+          'projectId': store.meta('projectId'),
+          'revision': revision,
+          'tasks': incoming.values.map((t) => t.data).toList(),
+        },
+        acknowledgedBases: acknowledged,
+        allowPartial: true,
+      );
+      final conflicts = result.conflicts.map((c) => c['taskId']).toSet();
+      store.setMeta('github.pullRevision', revision);
+      store.setMeta(
+        'github.pullConflicts',
+        result.conflicts.isEmpty ? '' : jsonEncode(result.conflicts),
+      );
+      final messages = <String>[
+        '최신 작업을 동기화했습니다.',
+        if (result.conflicts.isNotEmpty)
+          '충돌 ${result.conflicts.length}건의 개인 변경을 보존했습니다. 다른 작업은 동기화됩니다.',
+        if (remote.warnings.isNotEmpty)
+          '손상·중복 작업 ${remote.blocked.length}건을 제외했습니다. ${remote.warnings.join(' / ')}',
+      ];
+      pullMessage = messages.join(' ');
+      if (autoMergeEnabled) {
         for (final job in jobs) {
-          if (job['state'] != 'sent') continue;
-          final remote = remoteTasks[job['taskId']];
-          final submitted = (job['proposal']['changes'] as List).first['task'];
-          if (remote != null &&
-              remote.same(
-                WorkTask.fromJson(Map<String, dynamic>.from(submitted)),
-              )) {
-            _put({...job, 'state': 'merged'});
+          if (conflicts.contains(job['taskId']) ||
+              remote.blocked.contains(job['taskId'])) {
+            continue;
           }
-        }
-        // Rebase newer local edits on the acknowledged submission. Their old
-        // queued proposal may have been captured while the previous PR merged.
-        if (autoMergeEnabled) {
-          for (final job in jobs) {
-            final local = store.tasks.where((t) => t.id == job['taskId']);
-            final remote = remoteTasks[job['taskId']];
-            if (local.isEmpty || remote == null || local.single.same(remote)) {
-              continue;
-            }
-            final submitted =
-                (job['proposal']['changes'] as List).single as Map;
-            final oldBase = submitted['base'];
-            if (oldBase == null ||
-                oldBase['version'] != remote.version ||
-                !WorkTask.fromJson(Map<String, dynamic>.from(oldBase))
-                    .same(remote)) {
-              store.queueGitHub(local.single);
-            }
+          final local = store.tasks.where((t) => t.id == job['taskId']);
+          final current = remote.tasks[job['taskId']];
+          if (local.isEmpty || current == null || local.single.same(current)) {
+            continue;
+          }
+          final submitted = (job['proposal']['changes'] as List).single as Map;
+          final oldBase = submitted['base'];
+          if (oldBase == null ||
+              oldBase['version'] != current.version ||
+              !WorkTask.fromJson(Map<String, dynamic>.from(oldBase))
+                  .same(current)) {
+            store.queueGitHub(local.single);
           }
         }
       }
     } catch (e) {
+      _recordFailure(e);
+      if (e is _SyncInterrupted) return;
       pullMessage = e is GitHubFailure
           ? e.message
           : '통합본을 가져오지 못했습니다. 개인 데이터는 보존했습니다.';
@@ -914,6 +1333,9 @@ class GitHubSync extends ChangeNotifier {
       pulling = false;
       _notify();
       if (!_disposed &&
+          !_paused &&
+          !_waiting &&
+          !_cycling &&
           config.enabled &&
           jobs.any((job) => job['state'] == 'pending')) {
         unawaited(drain());
@@ -921,8 +1343,116 @@ class GitHubSync extends ChangeNotifier {
     }
   }
 
+  Future<void> acceptRemote(
+    String taskId, {
+    required int expectedVersion,
+  }) async {
+    if (_disposed || _paused || busy || pulling || _waiting) {
+      throw StateError('진행 중인 동기화가 끝난 뒤 다시 선택하세요.');
+    }
+    if (store.find(taskId).version != expectedVersion) {
+      throw StateError('작업이 변경되었습니다. 내용을 다시 확인하세요.');
+    }
+    final settings = config;
+    final projectId = store.meta('projectId');
+    final profileId = store.profileId;
+    busy = true;
+    _notify();
+    try {
+      var snapshot = (await publisher.pull(settings, ''))!;
+      var remote = _RemoteTasks(snapshot, projectId);
+      if (remote.uncertain ||
+          remote.blocked.contains(taskId) ||
+          !remote.tasks.containsKey(taskId)) {
+        throw const GitHubFailure('정상적인 최신 작업을 확인하지 못했습니다. 통합 파일을 먼저 확인하세요.');
+      }
+      final requests = await publisher.openRequests(settings);
+      for (final pr in requests) {
+        final branch = pr['head']['ref'] as String;
+        if ('gh-${pr['user']?['id']}' != profileId ||
+            !branch.startsWith('ieum/tasks/') ||
+            !branch.endsWith('/$taskId')) {
+          continue;
+        }
+        await publisher.api.call(
+          'PATCH',
+          '/repos/${settings.slug}/pulls/${pr['number']}',
+          body: {'state': 'closed'},
+        );
+      }
+      final protection = await publisher.api.call(
+        'GET',
+        '/repos/${settings.slug}/branches/${Uri.encodeComponent(settings.base)}',
+      );
+      if (protection['protected'] != false) {
+        throw const GitHubFailure(
+          '보호 브랜치의 승인 조건 때문에 충돌 해결을 완료하지 못했습니다. 개인 변경은 보존했습니다.',
+        );
+      }
+      // Closing a PR alone does not fence an integrator that already read its
+      // open state. A same-tree commit advances main atomically, invalidating
+      // every integration prepared against the earlier parent without changing
+      // task data. A competing accepted merge is observed before trying again.
+      var fenced = false;
+      for (var attempt = 0; attempt < 3 && !fenced; attempt++) {
+        final revision = await publisher.head(settings);
+        final commit = await publisher.api.call(
+          'GET',
+          '/repos/${settings.slug}/git/commits/$revision',
+        );
+        final fence = await publisher.api.call(
+          'POST',
+          '/repos/${settings.slug}/git/commits',
+          body: {
+            'message': 'Resolve IEUM task $taskId against current main',
+            'tree': commit['tree']['sha'],
+            'parents': [revision],
+          },
+        );
+        try {
+          await publisher.api.call(
+            'PATCH',
+            '/repos/${settings.slug}/git/refs/heads/${settings.base}',
+            body: {'sha': fence['sha'], 'force': false},
+          );
+          fenced = true;
+        } on GitHubFailure catch (e) {
+          if (e.status != 409 && e.status != 422) rethrow;
+        }
+      }
+      if (!fenced) {
+        throw const GitHubFailure(
+          '다른 작업이 통합 중입니다. 잠시 후 다시 선택하세요. 개인 변경은 보존했습니다.',
+        );
+      }
+      // Include any competing integration that won before the fence.
+      snapshot = (await publisher.pull(settings, ''))!;
+      remote = _RemoteTasks(snapshot, projectId);
+      if (_disposed) return;
+      if (remote.uncertain ||
+          remote.blocked.contains(taskId) ||
+          !remote.tasks.containsKey(taskId)) {
+        throw const GitHubFailure('최신 작업을 다시 확인하지 못했습니다. 개인 변경은 보존했습니다.');
+      }
+      store.acceptRemoteTask(
+        remote.tasks[taskId]!,
+        expectedVersion: expectedVersion,
+      );
+      pullMessage = '개인 변경을 복구 기록에 보관하고 최신 통합본을 적용했습니다.';
+    } catch (e) {
+      _recordFailure(e);
+      rethrow;
+    } finally {
+      busy = false;
+      _notify();
+    }
+    await pullLatest();
+  }
+
   Future<void> approve(Map<String, dynamic> review) async {
-    if (busy || pulling) throw StateError('진행 중인 동기화가 끝난 뒤 승인하세요.');
+    if (_disposed || _paused || busy || pulling) {
+      throw StateError('진행 중인 동기화가 끝난 뒤 승인하세요.');
+    }
     busy = true;
     _notify();
     try {
@@ -931,11 +1461,12 @@ class GitHubSync extends ChangeNotifier {
         if (_disposed) return;
         store.updateProject(manifest);
         final actor = await publisher.projectActor(config, manifest);
+        if (_disposed) return;
         if (!actor.manages) {
           throw const GitHubFailure('통합 승인은 개설자 또는 PD / PM에게 허용됩니다.');
         }
       }
-      await publisher.approve(config, review);
+      await publisher.approve(config, review, demo: !store.isProject);
     } finally {
       busy = false;
       _notify();

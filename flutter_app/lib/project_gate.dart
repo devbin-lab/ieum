@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -9,6 +10,8 @@ import 'app.dart';
 import 'github_sync.dart';
 import 'github_oauth.dart';
 import 'project_service.dart';
+import 'project_catalog.dart';
+import 'project_picker.dart';
 import 'store.dart';
 import 'update_ui.dart';
 
@@ -29,43 +32,45 @@ class ProjectGate extends StatefulWidget {
 class _ProjectGateState extends State<ProjectGate> {
   late final GitHubSession session = widget.session ?? GitHubSession();
   final token = TextEditingController();
-  final repo = TextEditingController(text: 'devbin-lab/ieum-test-fresh');
+  final repo = TextEditingController();
   final nickname = TextEditingController();
   final projectName = TextEditingController();
   final folder = TextEditingController();
-  bool busy = false, creating = true;
+  bool busy = false, creating = true, booting = true, showingSetup = false;
+  late final ProjectCatalog catalog;
   bool rememberLogin = true, advancedLogin = false;
   DeviceGrant? grant;
   String error = '';
-  Map<String, dynamic>? recent;
+  SavedProject? get recent =>
+      session.user == null ? null : catalog.lastFor(session.user!.id);
   TaskStore? store;
   GitHubSync? sync;
 
   @override
   void initState() {
     super.initState();
-    try {
-      if (widget.preferences.existsSync()) {
-        recent = Map<String, dynamic>.from(
-          jsonDecode(widget.preferences.readAsStringSync()),
-        );
-      }
-    } catch (_) {
-      recent = null;
-    }
-    if (recent != null) {
-      repo.text = recent!['repository'] as String? ?? repo.text;
-    }
+    catalog = ProjectCatalog(widget.preferences);
+    session.connectionNotice.addListener(connectionChanged);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) restoreLogin();
     });
   }
 
+  void connectionChanged() {
+    if (mounted) setState(() {});
+  }
+
   @override
   void dispose() {
-    sync?.dispose();
-    store?.dispose();
-    session.signOut();
+    session.connectionNotice.removeListener(connectionChanged);
+    final previousSync = sync;
+    final previousStore = store;
+    unawaited(() async {
+      await previousSync?.quiesce();
+      previousSync?.dispose();
+      previousStore?.dispose();
+      session.signOut();
+    }());
     for (final field in [token, repo, nickname, projectName, folder]) {
       field.dispose();
     }
@@ -102,6 +107,7 @@ class _ProjectGateState extends State<ProjectGate> {
       setState(() {});
       UpdateScope.of(context)?.notifier?.credentialsChanged();
     }
+    await restoreProject();
   });
 
   void authenticated() {
@@ -112,9 +118,53 @@ class _ProjectGateState extends State<ProjectGate> {
     }
   }
 
-  Future<void> restoreLogin() => run(() async {
-    if (await session.restoreOAuth() && mounted) authenticated();
-  });
+  Future<void> restoreLogin() async {
+    await run(() async {
+      if (session.user != null || await session.restoreOAuth()) {
+        if (!mounted) return;
+        authenticated();
+        await restoreProject();
+      }
+    });
+    if (mounted) setState(() => booting = false);
+  }
+
+  Future<void> restoreProject() async {
+    final identity = session.user;
+    if (identity == null) return;
+    final legacy = catalog.legacy;
+    if (legacy != null &&
+        legacy['path'] is String &&
+        File(legacy['path']).existsSync()) {
+      TaskStore? previous;
+      try {
+        previous = TaskStore(legacy['path']);
+        if (previous.isProject && previous.profileId == identity.id) {
+          catalog.remember(
+            identity.id,
+            SavedProject(
+              path: previous.filename,
+              name: previous.project!.name,
+              projectId: previous.project!.id,
+              config: GitHubConfig(
+                repository: legacy['repository'],
+                base: legacy['base'] ?? 'main',
+                branch: legacy['branch'] ?? '',
+                enabled: true,
+              ),
+            ),
+            migrateLegacy: true,
+          );
+        }
+      } finally {
+        previous?.dispose();
+      }
+    }
+    if (recent != null) {
+      repo.text = recent!.config.slug;
+      await openSaved(recent!);
+    }
+  }
 
   Future<void> openGitHub(String url) async {
     if (widget.openBrowser != null) {
@@ -141,37 +191,62 @@ class _ProjectGateState extends State<ProjectGate> {
           openGitHub(githubDeviceUrl);
         },
       );
-      if (mounted) authenticated();
+      if (mounted) {
+        authenticated();
+        await restoreProject();
+      }
     } finally {
       if (mounted) setState(() => grant = null);
     }
   });
 
-  Future<void> openStore(TaskStore next, GitHubConfig config) async {
+  Future<void> openStore(
+    TaskStore next,
+    GitHubConfig config, {
+    bool cached = false,
+  }) async {
+    final previousSync = sync;
+    final previousStore = store;
+    await previousSync?.quiesce();
     final service = GitHubSync(next, publisher: GitHubPublisher(session.api));
     try {
-      await service.connect(config);
-      if (!mounted) {
-        service.dispose();
-        next.dispose();
-        return;
+      if (!cached) {
+        try {
+          await service.connect(config);
+        } catch (error) {
+          if (!GitHubSession.transient(error)) rethrow;
+          cached = true;
+          session.connectionNotice.value =
+              '오프라인 · 저장된 프로젝트를 열었습니다. 연결되면 자동으로 동기화합니다.';
+        }
       }
-      final value = {
-        'path': next.filename,
-        'repository': config.slug,
-        'base': config.base,
-        'branch': config.branch,
-      };
-      widget.preferences.parent.createSync(recursive: true);
-      widget.preferences.writeAsStringSync(jsonEncode(value));
+      if (cached) {
+        next.setMeta('github.config', jsonEncode(config.toJson()));
+        next.setMeta('github.login', session.user!.login);
+      }
+      if (!mounted) throw StateError('프로젝트 열기가 취소되었습니다.');
+      catalog.remember(
+        session.user!.id,
+        SavedProject(
+          path: next.filename,
+          name: next.project!.name,
+          projectId: next.project!.id,
+          config: config,
+        ),
+      );
       setState(() {
         store = next;
         sync = service;
-        recent = value;
+        showingSetup = false;
       });
+      previousSync?.dispose();
+      previousStore?.dispose();
+      if (cached && config.enabled) service.start();
     } catch (_) {
+      await service.quiesce();
       service.dispose();
       next.dispose();
+      if (mounted && !showingSetup) previousSync?.resume();
       rethrow;
     }
   }
@@ -207,56 +282,131 @@ class _ProjectGateState extends State<ProjectGate> {
   });
 
   Future<void> reopen() => run(() async {
-    if (recent == null) return;
-    final path = recent!['path'] as String;
-    if (!File(path).existsSync()) {
-      throw StateError('DB 파일이 없습니다. 프로젝트 참여에서 저장 폴더를 다시 선택하세요.');
-    }
-    final next = TaskStore(path);
-    if (!next.isProject || next.profileId != session.user!.id) {
-      next.dispose();
-      throw StateError('다른 GitHub 사용자의 DB입니다. 내 계정으로 참여하세요.');
-    }
-    final config = GitHubConfig(
-      repository: recent!['repository'],
-      base: recent!['base'] ?? 'main',
-      branch: recent!['branch'] ?? '',
-      enabled: true,
-      autoMerge: next.meta('github.config').isEmpty
-          ? true
-          : GitHubConfig.fromJson(
-              jsonDecode(next.meta('github.config')) as Map<String, dynamic>,
-            ).autoMerge,
-    );
-    try {
-      final project = await session.loadProject(config);
-      next.updateProject(project);
-    } catch (_) {
-      next.dispose();
-      rethrow;
-    }
-    await openStore(next, config);
+    if (recent != null) await openSaved(recent!);
   });
 
-  void signOut() {
+  Future<void> openSaved(SavedProject entry) async {
+    if (store?.filename == entry.path) {
+      sync?.resume();
+      if (mounted) setState(() => showingSetup = false);
+      return;
+    }
+    if (!File(entry.path).existsSync()) {
+      throw StateError('DB 파일이 없습니다. 프로젝트 참여에서 기존 DB 저장 폴더를 선택하세요.');
+    }
+    final previousSync = sync;
+    await previousSync?.quiesce();
+    TaskStore? next;
+    try {
+      next = TaskStore(entry.path);
+      if (!next.isProject ||
+          next.profileId != session.user!.id ||
+          next.project!.id != entry.projectId) {
+        throw StateError('이 계정과 프로젝트에 등록된 DB가 아닙니다. 내 계정으로 참여하세요.');
+      }
+      final raw = next.meta('github.config');
+      final config = raw.isEmpty
+          ? entry.config
+          : GitHubConfig.fromJson(jsonDecode(raw));
+      var cached = session.offline;
+      if (!cached) {
+        try {
+          final project = await session.loadProject(config);
+          if (project.id != next.project!.id ||
+              project.ownerId != next.project!.ownerId) {
+            throw const GitHubFailure('이 DB와 연결된 프로젝트 저장소가 아닙니다.');
+          }
+          next.updateProject(project);
+        } catch (error) {
+          if (error is GitHubFailure && error.status == 401) {
+            await session.logout();
+            rethrow;
+          }
+          if (!GitHubSession.transient(error)) rethrow;
+          cached = true;
+          session.connectionNotice.value =
+              '오프라인 · 저장된 프로젝트를 열었습니다. 연결되면 자동으로 동기화합니다.';
+        }
+      }
+      final opened = next;
+      next = null; // openStore owns cleanup from here, including failure.
+      await openStore(opened, config, cached: cached);
+    } catch (_) {
+      next?.dispose();
+      if (mounted && !showingSetup) previousSync?.resume();
+      rethrow;
+    }
+  }
+
+  void showSetup(bool create) => run(() async {
+    await sync?.quiesce();
+    if (mounted) {
+      setState(() {
+        creating = create;
+        showingSetup = true;
+        projectName.clear();
+        repo.clear();
+        folder.clear();
+      });
+    }
+  });
+
+  void signOut() => run(() async {
+    await sync?.quiesce();
     sync?.dispose();
     sync = null;
     store?.dispose();
     store = null;
+    showingSetup = false;
     token.clear();
-    run(() async {
-      await session.logout();
-    });
-  }
+    await session.logout();
+  });
 
   @override
   Widget build(BuildContext context) {
-    if (store != null) {
-      return Workspace(
-        store: store!,
-        sync: sync,
-        session: session,
-        onSignOut: signOut,
+    if (booting) {
+      return const Scaffold(
+        body: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.all_inclusive, size: 44, color: purple),
+              SizedBox(height: 24),
+              SizedBox(
+                width: 24,
+                height: 24,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+              SizedBox(height: 18),
+              Text('내 작업 공간을 준비하고 있어요', style: TextStyle(color: muted)),
+            ],
+          ),
+        ),
+      );
+    }
+    if (store != null && session.user != null && !showingSetup) {
+      return AbsorbPointer(
+        absorbing: busy,
+        child: Workspace(
+          key: ObjectKey(store),
+          store: store!,
+          sync: sync,
+          session: session,
+          onSignOut: signOut,
+          sessionNotice: [
+            session.connectionNotice.value,
+            catalog.warning,
+            error,
+          ].where((s) => s.isNotEmpty).join(' · '),
+          projectSwitcher: ProjectPicker(
+            projects: catalog.forAccount(session.user!.id),
+            activePath: store!.filename,
+            busy: busy,
+            onSelected: (entry) => run(() => openSaved(entry)),
+            onCreate: () => showSetup(true),
+            onJoin: () => showSetup(false),
+          ),
+        ),
       );
     }
     final signedIn = session.user != null;
@@ -450,7 +600,9 @@ class _ProjectGateState extends State<ProjectGate> {
                       OutlinedButton(
                         key: const Key('reopen-project'),
                         onPressed: busy ? null : reopen,
-                        child: const Text('최근 프로젝트 열기'),
+                        child: Text(
+                          store != null ? '현재 프로젝트로 돌아가기' : '최근 프로젝트 열기',
+                        ),
                       ),
                       const SizedBox(height: 20),
                     ],
@@ -554,11 +706,14 @@ class _ProjectGateState extends State<ProjectGate> {
                       ],
                     ),
                   ],
-                  if (error.isNotEmpty)
+                  if (error.isNotEmpty || catalog.warning.isNotEmpty)
                     Padding(
                       padding: const EdgeInsets.only(top: 20),
                       child: Text(
-                        error,
+                        [
+                          error,
+                          catalog.warning,
+                        ].where((s) => s.isNotEmpty).join('\n'),
                         style: const TextStyle(
                           color: Color(0xffbd6b7a),
                           fontSize: 12,

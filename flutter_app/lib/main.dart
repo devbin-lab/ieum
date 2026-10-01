@@ -35,12 +35,13 @@ Future<void> main() async {
     const WindowOptions(
       size: Size(1480, 980),
       minimumSize: Size(1160, 740),
-      title: '이음 · Flutter 프로토타입',
+      title: '이음',
       titleBarStyle: TitleBarStyle.hidden,
       windowButtonVisibility: false,
       backgroundColor: Colors.white,
     ),
   );
+  var appStarted = false;
   try {
     final base =
         Platform.environment['IEUM_FLUTTER_DATA_DIR'] ??
@@ -64,6 +65,7 @@ Future<void> main() async {
         ),
       ),
     );
+    appStarted = true;
   } catch (e) {
     runApp(
       MaterialApp(
@@ -73,5 +75,26 @@ Future<void> main() async {
     );
   }
   await windowManager.show();
+  await WidgetsBinding.instance.endOfFrame;
+  // The distribution launcher waits for this signal before committing an update.
+  final startupMarker = Platform.environment['IEUM_STARTUP_MARKER'];
+  if (appStarted && startupMarker != null) {
+    try {
+      final root = Directory(
+        '${Platform.environment['LOCALAPPDATA']}${Platform.pathSeparator}Ieum${Platform.pathSeparator}builds',
+      ).absolute.uri.normalizePath().toFilePath();
+      final marker = File(
+        File(startupMarker).absolute.uri.normalizePath().toFilePath(),
+      );
+      if (marker.path.toLowerCase().startsWith(
+            '${root.toLowerCase()}${Platform.pathSeparator}',
+          ) &&
+          marker.uri.pathSegments.last.startsWith('.startup-')) {
+        await marker.writeAsString(appVersion, flush: true);
+      }
+    } catch (_) {
+      // Startup itself remains usable if the status marker cannot be written.
+    }
+  }
   if (Platform.environment['IEUM_DISABLE_UPDATES'] != '1') updater.start();
 }

@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:uuid/uuid.dart';
 
 import 'github_sync.dart';
@@ -11,9 +12,11 @@ import 'github_oauth.dart';
 class GitHubSession {
   GitHubSession({GitHubApi? api, GitHubOAuth? oauth})
     : oauth = oauth ?? GitHubOAuth() {
-    this.api = api ?? HttpGitHubApi(credential);
+    _rawApi = api ?? HttpGitHubApi(credential);
+    this.api = _SessionApi(this);
   }
   late final GitHubApi api;
+  late final GitHubApi _rawApi;
   final GitHubOAuth oauth;
   OAuthTokens? _oauthTokens;
   bool _remember = false;
@@ -24,6 +27,10 @@ class GitHubSession {
   String _token = '';
   bool _allowGitCredential = false;
   Person? user;
+  final connectionNotice = ValueNotifier<String>('');
+  bool get offline => connectionNotice.value.isNotEmpty;
+  final List<String> requestWarnings = [];
+  Future<void>? _revalidating;
   String get sessionToken => _token;
 
   Future<String> credential() async {
@@ -83,6 +90,7 @@ class GitHubSession {
         'schema': 1,
         'clientId': githubOAuthClientId,
         'userId': user?.id ?? _oauthUserId,
+        if (user != null) 'identity': user!.json,
         'tokens': _oauthTokens!.toJson(),
       }),
     );
@@ -108,9 +116,9 @@ class GitHubSession {
           throw const GitHubFailure('로그인이 변경되었습니다.', 401);
         }
         // Revalidate the identity with the new token before publishing it to callers.
-        final verifier = api is HttpGitHubApi
+        final verifier = _rawApi is HttpGitHubApi
             ? HttpGitHubApi(() async => next.access)
-            : api;
+            : _rawApi;
         final identity = await verifier.call('GET', '/user');
         if (expectedId != null && 'gh-${identity['id']}' != expectedId) {
           throw const GitHubFailure('GitHub 계정이 변경되었습니다. 다시 로그인하세요.', 401);
@@ -185,12 +193,17 @@ class GitHubSession {
     final raw = await oauth.vault.read();
     if (raw == null || generation != _authGeneration) return false;
     String expected;
+    Person? cached;
     try {
       final data = jsonDecode(raw) as Map<String, dynamic>;
       if (data['schema'] != 1 || data['clientId'] != githubOAuthClientId) {
         throw const FormatException();
       }
       expected = data['userId'] as String;
+      if (data['identity'] is Map) {
+        cached = Person.fromJson(Map<String, dynamic>.from(data['identity']));
+        if (cached.id != expected) throw const FormatException();
+      }
       _oauthUserId = expected;
       _oauthTokens = OAuthTokens.fromStored(
         Map<String, dynamic>.from(data['tokens']),
@@ -211,6 +224,7 @@ class GitHubSession {
         throw const GitHubFailure('GitHub 계정이 변경되었습니다. 다시 로그인하세요.', 401);
       }
       user = identity;
+      connectionNotice.value = '';
       _token = _oauthTokens!.access;
       await _saveOAuth(generation);
       return true;
@@ -218,12 +232,52 @@ class GitHubSession {
       if (generation == _authGeneration) {
         if (e.status == 401) {
           await logout();
+        } else if (cached != null && transient(e)) {
+          user = cached;
+          _token = _oauthTokens!.access;
+          connectionNotice.value =
+              '오프라인 · 이 컴퓨터에 저장된 프로젝트를 열었습니다. 연결되면 계정을 다시 확인하고 동기화합니다.';
+          return true;
         } else {
           signOut(); // Keep the vault on a temporary network failure.
         }
       }
       rethrow;
     }
+  }
+
+  static bool transient(Object error) =>
+      error is GitHubFailure &&
+      (error.status == 0 ||
+          error.status == 408 ||
+          error.status == 429 ||
+          error.status >= 500);
+
+  Future<void> _revalidate() async {
+    if (!offline) return;
+    if (_revalidating != null) return _revalidating!;
+    final generation = _authGeneration;
+    final expected = user?.id;
+    final operation = () async {
+      try {
+        final data = await _rawApi.call('GET', '/user');
+        if (generation != _authGeneration) {
+          throw const GitHubFailure('로그인이 변경되었습니다.', 401);
+        }
+        if ('gh-${data['id']}' != expected) {
+          throw const GitHubFailure('GitHub 계정이 변경되었습니다. 다시 로그인하세요.', 401);
+        }
+        connectionNotice.value = '';
+        await _saveOAuth(generation);
+      } on GitHubFailure catch (e) {
+        if (e.status == 401 && generation == _authGeneration) await logout();
+        rethrow;
+      } finally {
+        _revalidating = null;
+      }
+    }();
+    _revalidating = operation;
+    return operation;
   }
 
   Future<void> logout() async {
@@ -263,6 +317,8 @@ class GitHubSession {
     _token = '';
     _allowGitCredential = false;
     user = null;
+    connectionNotice.value = '';
+    _revalidating = null;
   }
 
   Person named(
@@ -358,7 +414,12 @@ class GitHubSession {
     if (repo['permissions']?['admin'] != true) {
       throw const GitHubFailure('프로젝트 최초 생성은 저장소 관리자에게 허용됩니다.');
     }
-    if (await readJson(config, '.ieum/project.json') != null) {
+    final existing = await readJson(config, '.ieum/project.json');
+    if (existing != null) {
+      final current = ProjectManifest.fromJson(existing['data']);
+      if (current.ownerId == user!.id && current.name == name.trim()) {
+        return current;
+      }
       throw const GitHubFailure('이미 프로젝트가 있습니다. 프로젝트 참여를 선택하세요.');
     }
     final owner = named(
@@ -373,12 +434,21 @@ class GitHubSession {
       'ownerId': owner.id,
       'members': [owner.json],
     });
-    await writeJson(
-      config,
-      '.ieum/project.json',
-      project.json,
-      message: 'Create IEUM project',
-    );
+    try {
+      await writeJson(
+        config,
+        '.ieum/project.json',
+        project.json,
+        message: 'Create IEUM project',
+      );
+    } on GitHubFailure catch (e) {
+      if (!transient(e) && e.status != 409 && e.status != 422) rethrow;
+      final recovered = await readJson(config, '.ieum/project.json');
+      if (recovered == null) rethrow;
+      final current = ProjectManifest.fromJson(recovered['data']);
+      if (current.ownerId != user!.id || current.name != name.trim()) rethrow;
+      return current;
+    }
     return project;
   }
 
@@ -467,47 +537,74 @@ class GitHubSession {
   }
 
   Future<List<Map<String, dynamic>>> requests(GitHubConfig config) async {
-    final prs = await api.call(
-      'GET',
-      '/repos/${config.slug}/pulls',
-      query: {'state': 'open', 'base': config.base, 'per_page': '100'},
-    ) as List;
+    requestWarnings.clear();
     final result = <Map<String, dynamic>>[];
-    for (final pr in prs) {
-      if (!(pr['head']['ref'] as String).startsWith('ieum/members/') ||
-          pr['head']['repo']?['full_name'] != config.slug) {
-        continue;
-      }
-      final files = await api.call(
+    final seen = <int>{};
+    for (var page = 1; ; page++) {
+      final prs = await api.call(
         'GET',
-        '/repos/${config.slug}/pulls/${pr['number']}/files',
-        query: {'per_page': '100'},
+        '/repos/${config.slug}/pulls',
+        query: {
+          'state': 'open',
+          'base': config.base,
+          'per_page': '100',
+          'page': '$page',
+        },
       ) as List;
-      if (files.length != 1 ||
-          !(files.single['filename'] as String).startsWith('.ieum/requests/')) {
-        continue;
+      var fresh = false;
+      for (final raw in prs) {
+        final number = raw is Map ? raw['number'] : null;
+        if (number is! int || !seen.add(number)) continue;
+        fresh = true;
+        try {
+          final pr = Map<String, dynamic>.from(raw);
+          if (!(pr['head']['ref'] as String).startsWith('ieum/members/') ||
+              pr['head']['repo']?['full_name'] != config.slug) {
+            continue;
+          }
+          final files = await api.call(
+            'GET',
+            '/repos/${config.slug}/pulls/$number/files',
+            query: {'per_page': '100'},
+          ) as List;
+          if (files.length != 1 ||
+              !(files.single['filename'] as String).startsWith(
+                '.ieum/requests/',
+              )) {
+            throw const FormatException('가입 요청 외의 파일이 포함되어 있습니다.');
+          }
+          final file = await readJson(
+            config,
+            files.single['filename'],
+            ref: pr['head']['sha'],
+          );
+          if (file == null) throw const FormatException('가입 요청 파일이 없습니다.');
+          final data = file['data'] as Map;
+          final member = Person.fromJson(
+            Map<String, dynamic>.from(data['member']),
+          );
+          if (data['schemaVersion'] != 1 ||
+              data['projectId'] is! String ||
+              member.id != 'gh-${pr['user']['id']}' ||
+              member.login != pr['user']['login'] ||
+              member.role != 'pending' ||
+              files.single['filename'] != '.ieum/requests/${member.id}.json') {
+            throw const FormatException('요청자 또는 가입 요청 형식이 올바르지 않습니다.');
+          }
+          result.add({
+            'member': member.json,
+            'projectId': data['projectId'],
+            'number': number,
+            'sha': pr['head']['sha'],
+          });
+        } catch (error) {
+          if (error is GitHubFailure && error.status == 401) rethrow;
+          requestWarnings.add(
+            '가입 요청 #$number 확인 실패: ${error is GitHubFailure ? error.message : '$error'.replaceFirst('Bad state: ', '').replaceFirst('FormatException: ', '')}',
+          );
+        }
       }
-      final file = await readJson(
-        config,
-        files.single['filename'],
-        ref: pr['head']['sha'],
-      );
-      if (file == null) continue;
-      final data = file['data'] as Map;
-      final member = Person.fromJson(Map<String, dynamic>.from(data['member']));
-      // Names cannot impersonate an account. Only the PR author's numeric ID registers.
-      if (member.id != 'gh-${pr['user']['id']}' ||
-          member.login != pr['user']['login'] ||
-          member.role != 'pending' ||
-          files.single['filename'] != '.ieum/requests/${member.id}.json') {
-        continue;
-      }
-      result.add({
-        'member': member.json,
-        'projectId': data['projectId'],
-        'number': pr['number'],
-        'sha': pr['head']['sha'],
-      });
+      if (prs.length < 100 || !fresh) break;
     }
     return result;
   }
@@ -588,5 +685,21 @@ class GitHubSession {
       '/repos/${config.slug}/collaborators/$login',
       body: {'permission': 'push'},
     );
+  }
+}
+
+/// After an offline restore, verify the token's account before any repository access.
+class _SessionApi implements GitHubApi {
+  const _SessionApi(this.session);
+  final GitHubSession session;
+  @override
+  Future<dynamic> call(
+    String method,
+    String path, {
+    Map<String, String>? query,
+    Map<String, dynamic>? body,
+  }) async {
+    if (path != '/user') await session._revalidate();
+    return session._rawApi.call(method, path, query: query, body: body);
   }
 }

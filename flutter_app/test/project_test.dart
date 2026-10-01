@@ -12,6 +12,7 @@ import 'package:ieum_flutter/project_service.dart';
 import 'package:ieum_flutter/store.dart';
 
 import 'github_sync_test.dart' show FakeGitHubApi, idle;
+import 'github_auto_merge_test.dart' show AutoMergeApi;
 import 'github_oauth_test.dart' show MemoryVault;
 
 import 'package:ieum_flutter/github_oauth.dart';
@@ -272,6 +273,11 @@ void main() {
   });
 
   test('two authenticated clients complete registration, task submission, review and automatic pulls', () async {
+    api = AutoMergeApi();
+    session = GitHubSession(
+      api: api,
+      oauth: GitHubOAuth(vault: MemoryVault()),
+    );
     await session.signIn();
     final initial = await session.createProject(config, '작품', '개설자');
     api.identityId = 2;
@@ -427,8 +433,10 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('참여자 · 역할과 권한'), findsOneWidget);
       expect(tester.takeException(), isNull);
+      await tester.tap(find.byKey(const Key('nav-0')));
+      await tester.pumpAndSettle();
       await tester.runAsync(() async {
-        await tester.tap(find.text('로그아웃 / 프로젝트 선택'));
+        await tester.tap(find.text('로그아웃'));
         await Future<void>.delayed(const Duration(milliseconds: 10));
       });
       await tester.pumpAndSettle();
@@ -440,11 +448,6 @@ void main() {
       await tester.runAsync(() async {
         await tester.tap(find.byKey(const Key('github-advanced-login')));
         await Future<void>.delayed(const Duration(milliseconds: 10));
-      });
-      await tester.pumpAndSettle();
-      await tester.runAsync(() async {
-        await tester.tap(find.byKey(const Key('reopen-project')));
-        await Future<void>.delayed(const Duration(milliseconds: 20));
       });
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('task-list')), findsOneWidget);

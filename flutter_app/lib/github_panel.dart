@@ -13,6 +13,44 @@ class GitHubPanel extends StatelessWidget {
   const GitHubPanel({super.key, required this.sync});
   final GitHubSync sync;
 
+  Future<void> resolve(BuildContext context, String taskId) async {
+    final task = sync.store.find(taskId);
+    final accepted = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => IeumDialog(
+        title: const Text('통합본으로 맞추기'),
+        icon: Icons.restore_outlined,
+        content: Text(
+          '“${task.title}”의 개인 변경을 복구 기록에 보관하고 최신 통합본을 적용합니다. 이 작업의 제출 중인 PR은 닫습니다.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('취소'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('백업 후 통합본 적용'),
+          ),
+        ],
+      ),
+    );
+    if (accepted != true || !context.mounted) return;
+    try {
+      await sync.acceptRemote(taskId, expectedVersion: task.version);
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('개인 변경을 백업하고 통합본을 적용했습니다.')),
+        );
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('$e')));
+      }
+    }
+  }
+
   Future<void> configure(BuildContext context) => showDialog<void>(
     context: context,
     builder: (_) => GitHubConfigDialog(sync: sync),
@@ -198,6 +236,24 @@ class GitHubPanel extends StatelessWidget {
                   style: const TextStyle(fontSize: 11, color: _muted),
                 ),
               ),
+            const Padding(
+              padding: EdgeInsets.only(top: 10),
+              child: Text(
+                '저장 직후 자동 전송 · 변경 확인 약 5초',
+                style: TextStyle(fontSize: 11, color: _muted),
+              ),
+            ),
+            if (sync.retryAt?.isAfter(DateTime.now()) == true)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text(
+                  'GitHub 요청 제한 · ${sync.retryAt!.toLocal().toString().substring(11, 19)} 이후 재시도',
+                  style: const TextStyle(
+                    fontSize: 11,
+                    color: Color(0xffbd9655),
+                  ),
+                ),
+              ),
             for (final conflict in conflicts) ...[
               const Divider(height: 25, color: _border),
               Text(
@@ -209,10 +265,13 @@ class GitHubPanel extends StatelessWidget {
                 '내 변경: ${conflict['local']}\n통합본: ${conflict['remote']}',
                 style: const TextStyle(fontSize: 11, height: 1.6),
               ),
-              const Text(
-                '작업에서 값을 맞춘 뒤 다시 동기화하세요.',
-                style: TextStyle(fontSize: 10, color: _muted),
-              ),
+              if (conflict['taskId'] is String)
+                TextButton(
+                  onPressed: busy
+                      ? null
+                      : () => resolve(context, conflict['taskId'] as String),
+                  child: const Text('개인 변경 백업 후 통합본 적용'),
+                ),
             ],
             for (final job in sync.jobs.take(20)) ...[
               const Divider(height: 25, color: _border),
@@ -227,7 +286,10 @@ class GitHubPanel extends StatelessWidget {
               Text(switch (job['state']) {
                 'pending' => '자동 제출 대기',
                 'sending' => '커밋·PR 제출 중',
-                'sent' => 'PR 제출 완료 · 통합 승인 대기',
+                'sent' =>
+                  sync.autoMergeEnabled
+                      ? 'PR 제출 완료 · 자동 통합 확인 중'
+                      : 'PR 제출 완료 · 통합 승인 대기',
                 'merged' => '통합 완료 · 내 DB 반영',
                 _ => '전송 실패 · 자동 재시도 대기',
               }, style: const TextStyle(fontSize: 11, color: _purple)),

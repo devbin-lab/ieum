@@ -33,6 +33,27 @@ const statuses = {
 };
 const priorities = {'high': '높음', 'normal': '보통', 'low': '낮음'};
 
+// Keep revisions well below SQLite/Dart integer limits. A sync proposal may
+// contain several locally completed steps, but cannot jump to an arbitrary
+// revision and permanently eclipse everyone else's changes.
+const maxTaskVersion = 1000000000;
+const maxTaskRevisionAdvance = 10000;
+const assignmentFields = [
+  'part',
+  'assigneeId',
+  'reviewerId',
+  'assignedDate',
+  'dueDate',
+  'priority',
+];
+
+int nextTaskVersion(int current) {
+  if (current < 0 || current >= maxTaskVersion) {
+    throw StateError('작업 버전 한도에 도달했습니다. 별도 작업으로 이어서 등록하세요.');
+  }
+  return current + 1;
+}
+
 class Person {
   final String id, name, initials, role;
   final int color;
@@ -180,6 +201,10 @@ class WorkTask {
   final Map<String, dynamic> data;
   WorkTask._(Map<String, dynamic> data) : data = Map.unmodifiable(data);
   factory WorkTask.fromJson(Map<String, dynamic> raw) {
+    const allowed = {'id', ...fields, 'version', 'updatedAt'};
+    if (raw.keys.any((key) => !allowed.contains(key))) {
+      throw StateError('작업 데이터에 지원하지 않는 항목이 있습니다.');
+    }
     final t = Map<String, dynamic>.from(raw);
     for (final f in ['id', ...fields]) {
       if (t[f] is! String) throw StateError('작업 항목 $f 형식이 올바르지 않습니다.');
@@ -216,10 +241,18 @@ class WorkTask {
     if (t['description'].length > 10000 || t['reworkReason'].length > 2000) {
       throw StateError('설명 또는 재작업 사유가 너무 깁니다.');
     }
-    if (t['version'] is! int || t['version'] < 1) {
+    if (t['version'] is! int ||
+        t['version'] < 1 ||
+        t['version'] > maxTaskVersion) {
       throw StateError('작업 버전이 올바르지 않습니다.');
     }
-    if (t['updatedAt'] is! String) throw StateError('수정 시각이 올바르지 않습니다.');
+    if (t['updatedAt'] is! String ||
+        (t['updatedAt'] as String).length > 40 ||
+        !RegExp(r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,6})?Z$')
+            .hasMatch(t['updatedAt']) ||
+        DateTime.tryParse(t['updatedAt']) == null) {
+      throw StateError('수정 시각이 올바르지 않습니다.');
+    }
     return WorkTask._(t);
   }
   String get id => data['id'];
@@ -239,4 +272,135 @@ class WorkTask {
   WorkTask copy(Map<String, dynamic> updates) =>
       WorkTask.fromJson({...data, ...updates});
   bool same(WorkTask other) => fields.every((f) => data[f] == other.data[f]);
+}
+
+bool canEditTaskContent(Person actor, WorkTask task) =>
+    actor.active &&
+    !['review', 'done'].contains(task.status) &&
+    (actor.manages || actor.role == 'worker' && actor.id == task.assigneeId);
+
+bool canEditTask(Person actor, WorkTask task) =>
+    task.status != 'done' && (actor.manages || canEditTaskContent(actor, task));
+
+bool canTransitionTask(Person actor, WorkTask task, String status) {
+  if (!actor.active || actor.role == 'viewer') return false;
+  final worker = actor.id == task.assigneeId || actor.manages;
+  final reviewer = actor.id == task.reviewerId || actor.manages;
+  return status == 'doing' &&
+          ['todo', 'rework'].contains(task.status) &&
+          worker ||
+      status == 'review' && task.status == 'doing' && worker ||
+      ['done', 'rework'].contains(status) &&
+          task.status == 'review' &&
+          reviewer;
+}
+
+/// Validates one actor's changes against the latest accepted task. Collapsed
+/// proposals are valid only when the same actor can perform every intermediate
+/// workflow step; no other person's review is inferred from the final state.
+void validateTaskMutation({
+  required Person actor,
+  required WorkTask next,
+  WorkTask? current,
+  bool allowCollapsedTransitions = false,
+}) {
+  if (!actor.active || actor.role == 'viewer') {
+    throw StateError('작업을 변경할 권한이 없습니다.');
+  }
+  if (current == null) {
+    if (!actor.manages) throw StateError('작업 등록은 개설자 또는 PD / PM에게 허용됩니다.');
+    if (next.version >
+        (allowCollapsedTransitions ? maxTaskRevisionAdvance : 1)) {
+      throw StateError('신규 작업 버전이 올바르지 않습니다.');
+    }
+    if ((!allowCollapsedTransitions || next.version == 1) &&
+        (next.status != 'todo' || next.reworkReason.isNotEmpty)) {
+      throw StateError('신규 작업은 할 일 상태로 등록해야 합니다.');
+    }
+    if (next.version > 1) {
+      validateTaskMutation(
+        actor: actor,
+        next: next,
+        current: next.copy({
+          'status': 'todo',
+          'completedDate': '',
+          'reworkReason': '',
+          'version': 1,
+        }),
+        allowCollapsedTransitions: allowCollapsedTransitions,
+      );
+    }
+    return;
+  }
+  if (current.id != next.id ||
+      next.version <= current.version ||
+      next.version - current.version >
+          (allowCollapsedTransitions ? maxTaskRevisionAdvance : 1)) {
+    throw StateError('작업 ID 또는 변경 버전이 올바르지 않습니다.');
+  }
+  if (current.status == 'done') {
+    throw StateError('완료된 작업은 수정할 수 없습니다. 별도 작업을 등록하세요.');
+  }
+  if (!actor.manages &&
+      assignmentFields.any((key) => current.data[key] != next.data[key])) {
+    throw StateError('배정·일정·우선순위 변경은 PD / PM에게 허용됩니다.');
+  }
+
+  final contentChanged = [
+    'title',
+    'description',
+  ].any((key) => current.data[key] != next.data[key]);
+  final reasonChanged = current.reworkReason != next.reworkReason;
+  // Track whether an authorized path contains an editable state / a rejection.
+  // These flags prevent a reviewer-only account from editing submitted content.
+  final queue = <(String, bool, bool, int)>[
+    (current.status, canEditTaskContent(actor, current), false, 0),
+  ];
+  final visited = <String>{};
+  var validPath = false;
+  final steps = allowCollapsedTransitions
+      ? (next.version - current.version).clamp(1, 20)
+      : 1;
+  while (queue.isNotEmpty) {
+    final (state, editable, rejected, count) = queue.removeAt(0);
+    final key = '$state/$editable/$rejected';
+    if (!visited.add(key)) continue;
+    if (state == next.status &&
+        (!contentChanged || editable) &&
+        (!reasonChanged || rejected) &&
+        (count > 0 || canEditTask(actor, current))) {
+      validPath = true;
+      break;
+    }
+    if (state == 'done' ||
+        count >= steps ||
+        !allowCollapsedTransitions && count > 0) {
+      continue;
+    }
+    final intermediate = current.copy({
+      'status': state,
+      'completedDate': state == 'done' ? next.completedDate : '',
+    });
+    for (final destination in statuses.keys) {
+      if (!canTransitionTask(actor, intermediate, destination)) continue;
+      // With an uncollapsed mutation, status and content edits are distinct.
+      if (!allowCollapsedTransitions && contentChanged) continue;
+      final becomesEditable =
+          !['review', 'done'].contains(destination) &&
+          (actor.manages || actor.id == current.assigneeId);
+      queue.add((
+        destination,
+        editable || becomesEditable,
+        rejected || destination == 'rework',
+        count + 1,
+      ));
+    }
+  }
+  if (!validPath ||
+      next.status == 'rework' && next.reworkReason.isEmpty ||
+      reasonChanged && next.reworkReason.isEmpty ||
+      current.status == next.status &&
+          current.completedDate != next.completedDate) {
+    throw StateError('현재 담당자와 검토 순서에 허용되지 않은 작업 변경입니다.');
+  }
 }

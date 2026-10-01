@@ -104,7 +104,7 @@ class GitHubUpdateSource implements UpdateSource {
       );
       if ([301, 302, 303, 307, 308].contains(response.statusCode)) {
         final location = response.headers.value('location');
-        await response.drain<void>();
+        await response.drain<void>().timeout(const Duration(seconds: 30));
         if (location == null) throw const FormatException('업데이트 이동 주소가 없습니다.');
         uri = uri.resolve(location);
         continue;
@@ -128,7 +128,7 @@ class GitHubUpdateSource implements UpdateSource {
         'application/vnd.github+json',
       );
       if (response.statusCode == 404) {
-        await response.drain<void>();
+        await response.drain<void>().timeout(const Duration(seconds: 30));
         return null;
       }
       if (response.statusCode != 200) {
@@ -212,10 +212,21 @@ class AppUpdater extends ChangeNotifier {
   File packageFor(String version) => File(
     '${root.path}${Platform.pathSeparator}updates${Platform.pathSeparator}$version${Platform.pathSeparator}Ieum-Windows-x64.exe',
   );
+  File blockedFor(String version) =>
+      File('${packageFor(version).path}.blocked');
+
+  Future<bool> _blocked(String version, String hash) async {
+    final marker = blockedFor(version);
+    return await marker.exists() &&
+        (await marker.readAsString()).trim() == hash;
+  }
+
   static Future<void> _launch(File file) async {
     await Process.start(file.path, [
       '--wait-for',
       '$pid',
+      '--fallback',
+      Platform.resolvedExecutable,
     ], mode: ProcessStartMode.detached);
   }
 
@@ -239,7 +250,8 @@ class AppUpdater extends ChangeNotifier {
       final version = ReleaseVersion(data['version'] as String);
       final hash = data['sha256'] as String;
       if (version.compareTo(ReleaseVersion(currentVersion)) <= 0 ||
-          !RegExp(r'^[a-f0-9]{64}$').hasMatch(hash)) {
+          !RegExp(r'^[a-f0-9]{64}$').hasMatch(hash) ||
+          await _blocked(version.value, hash)) {
         return null;
       }
       final file = packageFor(version.value);
@@ -257,8 +269,28 @@ class AppUpdater extends ChangeNotifier {
   Future<bool> restartPending() async {
     final file = await pending();
     if (file == null) return false;
-    await launch(file);
-    return true;
+    try {
+      await launch(file);
+      return true;
+    } catch (_) {
+      // Keep the running application usable and quarantine only this exact asset.
+      try {
+        final hash = (await sha256.bind(file.openRead()).first).toString();
+        await blockedFor(readyVersion).writeAsString(hash, flush: true);
+        if (await pointer.exists()) {
+          await pointer.rename(
+            '${pointer.path}.failed-${DateTime.now().microsecondsSinceEpoch}',
+          );
+        }
+      } catch (_) {
+        // A read-only update folder must not prevent the current app opening.
+      }
+      ready = false;
+      message = '업데이트 실행 실패 · 현재 버전 유지';
+      lastError = '새 버전을 실행하지 못했습니다. 현재 앱을 계속 사용할 수 있습니다.';
+      _changed();
+      return false;
+    }
   }
 
   Future<void> check() async {
@@ -284,6 +316,11 @@ class AppUpdater extends ChangeNotifier {
         return;
       }
       final file = packageFor(release.version.value);
+      if (await _blocked(release.version.value, release.hash)) {
+        message = '업데이트 실행 실패 · 수정 버전 대기';
+        lastError = '실행에 실패한 배포본의 반복 적용을 중지했습니다.';
+        return;
+      }
       await file.parent.create(recursive: true);
       final partial = File('${file.path}.part');
       message = '업데이트 다운로드 중';

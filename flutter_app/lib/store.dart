@@ -35,8 +35,10 @@ class TaskStore extends ChangeNotifier {
     for (final name in [
       'activity',
       'notification_outbox',
+      'notification_inbox',
       'github_queue',
       'github_sent',
+      'conflict_backups',
     ]) {
       db.execute(
         'CREATE TABLE IF NOT EXISTS $name(id TEXT PRIMARY KEY,body TEXT NOT NULL)',
@@ -105,8 +107,13 @@ class TaskStore extends ChangeNotifier {
   bool get manages => actor.manages;
   bool get owns => actor.role == 'owner';
   bool get canCreate => !isProject || manages;
-  bool canEdit(WorkTask task) =>
-      manages || actor.role == 'worker' && actor.id == task.assigneeId;
+  bool canEdit(WorkTask task) => canEditTask(actor, task);
+  bool canEditContent(WorkTask task) => canEditTaskContent(actor, task);
+  String editLockReason(WorkTask task) => task.status == 'done'
+      ? '완료된 작업은 수정할 수 없습니다. 변경이 필요하면 새 작업을 등록하세요.'
+      : task.status == 'review'
+      ? '검토 결과를 기다리는 중입니다. 제출 내용은 잠겨 있으며 조회할 수 있습니다.'
+      : '현재 담당자 또는 PD / PM이 내용을 수정할 수 있습니다.';
   List<PartRule> get partRules => !isProject
       ? rules
       : rules.map((r) {
@@ -171,12 +178,89 @@ class TaskStore extends ChangeNotifier {
       .map((r) => Map<String, dynamic>.from(jsonDecode(r['body'] as String)))
       .toList();
   List<Map<String, dynamic>> get activity => records('activity');
-  List<Map<String, dynamic>> get notifications =>
-      records('notification_outbox');
-  WorkTask find(String id) => tasks.firstWhere(
-    (t) => t.id == id,
-    orElse: () => throw StateError('작업을 찾을 수 없습니다.'),
-  );
+  List<Map<String, dynamic>> get notifications => !isProject
+      ? records('notification_outbox')
+      : db
+            .select(
+              "SELECT body FROM notification_inbox WHERE json_extract(body, '\$.recipientId')=? ORDER BY rowid DESC LIMIT 30",
+              [profileId],
+            )
+            .map(
+              (row) =>
+                  Map<String, dynamic>.from(jsonDecode(row['body'] as String)),
+            )
+            .toList();
+  int get unreadNotificationCount => !isProject
+      ? notifications.length
+      : db.select(
+              "SELECT COUNT(*) AS total FROM notification_inbox WHERE json_extract(body, '\$.recipientId')=? AND json_extract(body, '\$.read')=0",
+              [profileId],
+            ).single['total']
+            as int;
+
+  void markNotificationsRead() {
+    if (!isProject) return;
+    db.execute(
+      "UPDATE notification_inbox SET body=json_set(body, '\$.read', json('true')) WHERE json_extract(body, '\$.recipientId')=?",
+      [profileId],
+    );
+    notifyListeners();
+  }
+
+  void _notifyIncoming(WorkTask remote, WorkTask? previous, WorkTask? local) {
+    if (!isProject ||
+        remote.currentId != profileId ||
+        local != null && local.same(remote)) {
+      return;
+    }
+    final String eventType;
+    if (previous == null) {
+      if (remote.status == 'done') return;
+      eventType = remote.status == 'review' ? 'task.review' : 'task.created';
+    } else if (remote.status != previous.status) {
+      eventType = 'task.${remote.status}';
+    } else if (remote.currentId != previous.currentId) {
+      eventType = 'task.assigned';
+    } else {
+      return;
+    }
+    final id = '${remote.id}:${remote.version}:$eventType:$profileId';
+    db.execute('INSERT OR IGNORE INTO notification_inbox VALUES (?,?)', [
+      id,
+      jsonEncode({
+        'id': id,
+        'eventType': eventType,
+        'taskId': remote.id,
+        'title': remote.title,
+        'status': remote.status,
+        'recipientId': profileId,
+        'reason': remote.reworkReason,
+        'state': 'received',
+        'read': false,
+        'createdAt': DateTime.now().toUtc().toIso8601String(),
+      }),
+    ]);
+  }
+
+  WorkTask find(String id) {
+    final rows = db.select('SELECT body FROM tasks WHERE id=?', [id]);
+    if (rows.isEmpty) throw StateError('작업을 찾을 수 없습니다.');
+    return WorkTask.fromJson(
+      Map<String, dynamic>.from(jsonDecode(rows.single['body'] as String)),
+    );
+  }
+
+  WorkTask? baselineFor(String id) {
+    final rows = db.select('SELECT body FROM baseline_tasks WHERE id=?', [id]);
+    return rows.isEmpty
+        ? null
+        : WorkTask.fromJson(
+            Map<String, dynamic>.from(
+              jsonDecode(rows.single['body'] as String),
+            ),
+          );
+  }
+
   void put(WorkTask task, {String table = 'tasks'}) => db.execute(
     'INSERT INTO $table VALUES (?,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body',
     [task.id, jsonEncode(task.data)],
@@ -234,6 +318,17 @@ class TaskStore extends ChangeNotifier {
   }
 
   WorkTask save(Map<String, dynamic> input, {int? expectedVersion}) {
+    final next = transaction(
+      () => _save(input, expectedVersion: expectedVersion),
+    );
+    notifyListeners();
+    return next;
+  }
+
+  WorkTask _save(Map<String, dynamic> input, {int? expectedVersion}) {
+    // Read and compare only after BEGIN IMMEDIATE has acquired the write lock.
+    // Another process using this same DB must not change the row between the
+    // expected-version check and its update.
     final old = input['id'] == null ? null : find(input['id']);
     final actor = member(profileId);
     if (isProject && !actor.active || old == null && !canCreate) {
@@ -243,7 +338,7 @@ class TaskStore extends ChangeNotifier {
       throw StateError('작업이 변경되었습니다. 다시 열어 확인하세요.');
     }
     if (old != null && !canEdit(old)) {
-      throw StateError('작업자 또는 PD / PM만 내용을 수정할 수 있습니다.');
+      throw StateError(editLockReason(old));
     }
     final next = WorkTask.fromJson({
       ...input,
@@ -251,7 +346,7 @@ class TaskStore extends ChangeNotifier {
       'status': old?.status ?? 'todo',
       'completedDate': old?.completedDate ?? '',
       'reworkReason': old?.reworkReason ?? '',
-      'version': (old?.version ?? 0) + 1,
+      'version': nextTaskVersion(old?.version ?? 0),
       'updatedAt': DateTime.now().toUtc().toIso8601String(),
     });
     if (isProject) {
@@ -275,37 +370,50 @@ class TaskStore extends ChangeNotifier {
       }
     }
     if (old != null && old.same(next)) return old;
-    transaction(() {
-      put(next);
-      log(
-        next,
-        old == null ? '새 작업을 등록했습니다.' : '작업내용을 수정했습니다.',
-        eventType: old == null ? 'task.created' : null,
-      );
-      queueGitHub(next);
-    });
-    notifyListeners();
+    if (isProject) {
+      validateTaskMutation(actor: actor, next: next, current: old);
+    } else if (old != null &&
+        !canEditContent(old) &&
+        [
+          'title',
+          'description',
+        ].any((key) => old.data[key] != next.data[key])) {
+      throw StateError(editLockReason(old));
+    }
+    put(next);
+    log(
+      next,
+      old == null ? '새 작업을 등록했습니다.' : '작업내용을 수정했습니다.',
+      eventType: old == null ? 'task.created' : null,
+    );
+    queueGitHub(next);
     return next;
   }
 
-  bool canMove(WorkTask task, String status) {
-    final p = member(profileId);
-    if (!p.active || p.role == 'viewer') return false;
-    final worker = p.id == task.assigneeId || p.manages;
-    final reviewer = p.id == task.reviewerId || p.manages;
-    return status == 'doing' &&
-            ['todo', 'rework'].contains(task.status) &&
-            worker ||
-        status == 'review' && task.status == 'doing' && worker ||
-        ['done', 'rework'].contains(status) &&
-            task.status == 'review' &&
-            reviewer;
-  }
+  bool canMove(WorkTask task, String status) =>
+      canTransitionTask(actor, task, status);
 
   void transition(
     String id,
     String status, {
     String reason = '',
+    required int expectedVersion,
+  }) {
+    transaction(
+      () => _transition(
+        id,
+        status,
+        reason: reason,
+        expectedVersion: expectedVersion,
+      ),
+    );
+    notifyListeners();
+  }
+
+  void _transition(
+    String id,
+    String status, {
+    required String reason,
     required int expectedVersion,
   }) {
     final task = find(id);
@@ -322,51 +430,37 @@ class TaskStore extends ChangeNotifier {
       'status': status,
       'completedDate': status == 'done' ? localDate() : '',
       'reworkReason': status == 'rework' ? reason : task.reworkReason,
-      'version': task.version + 1,
+      'version': nextTaskVersion(task.version),
       'updatedAt': DateTime.now().toUtc().toIso8601String(),
     });
-    transaction(() {
-      put(next);
-      log(
-        next,
-        {
-          'doing': '작업을 시작했습니다.',
-          'review': '검토를 요청했습니다.',
-          'rework': '재작업을 요청했습니다.',
-          'done': '완료를 승인했습니다.',
-        }[status]!,
-        eventType: 'task.$status',
-      );
-      queueGitHub(next);
-    });
-    notifyListeners();
+    validateTaskMutation(actor: actor, current: task, next: next);
+    put(next);
+    log(
+      next,
+      {
+        'doing': '작업을 시작했습니다.',
+        'review': '검토를 요청했습니다.',
+        'rework': '재작업을 요청했습니다.',
+        'done': '완료를 승인했습니다.',
+      }[status]!,
+      eventType: 'task.$status',
+    );
+    queueGitHub(next);
   }
 
   void queueGitHub(WorkTask task) {
     final rawConfig = meta('github.config');
     if (rawConfig.isEmpty) return;
     final config = jsonDecode(rawConfig) as Map;
-    if (config['enabled'] != true) return;
-    final proposal = exportChanges();
-    proposal['changes'] = (proposal['changes'] as List)
-        .where((change) => change['taskId'] == task.id)
-        .toList();
-    // A revert to the baseline still needs to replace an earlier submitted
-    // proposal. Otherwise the open PR would keep the discarded change.
-    if ((proposal['changes'] as List).isEmpty) {
-      final base = baseline[task.id];
-      proposal['changes'] = [
-        {
-          'taskId': task.id,
-          'kind': 'update',
-          'title': task.title,
-          'baseVersion': base?.version,
-          'fields': <dynamic>[],
-          'base': base?.data,
-          'task': task.data,
-        },
-      ];
-    }
+    // Read only this task's baseline. Saving one item must not serialize the
+    // entire project, and a revert must still replace its previous open PR.
+    final proposal = {
+      'schemaVersion': 1,
+      'projectId': meta('projectId'),
+      'baseRevision': baseRevision,
+      'authorId': profileId,
+      'changes': [_change(task, baselineFor(task.id))],
+    };
     db.execute(
       'INSERT INTO github_queue VALUES (?,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body',
       [
@@ -392,31 +486,31 @@ class TaskStore extends ChangeNotifier {
     final list = <Map<String, dynamic>>[];
     for (final t in tasks) {
       final b = bases[t.id];
-      final changed = fields
-          .where((f) => b == null || b.data[f] != t.data[f])
-          .toList();
-      if (changed.isEmpty) continue;
-      list.add({
-        'taskId': t.id,
-        'kind': b == null ? 'create' : 'update',
-        'title': t.title,
-        'baseVersion': b?.version,
-        'fields': changed
-            .map(
-              (f) => {
-                'key': f,
-                'label': fieldLabels[f],
-                'before': b?.data[f],
-                'after': t.data[f],
-              },
-            )
-            .toList(),
-        'base': b?.data,
-        'task': t.data,
-      });
+      if (b != null && b.same(t)) continue;
+      list.add(_change(t, b));
     }
     return list;
   }
+
+  Map<String, dynamic> _change(WorkTask task, WorkTask? base) => {
+    'taskId': task.id,
+    'kind': base == null ? 'create' : 'update',
+    'title': task.title,
+    'baseVersion': base?.version,
+    'fields': fields
+        .where((key) => base == null || base.data[key] != task.data[key])
+        .map(
+          (key) => {
+            'key': key,
+            'label': fieldLabels[key],
+            'before': base?.data[key],
+            'after': task.data[key],
+          },
+        )
+        .toList(),
+    'base': base?.data,
+    'task': task.data,
+  };
 
   Map<String, dynamic> exportChanges() => {
     'schemaVersion': 1,
@@ -425,9 +519,63 @@ class TaskStore extends ChangeNotifier {
     'authorId': profileId,
     'changes': changes,
   };
+
+  /// Explicitly accepts a user-selected remote task after sync has checked the
+  /// current main revision and retired the discarded proposal's open PR.
+  /// The local alternative remains recoverable; it is never silently discarded.
+  void acceptRemoteTask(WorkTask remote, {required int expectedVersion}) {
+    transaction(() {
+      final local = find(remote.id);
+      if (local.version != expectedVersion) {
+        throw StateError('작업이 변경되었습니다. 최신 내용을 다시 확인하세요.');
+      }
+      final queued = db.select('SELECT body FROM github_queue WHERE id=?', [
+        local.id,
+      ]);
+      final backupId = const Uuid().v4();
+      db.execute('INSERT INTO conflict_backups VALUES (?,?)', [
+        backupId,
+        jsonEncode({
+          'id': backupId,
+          'taskId': local.id,
+          'createdAt': DateTime.now().toUtc().toIso8601String(),
+          'task': local.data,
+          'base': baselineFor(local.id)?.data,
+          'queue': queued.isEmpty
+              ? null
+              : jsonDecode(queued.single['body'] as String),
+          'accepted': remote.data,
+        }),
+      ]);
+      final revision = max(local.version, remote.version);
+      put(
+        remote.copy({
+          'version': revision < maxTaskVersion
+              ? nextTaskVersion(revision)
+              : revision,
+        }),
+      );
+      put(remote, table: 'baseline_tasks');
+      db.execute('DELETE FROM github_queue WHERE id=?', [local.id]);
+      final conflicts = meta('github.pullConflicts');
+      if (conflicts.isNotEmpty) {
+        final remaining = (jsonDecode(conflicts) as List)
+            .where((conflict) => conflict['taskId'] != local.id)
+            .toList();
+        setMeta(
+          'github.pullConflicts',
+          remaining.isEmpty ? '' : jsonEncode(remaining),
+        );
+      }
+      log(remote, '개인 변경을 보관하고 팀의 최신 내용을 선택했습니다.');
+    });
+    notifyListeners();
+  }
+
   MergeResult importSnapshot(
     dynamic snapshot, {
     Map<String, WorkTask>? acknowledgedBases,
+    bool allowPartial = false,
   }) {
     if (snapshot is! Map ||
         snapshot['schemaVersion'] != 1 ||
@@ -435,8 +583,7 @@ class TaskStore extends ChangeNotifier {
         snapshot['revision'] is! String ||
         (snapshot['revision'] as String).isEmpty ||
         (snapshot['revision'] as String).length > 200 ||
-        snapshot['tasks'] is! List ||
-        (snapshot['tasks'] as List).length > 10000) {
+        snapshot['tasks'] is! List) {
       throw StateError('이 프로젝트의 통합본 JSON 형식이 아닙니다.');
     }
     final incoming = <String, WorkTask>{};
@@ -446,80 +593,134 @@ class TaskStore extends ChangeNotifier {
       if (incoming.containsKey(t.id)) throw StateError('통합본에 중복 작업 ID가 있습니다.');
       incoming[t.id] = t;
     }
-    final bases = acknowledgedBases ?? baseline;
-    final locals = {for (final t in tasks) t.id: t};
-    final merged = <WorkTask>[];
-    final conflicts = <Map<String, dynamic>>[];
-    for (final id in bases.keys) {
-      if (!incoming.containsKey(id)) {
+    final result = transaction(() {
+      final storedBases = baseline;
+      final bases = acknowledgedBases ?? storedBases;
+      final locals = {for (final t in tasks) t.id: t};
+      final merged = <WorkTask>[];
+      final accepted = <WorkTask>[];
+      final conflicts = <Map<String, dynamic>>[];
+      if (!allowPartial && bases.keys.any((id) => !incoming.containsKey(id))) {
         throw StateError('기존 작업이 빠진 통합본입니다. 삭제 병합은 지원하지 않습니다.');
       }
-    }
-    for (final remote in incoming.values) {
-      final base = bases[remote.id];
-      final local = locals[remote.id];
-      if (local == null) {
-        merged.add(remote);
-        continue;
-      }
-      if (base == null) {
-        if (!local.same(remote)) {
-          conflicts.add({
-            'taskId': local.id,
-            'title': local.title,
-            'field': '작업 ID',
-            'local': '개인 신규 작업',
-            'remote': '동일 ID의 통합 작업',
-          });
-        } else {
-          merged.add(
-            remote.copy({'version': max(local.version, remote.version) + 1}),
-          );
-        }
-        continue;
-      }
-      final next = Map<String, dynamic>.from(local.data);
-      for (final f in fields) {
-        final lc = local.data[f] != base.data[f];
-        final rc = remote.data[f] != base.data[f];
-        if (lc && rc && local.data[f] != remote.data[f]) {
-          conflicts.add({
-            'taskId': local.id,
-            'title': local.title,
-            'field': fieldLabels[f],
-            'local': local.data[f],
-            'remote': remote.data[f],
-          });
-        } else if (rc) {
-          next[f] = remote.data[f];
-        }
-      }
-      next['version'] = max(local.version, remote.version) + 1;
-      next['updatedAt'] = DateTime.now().toUtc().toIso8601String();
-      try {
-        merged.add(WorkTask.fromJson(next));
-      } catch (e) {
+      void conflict(WorkTask local, String field, dynamic own, dynamic remote) {
         conflicts.add({
           'taskId': local.id,
           'title': local.title,
-          'field': '항목 간 관계',
-          'local': e.toString(),
-          'remote': '통합 전 확인 필요',
+          'field': field,
+          'local': own,
+          'remote': remote,
         });
       }
-    }
-    if (conflicts.isNotEmpty) return MergeResult(false, conflicts);
-    transaction(() {
+
+      for (final remote in incoming.values) {
+        final base = bases[remote.id];
+        final local = locals[remote.id];
+        if (local == null) {
+          merged.add(remote);
+          accepted.add(remote);
+          continue;
+        }
+        final start = conflicts.length;
+        if (base == null) {
+          if (!local.same(remote)) {
+            conflict(local, '작업 ID', '개인 신규 작업', '동일 ID의 통합 작업');
+            continue;
+          }
+        } else {
+          if (remote.version < base.version) {
+            conflict(local, '작업 버전', base.version, remote.version);
+            continue;
+          }
+          if (base.status == 'done' && !base.same(remote)) {
+            conflict(local, '완료 작업 잠금', '변경할 수 없는 완료 작업', '완료 후 변경된 통합본');
+            continue;
+          }
+          // A remote handoff must not combine a worker's outstanding edit with
+          // already submitted / completed content. Keep both versions for review.
+          if (['review', 'done'].contains(remote.status) &&
+              !local.same(remote) &&
+              ['title', 'description'].any(
+                (key) =>
+                    local.data[key] != base.data[key] &&
+                    local.data[key] != remote.data[key],
+              )) {
+            conflict(
+              local,
+              '검토·완료 잠금',
+              '아직 통합되지 않은 내용 수정',
+              statuses[remote.status],
+            );
+            continue;
+          }
+        }
+        if (local.same(remote)) {
+          // Repeated pulls do not manufacture new local revisions. Preserve a
+          // higher local revision so stale editors are still detected.
+          merged.add(
+            remote.copy({'version': max(local.version, remote.version)}),
+          );
+          accepted.add(remote);
+          continue;
+        }
+        if (base != null && local.same(base)) {
+          try {
+            merged.add(
+              remote.version > local.version
+                  ? remote
+                  : remote.copy({'version': nextTaskVersion(local.version)}),
+            );
+            accepted.add(remote);
+          } catch (e) {
+            conflict(local, '작업 버전', e.toString(), '통합 전 확인 필요');
+          }
+          continue;
+        }
+        final next = Map<String, dynamic>.from(local.data);
+        for (final f in fields) {
+          final lc = local.data[f] != base!.data[f];
+          final rc = remote.data[f] != base.data[f];
+          if (lc && rc && local.data[f] != remote.data[f]) {
+            conflict(local, fieldLabels[f]!, local.data[f], remote.data[f]);
+          } else if (rc) {
+            next[f] = remote.data[f];
+          }
+        }
+        if (conflicts.length != start) continue;
+        try {
+          // Keep a locally newer proposal only when it remains ahead of main.
+          // Increment once for a real rebase, never merely for polling again.
+          final candidate = WorkTask.fromJson(next);
+          next['version'] =
+              candidate.same(local) && local.version > remote.version
+              ? local.version
+              : nextTaskVersion(max(local.version, remote.version));
+          next['updatedAt'] = DateTime.now().toUtc().toIso8601String();
+          merged.add(WorkTask.fromJson(next));
+          accepted.add(remote);
+        } catch (e) {
+          conflict(local, '항목 간 관계', e.toString(), '통합 전 확인 필요');
+        }
+      }
+      if (conflicts.isNotEmpty && !allowPartial) {
+        return MergeResult(false, conflicts);
+      }
+      for (final t in incoming.values) {
+        _notifyIncoming(t, storedBases[t.id], locals[t.id]);
+      }
       for (final t in merged) {
         put(t);
       }
-      for (final t in incoming.values) {
+      for (final t in accepted) {
         put(t, table: 'baseline_tasks');
       }
+      // This describes the snapshot observed, not every task's merge base.
+      // Conflicted task baselines remain untouched and will be retried later.
       setMeta('baseRevision', snapshot['revision']);
+      return MergeResult(conflicts.isEmpty || accepted.isNotEmpty, conflicts);
     });
     notifyListeners();
-    return const MergeResult(true, []);
+    return result;
   }
 
   @override
