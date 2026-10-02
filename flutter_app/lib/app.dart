@@ -751,14 +751,6 @@ class _WorkspaceState extends State<Workspace> {
           ),
         ),
         const Spacer(),
-        railButton(
-          'sidebar-settings',
-          '설정',
-          Icons.settings_outlined,
-          () => selectSettings(SettingsSection.general),
-          selected: page != 0,
-        ),
-        const Divider(color: Color(0xffe1e4e3), height: 24),
         AccountMenu(
           name: s.actor.name,
           role: s.isProject ? s.actor.roleLabel : '테스트 사용자',

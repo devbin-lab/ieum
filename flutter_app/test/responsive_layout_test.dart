@@ -88,7 +88,12 @@ void main() {
       ]) {
         tester.view.physicalSize = size;
         await tester.pumpAndSettle();
-        await tester.tap(find.byKey(const Key('sidebar-settings')));
+        await tester.tapAt(
+          tester.getTopLeft(find.byKey(const Key('sidebar-account'))) +
+              const Offset(18, 18),
+        );
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(const Key('account-settings')));
         await tester.pumpAndSettle();
         expect(tester.takeException(), isNull);
         for (final field in tester.widgetList<SelectableText>(
@@ -133,7 +138,12 @@ void main() {
       }
 
       // Switching layouts must preserve the active category without duplicating controllers.
-      await tester.tap(find.byKey(const Key('sidebar-settings')));
+      await tester.tapAt(
+        tester.getTopLeft(find.byKey(const Key('sidebar-account'))) +
+            const Offset(18, 18),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('account-settings')));
       await tester.pumpAndSettle();
       await section('notifications');
       await tester.tap(find.byKey(const Key('settings-category-menu')));

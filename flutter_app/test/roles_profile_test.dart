@@ -515,7 +515,12 @@ void main() {
         ),
       );
       expect(find.byKey(const Key('app-update-button')), findsNothing);
-      await tester.tap(find.byKey(const Key('sidebar-settings')));
+      await tester.tapAt(
+        tester.getTopLeft(find.byKey(const Key('sidebar-account'))) +
+            const Offset(18, 18),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('account-settings')));
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('app-update-button')), findsOneWidget);
       expect(
