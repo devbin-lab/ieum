@@ -688,28 +688,6 @@ class _WorkspaceState extends State<Workspace> {
                             contentBuilder: settingsContent,
                           ),
                   ),
-                  Container(
-                    height: 43,
-                    padding: const EdgeInsets.symmetric(horizontal: 34),
-                    decoration: const BoxDecoration(
-                      border: Border(top: BorderSide(color: border)),
-                    ),
-                    child: const Row(
-                      children: [
-                        Icon(Icons.circle, size: 6, color: Color(0xff68aa8d)),
-                        SizedBox(width: 7),
-                        Text(
-                          '이 컴퓨터에 자동 저장',
-                          style: TextStyle(fontSize: 9, color: muted),
-                        ),
-                        Spacer(),
-                        Text(
-                          'v$appVersion',
-                          style: TextStyle(fontSize: 9, color: muted),
-                        ),
-                      ],
-                    ),
-                  ),
                 ],
               ),
             ),
@@ -1669,7 +1647,7 @@ class _WorkspaceState extends State<Workspace> {
           const SizedBox(height: 14),
           Container(
             width: double.infinity,
-            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 4),
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
             decoration: BoxDecoration(
               color: Colors.white,
               border: Border.all(color: const Color(0xffe5e8e6)),
@@ -1696,7 +1674,11 @@ class _WorkspaceState extends State<Workspace> {
         children: [
           Text(
             row.$1,
-            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+            style: const TextStyle(
+              fontSize: 12,
+              height: 1.5,
+              fontWeight: FontWeight.w600,
+            ),
           ),
           const SizedBox(height: 5),
           Text(
@@ -1709,17 +1691,16 @@ class _WorkspaceState extends State<Workspace> {
           ),
         ],
       );
-      final compact = constraints.maxWidth < 560;
       final value = SelectableText(
         row.$3,
-        textAlign: compact ? TextAlign.left : TextAlign.right,
+        textAlign: TextAlign.left,
         style: const TextStyle(
-          fontSize: 11,
+          fontSize: 12,
           color: Color(0xff666e68),
           height: 1.5,
         ),
       );
-      return compact
+      return constraints.maxWidth < 560
           ? Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [label, const SizedBox(height: 12), value],
@@ -1727,9 +1708,9 @@ class _WorkspaceState extends State<Workspace> {
           : Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Expanded(flex: 3, child: label),
+                SizedBox(width: 220, child: label),
                 const SizedBox(width: 24),
-                Expanded(flex: 2, child: value),
+                Expanded(child: value),
               ],
             );
     },
