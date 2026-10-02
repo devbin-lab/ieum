@@ -253,7 +253,7 @@ class _ProjectGateState extends State<ProjectGate> {
 
   Future<void> submit() => run(() async {
     final identity = session.named(nickname.text);
-    final config = GitHubConfig(repository: repo.text.trim(), enabled: true);
+    var config = GitHubConfig(repository: repo.text.trim(), enabled: true);
     config.validate();
     if (folder.text.trim().isEmpty ||
         !Directory(folder.text.trim()).isAbsolute) {
@@ -266,6 +266,7 @@ class _ProjectGateState extends State<ProjectGate> {
             projectName.text.trim().length > 80)) {
       throw StateError('프로젝트 이름은 1~80자로 입력하세요.');
     }
+    config = await session.resolveRepository(config);
     final project = creating
         ? await session.createProject(config, projectName.text, nickname.text)
         : await session.loadProject(config);
@@ -277,7 +278,7 @@ class _ProjectGateState extends State<ProjectGate> {
     next.setMeta('membership.pr', pr ?? '');
     await openStore(
       next,
-      GitHubConfig(repository: config.slug, branch: branch, enabled: true),
+      GitHubConfig.fromJson({...config.toJson(), 'branch': branch}),
     );
   });
 

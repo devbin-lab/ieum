@@ -25,9 +25,10 @@ class GitHubConfig {
 
   String get slug => repository
       .trim()
-      .replaceFirst(RegExp(r'^https://github\.com/'), '')
-      .replaceFirst(RegExp(r'\.git$'), '')
-      .replaceFirst(RegExp(r'/$'), '');
+      .replaceFirst(RegExp(r'^https://github\.com/', caseSensitive: false), '')
+      .replaceFirst(RegExp(r'/$'), '')
+      .replaceFirst(RegExp(r'\.git$', caseSensitive: false), '')
+      .toLowerCase();
 
   void validate() {
     if (!RegExp(r'^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$').hasMatch(slug)) {
@@ -260,10 +261,13 @@ class GitHubPublisher {
   ) async {
     final access = await _checkAccess(config, readBase: true);
     final login = access.login;
-    if (job['githubLogin'] != null && job['githubLogin'] != login) {
+    final proposal = job['proposal'] as Map;
+    final sameAccount = proposal['authorId'] == 'gh-${access.identity['id']}';
+    if (job['githubLogin'] != null &&
+        job['githubLogin'] != login &&
+        !sameAccount) {
       throw const GitHubFailure('이 작업을 등록한 GitHub 계정으로 다시 연결하세요.');
     }
-    final proposal = job['proposal'] as Map;
     if (proposal['projectId'] != 'ieum-demo') {
       final manifest = await project(config, ref: access.baseSha);
       final actor = await projectActor(
@@ -666,7 +670,7 @@ class GitHubPublisher {
     String url,
   ) async {
     final prefix = 'https://github.com/${config.slug}/pull/';
-    if (!url.startsWith(prefix) ||
+    if (!url.toLowerCase().startsWith(prefix.toLowerCase()) ||
         !RegExp(r'^\d+$').hasMatch(url.substring(prefix.length))) {
       throw const GitHubFailure('이 프로젝트의 PR 주소가 아닙니다.');
     }
@@ -682,7 +686,7 @@ class GitHubPublisher {
     final uri = Uri.tryParse(url);
     final prefix = 'https://github.com/${config.slug}/pull/';
     if (uri == null ||
-        !url.startsWith(prefix) ||
+        !url.toLowerCase().startsWith(prefix.toLowerCase()) ||
         !RegExp(r'^\d+$').hasMatch(url.substring(prefix.length))) {
       throw const GitHubFailure('이 프로젝트의 PR 주소가 아닙니다.');
     }
@@ -879,6 +883,7 @@ class GitHubSync extends ChangeNotifier {
             ].contains(job['state'])) {
           throw const FormatException('전송 기록의 항목이 올바르지 않습니다.');
         }
+        job['repository'] = (job['repository'] as String).toLowerCase();
         result.add(job);
       } catch (error) {
         store.transaction(() {
@@ -1174,7 +1179,7 @@ class GitHubSync extends ChangeNotifier {
           .reversed;
       for (final job in pending) {
         if (_disposed || _paused || _waiting || !config.enabled) break;
-        if (job['repository'] != settings.slug) {
+        if ((job['repository'] as String?)?.toLowerCase() != settings.slug) {
           _put({
             ...job,
             'state': 'failed',
@@ -1264,7 +1269,7 @@ class GitHubSync extends ChangeNotifier {
         // Keep newer in-flight submissions for acknowledgement after a lost reply.
         store.db.execute(
           '''DELETE FROM github_sent WHERE id != ? AND json_valid(body)
-          AND json_extract(body, '\$.repository') = ?
+          AND lower(json_extract(body, '\$.repository')) = ?
           AND json_extract(body, '\$.taskId') = ?
           AND json_extract(body, '\$.githubLogin') = ?
           AND json_extract(body, '\$.proposal.changes[0].task.version') <= ?''',

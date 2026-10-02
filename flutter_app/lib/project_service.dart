@@ -337,7 +337,7 @@ class GitHubSession {
     });
   }
 
-  Future<void> access(GitHubConfig config) async {
+  Future<Map<String, dynamic>> repository(GitHubConfig config) async {
     config.validate();
     if (user == null) throw StateError('GitHub에 먼저 로그인하세요.');
     final repo = await api.call('GET', '/repos/${config.slug}');
@@ -346,6 +346,22 @@ class GitHubSession {
         '저장소 초대와 쓰기 권한이 필요합니다. 개설자에게 GitHub 협업자 초대를 요청하세요.',
       );
     }
+    return Map<String, dynamic>.from(repo);
+  }
+
+  Future<GitHubConfig> resolveRepository(GitHubConfig config) async {
+    final repo = await repository(config);
+    final resolved = GitHubConfig.fromJson({
+      ...config.toJson(),
+      'repository': repo['full_name'] ?? config.slug,
+      'base': repo['default_branch'] ?? config.base,
+    });
+    resolved.validate();
+    return resolved;
+  }
+
+  Future<void> access(GitHubConfig config) async {
+    await repository(config);
     await api.call('GET', '/repos/${config.slug}/git/ref/heads/${config.base}');
   }
 
@@ -382,6 +398,7 @@ class GitHubSession {
     Map<String, dynamic> data, {
     String? sha,
     String? branch,
+    bool initialize = false,
     required String message,
   }) async {
     await api.call(
@@ -389,7 +406,7 @@ class GitHubSession {
       '/repos/${config.slug}/contents/$path',
       body: {
         'message': message,
-        'branch': branch ?? config.base,
+        if (!initialize) 'branch': branch ?? config.base,
         'sha': ?sha,
         'content': base64Encode(
           utf8.encode('${const JsonEncoder.withIndent('  ').convert(data)}\n'),
@@ -411,10 +428,33 @@ class GitHubSession {
     String name,
     String nickname,
   ) async {
-    await access(config);
-    final repo = await api.call('GET', '/repos/${config.slug}');
+    final repo = await repository(config);
     if (repo['permissions']?['admin'] != true) {
       throw const GitHubFailure('프로젝트 최초 생성은 저장소 관리자에게 허용됩니다.');
+    }
+    var initialize = false;
+    try {
+      await api.call(
+        'GET',
+        '/repos/${config.slug}/git/ref/heads/${config.base}',
+      );
+    } on GitHubFailure catch (e) {
+      if (e.status != 404 && e.status != 409) rethrow;
+      final branches = await api.call(
+        'GET',
+        '/repos/${config.slug}/branches',
+        query: {'per_page': '1'},
+      ) as List;
+      if (branches.isNotEmpty) {
+        throw GitHubFailure(
+          '통합 브랜치 ${config.base}가 없습니다. 저장소를 다시 연결해 기본 브랜치를 확인하세요.',
+        );
+      }
+      if (repo['default_branch'] != null &&
+          repo['default_branch'] != config.base) {
+        throw const GitHubFailure('저장소를 다시 연결해 기본 브랜치를 확인하세요.');
+      }
+      initialize = true;
     }
     final existing = await readJson(config, '.ieum/project.json');
     if (existing != null) {
@@ -441,6 +481,7 @@ class GitHubSession {
         config,
         '.ieum/project.json',
         project.json,
+        initialize: initialize,
         message: 'Create IEUM project',
       );
     } on GitHubFailure catch (e) {
@@ -561,7 +602,8 @@ class GitHubSession {
         try {
           final pr = Map<String, dynamic>.from(raw);
           if (!(pr['head']['ref'] as String).startsWith('ieum/members/') ||
-              pr['head']['repo']?['full_name'] != config.slug) {
+              (pr['head']['repo']?['full_name'] as String?)?.toLowerCase() !=
+                  config.slug) {
             continue;
           }
           final files = await api.call(
@@ -588,13 +630,12 @@ class GitHubSession {
           if (data['schemaVersion'] != 1 ||
               data['projectId'] is! String ||
               member.id != 'gh-${pr['user']['id']}' ||
-              member.login != pr['user']['login'] ||
               member.role != 'pending' ||
               files.single['filename'] != '.ieum/requests/${member.id}.json') {
             throw const FormatException('요청자 또는 가입 요청 형식이 올바르지 않습니다.');
           }
           result.add({
-            'member': member.json,
+            'member': {...member.json, 'login': pr['user']['login']},
             'projectId': data['projectId'],
             'number': number,
             'sha': pr['head']['sha'],

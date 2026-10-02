@@ -44,7 +44,12 @@ extension AutoTaskIntegration on GitHubPublisher {
       throw const GitHubFailure('작업 JSON 한 개의 변경만 자동 통합할 수 있습니다.');
     }
     final path = files.single['filename'] as String;
-    final login = pr['user']['login'] as String;
+    final label = RegExp(r'^\.ieum/changes/([A-Za-z0-9_-]+)/').firstMatch(path);
+    final login = label?.group(1);
+    // GitHub login names can change while the PR author ID stays the same.
+    if (login == null || !{pr['user']['login'], author.login}.contains(login)) {
+      throw const GitHubFailure('작성자의 작업 JSON 경로가 아닙니다.');
+    }
     final prefix = '.ieum/changes/$login/';
     if (!path.startsWith(prefix) || !path.endsWith('.json')) {
       throw const GitHubFailure('작성자의 작업 JSON 경로가 아닙니다.');
