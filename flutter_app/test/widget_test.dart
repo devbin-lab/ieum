@@ -32,6 +32,21 @@ void main() {
     await tester.pumpAndSettle();
   }
 
+  Future<void> settings(WidgetTester tester, {bool changes = false}) async {
+    await tester.tapAt(
+      tester.getTopLeft(find.byKey(const Key('sidebar-account'))) +
+          const Offset(18, 18),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('account-settings')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('account-settings')), findsNothing);
+    if (changes) {
+      await tester.tap(find.byKey(const Key('settings-changes-tab')));
+      await tester.pumpAndSettle();
+    }
+  }
+
   testWidgets(
     'GitHub setup fits both window sizes and keeps destination user-selected',
     (tester) async {
@@ -43,7 +58,7 @@ void main() {
       addTearDown(tester.view.resetDevicePixelRatio);
       await tester.pumpWidget(IeumApp(store: store, sync: sync));
       await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const Key('nav-2')));
+      await settings(tester);
       await tester.pumpAndSettle();
       expect(find.text('GitHub 자동 동기화'), findsOneWidget);
       for (final size in [const Size(1480, 940), const Size(1160, 740)]) {
@@ -85,7 +100,11 @@ void main() {
     expect(find.byKey(const Key('card-IE-101')), findsOneWidget);
     expect(tester.takeException(), isNull);
     for (final i in [1, 2, 0]) {
-      await tester.tap(find.byKey(Key('nav-$i')));
+      if (i == 0) {
+        await tester.tap(find.byKey(const Key('nav-0')));
+      } else {
+        await settings(tester, changes: i == 1);
+      }
       await tester.pumpAndSettle();
       expect(tester.takeException(), isNull);
     }
@@ -95,7 +114,7 @@ void main() {
     await tester.tap(find.byKey(const Key('view-list')));
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
-    await tester.tap(find.byKey(const Key('nav-2')));
+    await settings(tester);
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
   });
@@ -205,7 +224,7 @@ void main() {
       findsOneWidget,
     );
     expect(find.text('1개 작업 · 자동 저장'), findsOneWidget);
-    await tester.tap(find.byKey(const Key('nav-1')));
+    await settings(tester, changes: true);
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('nav-0')));
     await tester.pumpAndSettle();

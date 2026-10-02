@@ -15,6 +15,7 @@ import 'github_panel.dart';
 import 'project_service.dart';
 import 'team_panel.dart';
 import 'app_release.dart';
+import 'account_menu.dart';
 
 const purple = Color(0xff7963d5),
     ink = Color(0xff302b3c),
@@ -566,7 +567,7 @@ class _WorkspaceState extends State<Workspace> {
                                         ),
                                         const SizedBox(height: 10),
                                         Text(
-                                          titles[page],
+                                          page == 0 ? titles[0] : '설정',
                                           style: const TextStyle(
                                             fontSize: 27,
                                             fontWeight: FontWeight.w700,
@@ -575,7 +576,9 @@ class _WorkspaceState extends State<Workspace> {
                                         ),
                                         const SizedBox(height: 9),
                                         Text(
-                                          subtitles[page],
+                                          page == 0
+                                              ? subtitles[0]
+                                              : '프로젝트 설정과 개인 변경내역을 관리하세요.',
                                           style: const TextStyle(
                                             fontSize: 12,
                                             color: muted,
@@ -584,17 +587,18 @@ class _WorkspaceState extends State<Workspace> {
                                       ],
                                     ),
                                   ),
-                                  FilledButton.icon(
-                                    key: const Key('new-task'),
-                                    onPressed: s.canCreate
-                                        ? () => edit()
-                                        : null,
-                                    icon: const Icon(Icons.add, size: 18),
-                                    label: const Text(
-                                      '작업 등록',
-                                      style: TextStyle(fontSize: 12),
+                                  if (page == 0)
+                                    FilledButton.icon(
+                                      key: const Key('new-task'),
+                                      onPressed: s.canCreate
+                                          ? () => edit()
+                                          : null,
+                                      icon: const Icon(Icons.add, size: 18),
+                                      label: const Text(
+                                        '작업 등록',
+                                        style: TextStyle(fontSize: 12),
+                                      ),
                                     ),
-                                  ),
                                 ],
                               ),
                               const SizedBox(height: 30),
@@ -639,6 +643,10 @@ class _WorkspaceState extends State<Workspace> {
                                   board(filtered, constraints.maxWidth - 68)
                                 else
                                   schedule(filtered),
+                              ],
+                              if (page != 0) ...[
+                                settingsTabs(),
+                                const SizedBox(height: 24),
                               ],
                               if (page == 1) changesPanel(),
                               if (page == 2) settingsPanel(),
@@ -732,104 +740,95 @@ class _WorkspaceState extends State<Workspace> {
           ],
         ),
         const SizedBox(height: 12),
-        ...List.generate(
-          titles.length,
-          (i) => Padding(
-            padding: const EdgeInsets.only(bottom: 5),
-            child: Material(
-              color: page == i ? const Color(0xffe6eae8) : Colors.transparent,
-              borderRadius: BorderRadius.circular(8),
-              child: InkWell(
-                key: Key('nav-$i'),
-                borderRadius: BorderRadius.circular(8),
-                onTap: () => rememberView(() => page = i),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 12,
+        Material(
+          color: page == 0 ? const Color(0xffe6eae8) : Colors.transparent,
+          borderRadius: BorderRadius.circular(8),
+          child: InkWell(
+            key: const Key('nav-0'),
+            borderRadius: BorderRadius.circular(8),
+            onTap: () => rememberView(() => page = 0),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.calendar_month_outlined,
+                    size: 19,
+                    color: page == 0 ? ink : muted,
                   ),
-                  child: Row(
-                    children: [
-                      Icon(
-                        [
-                          Icons.calendar_month_outlined,
-                          Icons.merge_outlined,
-                          Icons.link,
-                        ][i],
-                        size: 19,
-                        color: page == i ? ink : muted,
-                      ),
-                      const SizedBox(width: 12),
-                      Text(
-                        titles[i],
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: page == i ? ink : muted,
-                          fontWeight: page == i
-                              ? FontWeight.w600
-                              : FontWeight.normal,
-                        ),
-                      ),
-                      if (i == 1 && s.changes.isNotEmpty) ...[
-                        const Spacer(),
-                        badge('${s.changes.length}', color: purple),
-                      ],
-                    ],
+                  const SizedBox(width: 12),
+                  Text(
+                    titles[0],
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: page == 0 ? ink : muted,
+                      fontWeight: page == 0
+                          ? FontWeight.w600
+                          : FontWeight.normal,
+                    ),
                   ),
-                ),
+                ],
               ),
             ),
           ),
         ),
         const Spacer(),
         const Divider(color: Color(0xffe1e4e3), height: 25),
-        Row(
-          key: const Key('sidebar-account'),
-          children: [
-            Tooltip(
-              message: s.isProject ? '@${s.actor.login}' : '테스트 사용자',
-              child: avatar(s.actor),
-            ),
-            const SizedBox(width: 9),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  if (s.isProject)
-                    Text(
-                      s.actor.name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    )
-                  else
-                    IeumSelect(
-                      key: const Key('profile'),
-                      value: s.profileId,
-                      values: {for (final m in s.people) m.id: m.name},
-                      colors: {for (final m in s.people) m.id: Color(m.color)},
-                      onChanged: s.setProfile,
-                    ),
-                  const SizedBox(height: 3),
-                  Text(
-                    s.isProject ? roleLabels[s.actor.role]! : '테스트 사용자',
-                    style: const TextStyle(fontSize: 10, color: muted),
-                  ),
-                ],
-              ),
-            ),
-            if (widget.onSignOut != null)
-              TextButton(
-                onPressed: widget.onSignOut,
-                child: const Text('로그아웃', style: TextStyle(fontSize: 10)),
-              ),
-          ],
+        AccountMenu(
+          name: s.actor.name,
+          role: s.isProject ? roleLabels[s.actor.role]! : '테스트 사용자',
+          avatar: avatar(s.actor),
+          onSettings: () => rememberView(() => page = 2),
+          onSignOut: widget.onSignOut,
+          profileControl: s.isProject
+              ? null
+              : IeumSelect(
+                  key: const Key('profile'),
+                  value: s.profileId,
+                  values: {for (final m in s.people) m.id: m.name},
+                  colors: {for (final m in s.people) m.id: Color(m.color)},
+                  onChanged: s.setProfile,
+                ),
         ),
       ],
     ),
+  );
+  Widget settingsTabs() => Row(
+    key: const Key('settings-tabs'),
+    children: [
+      for (final i in [2, 1])
+        Padding(
+          padding: const EdgeInsets.only(right: 8),
+          child: TextButton.icon(
+            key: Key(i == 2 ? 'settings-project-tab' : 'settings-changes-tab'),
+            onPressed: () => rememberView(() => page = i),
+            style: TextButton.styleFrom(
+              foregroundColor: page == i ? ink : muted,
+              backgroundColor: page == i
+                  ? const Color(0xffe6eae8)
+                  : Colors.transparent,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+            ),
+            icon: Icon(
+              i == 2 ? Icons.tune_rounded : Icons.history_rounded,
+              size: 17,
+            ),
+            label: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(titles[i], style: const TextStyle(fontSize: 12)),
+                if (i == 1 && s.changes.isNotEmpty) ...[
+                  const SizedBox(width: 8),
+                  badge('${s.changes.length}', color: purple),
+                ],
+              ],
+            ),
+          ),
+        ),
+    ],
   );
   Widget stats(List<WorkTask> tasks) => Row(
     children: List.generate(

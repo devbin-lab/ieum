@@ -124,6 +124,49 @@ void main() {
         tester.getRect(find.byKey(const Key('nav-0'))).top - picker.bottom,
         lessThan(20),
       );
+      expect(find.byKey(const Key('nav-1')), findsNothing);
+      expect(find.byKey(const Key('nav-2')), findsNothing);
+      expect(find.text('프로젝트 설정'), findsNothing);
+      expect(find.text('내 변경내역'), findsNothing);
+      await tester.tapAt(
+        tester.getTopLeft(find.byKey(const Key('sidebar-account'))) +
+            const Offset(18, 18),
+      );
+      await tester.pumpAndSettle();
+      final account = tester.getRect(find.byKey(const Key('sidebar-account')));
+      final summary = tester.getRect(
+        find.byKey(const Key('account-menu-summary')),
+      );
+      final settings = tester.getRect(
+        find.byKey(const Key('account-settings')),
+      );
+      expect(summary.top, greaterThanOrEqualTo(titlebar.bottom));
+      expect(settings.bottom, lessThanOrEqualTo(account.top));
+      await capture('account-menu');
+      // Clicking outside dismisses the menu without changing the current view.
+      await tester.tap(find.byKey(const Key('nav-0')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('account-settings')), findsNothing);
+      expect(find.byKey(const Key('task-list')), findsOneWidget);
+      await tester.tapAt(
+        tester.getTopLeft(find.byKey(const Key('sidebar-account'))) +
+            const Offset(18, 18),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('account-settings')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('settings-tabs')), findsOneWidget);
+      expect(find.byKey(const Key('new-task')), findsNothing);
+      await capture('account-settings');
+      await tester.tap(find.byKey(const Key('settings-changes-tab')));
+      await tester.pumpAndSettle();
+      expect(find.text('개인 브랜치 · PR'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox());
+      await tester.pumpWidget(app());
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('settings-tabs')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('nav-0')));
+      await tester.pumpAndSettle();
       await capture('sidebar-cleanup-offline-list');
       if (Platform.environment['IEUM_CAPTURE_UI'] == '1') {
         await tester.pumpWidget(app(offline: false));

@@ -71,6 +71,7 @@ void main() {
       );
       expect(() => session.named(' '), throwsStateError);
       session.signOut();
+      expect(session.user, isNull);
       expect(session.sessionToken, isEmpty);
       expect(() => session.named('휴랑'), throwsStateError);
     },
@@ -397,6 +398,7 @@ void main() {
       await tester.ensureVisible(
         find.byKey(const Key('github-advanced-login')),
       );
+      await tester.pumpAndSettle();
       await tester.runAsync(() async {
         await tester.tap(find.byKey(const Key('github-advanced-login')));
         await Future<void>.delayed(const Duration(milliseconds: 10));
@@ -429,27 +431,46 @@ void main() {
       expect(find.byKey(const Key('task-list')), findsOneWidget);
       expect(find.byKey(const Key('card-IE-101')), findsNothing);
       expect(find.byKey(const Key('profile')), findsNothing);
-      await tester.tap(find.byKey(const Key('nav-2')));
+      expect(find.text('로그아웃'), findsNothing);
+      await tester.tap(find.byKey(const Key('sidebar-account')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('account-settings')));
       await tester.pumpAndSettle();
       expect(find.text('참여자 · 역할과 권한'), findsOneWidget);
       expect(tester.takeException(), isNull);
+      expect(find.byKey(const Key('account-settings')), findsNothing);
       await tester.tap(find.byKey(const Key('nav-0')));
       await tester.pumpAndSettle();
+      expect(find.byKey(const Key('task-list')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('sidebar-account')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('account-sign-out')));
+      await tester.pump(); // Menu actions run after the menu closes.
       await tester.runAsync(() async {
-        await tester.tap(find.text('로그아웃'));
-        await Future<void>.delayed(const Duration(milliseconds: 10));
+        for (var attempt = 0; attempt < 100; attempt++) {
+          if (session.user == null) return;
+          await Future<void>.delayed(const Duration(milliseconds: 5));
+        }
       });
       await tester.pumpAndSettle();
       expect(find.text('이음에 로그인'), findsOneWidget);
+      expect(session.user, isNull);
       expect(session.sessionToken, isEmpty);
       await tester.ensureVisible(
         find.byKey(const Key('github-advanced-login')),
       );
+      await tester.pumpAndSettle();
       await tester.runAsync(() async {
         await tester.tap(find.byKey(const Key('github-advanced-login')));
         await Future<void>.delayed(const Duration(milliseconds: 10));
       });
-      await tester.pumpAndSettle();
+      for (var attempt = 0; attempt < 100; attempt++) {
+        await tester.pumpAndSettle();
+        if (find.byKey(const Key('task-list')).evaluate().isNotEmpty) break;
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 5)),
+        );
+      }
       expect(find.byKey(const Key('task-list')), findsOneWidget);
       expect(find.byKey(const Key('profile')), findsNothing);
       expect(tester.takeException(), isNull);
