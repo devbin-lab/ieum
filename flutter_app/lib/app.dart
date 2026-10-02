@@ -16,6 +16,7 @@ import 'project_service.dart';
 import 'team_panel.dart';
 import 'app_release.dart';
 import 'account_menu.dart';
+import 'settings_shell.dart';
 
 const purple = Color(0xff7963d5),
     ink = Color(0xff302b3c),
@@ -197,6 +198,7 @@ enum TaskView { list, kanban }
 
 class _WorkspaceState extends State<Workspace> {
   int page = 0;
+  SettingsSection settingsSection = SettingsSection.general;
   TaskView taskView = TaskView.list;
   String search = '', part = '', scope = 'all';
   bool fileBusy = false;
@@ -208,6 +210,12 @@ class _WorkspaceState extends State<Workspace> {
       final saved = jsonDecode(s.meta('ui.workspace')) as Map;
       final savedPage = saved['page'];
       if (savedPage is int && savedPage >= 0 && savedPage < 3) page = savedPage;
+      settingsSection = page == 1
+          ? SettingsSection.changes
+          : SettingsSection.values
+                    .where((v) => v.name == saved['settings'])
+                    .firstOrNull ??
+                SettingsSection.general;
       taskView = saved['view'] == 'kanban' ? TaskView.kanban : TaskView.list;
     } catch (_) {
       // New projects start with the task list.
@@ -218,7 +226,11 @@ class _WorkspaceState extends State<Workspace> {
     change();
     s.setMeta(
       'ui.workspace',
-      jsonEncode({'page': page, 'view': taskView.name}),
+      jsonEncode({
+        'page': page,
+        'view': taskView.name,
+        'settings': settingsSection.name,
+      }),
     );
   });
   static const titles = ['일정 · 작업', '내 변경내역', '프로젝트 설정'];
@@ -543,118 +555,128 @@ class _WorkspaceState extends State<Workspace> {
                       ),
                     ),
                   Expanded(
-                    child: LayoutBuilder(
-                      builder: (ctx, constraints) => SingleChildScrollView(
-                        child: Padding(
-                          padding: const EdgeInsets.fromLTRB(34, 34, 34, 30),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                children: [
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
+                    child: page == 0
+                        ? LayoutBuilder(
+                            builder: (ctx, constraints) => SingleChildScrollView(
+                              child: Padding(
+                                padding: const EdgeInsets.fromLTRB(
+                                  34,
+                                  34,
+                                  34,
+                                  30,
+                                ),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Row(
                                       children: [
-                                        const Text(
-                                          'TEAM WORKSPACE',
-                                          style: TextStyle(
-                                            fontSize: 9,
-                                            letterSpacing: 2,
-                                            color: muted,
+                                        Expanded(
+                                          child: Column(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            children: [
+                                              const Text(
+                                                'TEAM WORKSPACE',
+                                                style: TextStyle(
+                                                  fontSize: 9,
+                                                  letterSpacing: 2,
+                                                  color: muted,
+                                                ),
+                                              ),
+                                              const SizedBox(height: 10),
+                                              Text(
+                                                page == 0 ? titles[0] : '설정',
+                                                style: const TextStyle(
+                                                  fontSize: 27,
+                                                  fontWeight: FontWeight.w700,
+                                                  letterSpacing: -1,
+                                                ),
+                                              ),
+                                              const SizedBox(height: 9),
+                                              Text(
+                                                page == 0 ? subtitles[0] : '프로젝트 설정과 개인 변경내역을 관리하세요.',
+                                                style: const TextStyle(
+                                                  fontSize: 12,
+                                                  color: muted,
+                                                ),
+                                              ),
+                                            ],
                                           ),
                                         ),
-                                        const SizedBox(height: 10),
-                                        Text(
-                                          page == 0 ? titles[0] : '설정',
-                                          style: const TextStyle(
-                                            fontSize: 27,
-                                            fontWeight: FontWeight.w700,
-                                            letterSpacing: -1,
+                                        if (page == 0)
+                                          FilledButton.icon(
+                                            key: const Key('new-task'),
+                                            onPressed: s.canCreate
+                                                ? () => edit()
+                                                : null,
+                                            icon: const Icon(
+                                              Icons.add,
+                                              size: 18,
+                                            ),
+                                            label: const Text(
+                                              '작업 등록',
+                                              style: TextStyle(fontSize: 12),
+                                            ),
                                           ),
-                                        ),
-                                        const SizedBox(height: 9),
-                                        Text(
-                                          page == 0
-                                              ? subtitles[0]
-                                              : '프로젝트 설정과 개인 변경내역을 관리하세요.',
-                                          style: const TextStyle(
-                                            fontSize: 12,
-                                            color: muted,
-                                          ),
-                                        ),
                                       ],
                                     ),
-                                  ),
-                                  if (page == 0)
-                                    FilledButton.icon(
-                                      key: const Key('new-task'),
-                                      onPressed: s.canCreate
-                                          ? () => edit()
-                                          : null,
-                                      icon: const Icon(Icons.add, size: 18),
-                                      label: const Text(
-                                        '작업 등록',
-                                        style: TextStyle(fontSize: 12),
+                                    const SizedBox(height: 30),
+                                    if (s.isProject &&
+                                        s.actor.role == 'pending')
+                                      info(
+                                        '가입 승인 대기 중입니다. 개설자가 역할을 부여하면 자동 동기화 후 작업을 진행할 수 있습니다.',
                                       ),
-                                    ),
-                                ],
-                              ),
-                              const SizedBox(height: 30),
-                              if (s.isProject && s.actor.role == 'pending')
-                                info(
-                                  '가입 승인 대기 중입니다. 개설자가 역할을 부여하면 자동 동기화 후 작업을 진행할 수 있습니다.',
-                                ),
-                              if (page == 0) ...[
-                                stats(all),
-                                const SizedBox(height: 27),
-                                toolbar(),
-                                const SizedBox(height: 17),
-                                Row(
-                                  children: [
-                                    const Icon(
-                                      Icons.circle_outlined,
-                                      size: 12,
-                                      color: muted,
-                                    ),
-                                    const SizedBox(width: 5),
-                                    Text(
-                                      s.isProject
-                                          ? '할 일 → 진행 중 → 검토 → 완료'
-                                          : '예시 데이터로 흐름을 테스트해 보세요.',
-                                      style: const TextStyle(
-                                        fontSize: 10,
-                                        color: muted,
+                                    if (page == 0) ...[
+                                      stats(all),
+                                      const SizedBox(height: 27),
+                                      toolbar(),
+                                      const SizedBox(height: 17),
+                                      Row(
+                                        children: [
+                                          const Icon(
+                                            Icons.circle_outlined,
+                                            size: 12,
+                                            color: muted,
+                                          ),
+                                          const SizedBox(width: 5),
+                                          Text(
+                                            s.isProject
+                                                ? '할 일 → 진행 중 → 검토 → 완료'
+                                                : '예시 데이터로 흐름을 테스트해 보세요.',
+                                            style: const TextStyle(
+                                              fontSize: 10,
+                                              color: muted,
+                                            ),
+                                          ),
+                                          const Spacer(),
+                                          Text(
+                                            '${filtered.length}개 작업 · 자동 저장',
+                                            style: const TextStyle(
+                                              fontSize: 10,
+                                              color: muted,
+                                            ),
+                                          ),
+                                        ],
                                       ),
-                                    ),
-                                    const Spacer(),
-                                    Text(
-                                      '${filtered.length}개 작업 · 자동 저장',
-                                      style: const TextStyle(
-                                        fontSize: 10,
-                                        color: muted,
-                                      ),
-                                    ),
+                                      const SizedBox(height: 15),
+                                      if (taskView == TaskView.kanban)
+                                        board(
+                                          filtered,
+                                          constraints.maxWidth - 68,
+                                        )
+                                      else
+                                        schedule(filtered),
+                                    ],
                                   ],
                                 ),
-                                const SizedBox(height: 15),
-                                if (taskView == TaskView.kanban)
-                                  board(filtered, constraints.maxWidth - 68)
-                                else
-                                  schedule(filtered),
-                              ],
-                              if (page != 0) ...[
-                                settingsTabs(),
-                                const SizedBox(height: 24),
-                              ],
-                              if (page == 1) changesPanel(),
-                              if (page == 2) settingsPanel(),
-                            ],
+                              ),
+                            ),
+                          )
+                        : SettingsShell(
+                            selected: settingsSection,
+                            onSelected: selectSettings,
+                            contentBuilder: settingsContent,
                           ),
-                        ),
-                      ),
-                    ),
                   ),
                   Container(
                     height: 43,
@@ -686,99 +708,74 @@ class _WorkspaceState extends State<Workspace> {
       );
     },
   );
+  void selectSettings(SettingsSection section) => rememberView(() {
+    settingsSection = section;
+    page = section == SettingsSection.changes ? 1 : 2;
+  });
+
   Widget sidebar() => Container(
     key: const Key('workspace-sidebar'),
-    width: 244,
+    width: 64,
     decoration: const BoxDecoration(
       color: Color(0xfff1f3f2),
       border: Border(right: BorderSide(color: Color(0xffe1e4e3))),
     ),
-    padding: const EdgeInsets.fromLTRB(12, 12, 12, 16),
+    padding: const EdgeInsets.fromLTRB(9, 12, 9, 12),
     child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          key: const Key('sidebar-project-row'),
-          children: [
-            Expanded(
-              child:
-                  widget.projectSwitcher ??
-                  Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 12,
-                    ),
-                    child: Text(
-                      s.project?.name ?? '졸업작품 팀',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ),
-            ),
-            const SizedBox(width: 4),
-            IconButton(
-              key: const Key('sidebar-notifications'),
-              tooltip: s.isProject ? '내 알림' : '알림 미리보기',
-              onPressed: notifications,
-              constraints: const BoxConstraints.tightFor(width: 36, height: 36),
-              padding: EdgeInsets.zero,
-              icon: Badge(
-                isLabelVisible: s.unreadNotificationCount > 0,
-                smallSize: 5,
-                backgroundColor: purple,
-                child: const Icon(
-                  Icons.notifications_none_outlined,
-                  size: 18,
-                  color: muted,
+        widget.projectSwitcher ??
+            Tooltip(
+              message: s.project?.name ?? '졸업작품 팀',
+              child: const SizedBox(
+                width: 44,
+                height: 44,
+                child: Icon(
+                  Icons.folder_outlined,
+                  size: 21,
+                  color: Color(0xff505753),
                 ),
               ),
             ),
-          ],
+        const SizedBox(height: 8),
+        railButton(
+          'nav-0',
+          '일정 · 작업',
+          Icons.calendar_month_outlined,
+          () => rememberView(() => page = 0),
+          selected: page == 0,
         ),
-        const SizedBox(height: 12),
-        Material(
-          color: page == 0 ? const Color(0xffe6eae8) : Colors.transparent,
-          borderRadius: BorderRadius.circular(8),
-          child: InkWell(
-            key: const Key('nav-0'),
-            borderRadius: BorderRadius.circular(8),
-            onTap: () => rememberView(() => page = 0),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-              child: Row(
-                children: [
-                  Icon(
-                    Icons.calendar_month_outlined,
-                    size: 19,
-                    color: page == 0 ? ink : muted,
-                  ),
-                  const SizedBox(width: 12),
-                  Text(
-                    titles[0],
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: page == 0 ? ink : muted,
-                      fontWeight: page == 0
-                          ? FontWeight.w600
-                          : FontWeight.normal,
-                    ),
-                  ),
-                ],
-              ),
+        const SizedBox(height: 8),
+        IconButton(
+          key: const Key('sidebar-notifications'),
+          tooltip: s.isProject ? '내 알림' : '알림 미리보기',
+          onPressed: notifications,
+          constraints: const BoxConstraints.tightFor(width: 44, height: 44),
+          padding: EdgeInsets.zero,
+          icon: Badge(
+            isLabelVisible: s.unreadNotificationCount > 0,
+            smallSize: 5,
+            backgroundColor: purple,
+            child: const Icon(
+              Icons.notifications_none_outlined,
+              size: 21,
+              color: Color(0xff505753),
             ),
           ),
         ),
         const Spacer(),
-        const Divider(color: Color(0xffe1e4e3), height: 25),
+        railButton(
+          'sidebar-settings',
+          '설정',
+          Icons.settings_outlined,
+          () => selectSettings(SettingsSection.general),
+          selected: page != 0,
+        ),
+        const Divider(color: Color(0xffe1e4e3), height: 24),
         AccountMenu(
           name: s.actor.name,
           role: s.isProject ? roleLabels[s.actor.role]! : '테스트 사용자',
           avatar: avatar(s.actor),
-          onSettings: () => rememberView(() => page = 2),
+          onSettings: () => selectSettings(SettingsSection.general),
           onSignOut: widget.onSignOut,
           profileControl: s.isProject
               ? null
@@ -793,42 +790,24 @@ class _WorkspaceState extends State<Workspace> {
       ],
     ),
   );
-  Widget settingsTabs() => Row(
-    key: const Key('settings-tabs'),
-    children: [
-      for (final i in [2, 1])
-        Padding(
-          padding: const EdgeInsets.only(right: 8),
-          child: TextButton.icon(
-            key: Key(i == 2 ? 'settings-project-tab' : 'settings-changes-tab'),
-            onPressed: () => rememberView(() => page = i),
-            style: TextButton.styleFrom(
-              foregroundColor: page == i ? ink : muted,
-              backgroundColor: page == i
-                  ? const Color(0xffe6eae8)
-                  : Colors.transparent,
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(8),
-              ),
-            ),
-            icon: Icon(
-              i == 2 ? Icons.tune_rounded : Icons.history_rounded,
-              size: 17,
-            ),
-            label: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(titles[i], style: const TextStyle(fontSize: 12)),
-                if (i == 1 && s.changes.isNotEmpty) ...[
-                  const SizedBox(width: 8),
-                  badge('${s.changes.length}', color: purple),
-                ],
-              ],
-            ),
-          ),
-        ),
-    ],
+
+  Widget railButton(
+    String key,
+    String label,
+    IconData icon,
+    VoidCallback action, {
+    bool selected = false,
+  }) => IconButton(
+    key: Key(key),
+    tooltip: label,
+    onPressed: action,
+    constraints: const BoxConstraints.tightFor(width: 44, height: 44),
+    padding: EdgeInsets.zero,
+    style: IconButton.styleFrom(
+      backgroundColor: selected ? const Color(0xffe1e6e3) : Colors.transparent,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+    ),
+    icon: Icon(icon, size: 21, color: selected ? ink : const Color(0xff505753)),
   );
   Widget stats(List<WorkTask> tasks) => Row(
     children: List.generate(
@@ -1322,7 +1301,7 @@ class _WorkspaceState extends State<Workspace> {
         children: [
           heading(
             '통합 전 변경 ${s.changes.length}건',
-            '기준 통합본: ${s.baseRevision} · 커밋과 PR은 아직 연결되지 않았습니다.',
+            '기준 통합본: ${s.baseRevision} · 전송 상태는 GitHub 동기화에서 확인하세요.',
           ),
           Row(
             mainAxisSize: MainAxisSize.min,
@@ -1428,7 +1407,7 @@ class _WorkspaceState extends State<Workspace> {
         ),
       ),
       info(
-        '자동 동기화 중 충돌한 작업은 개인 변경을 보존하고, 나머지 작업은 계속 가져옵니다. 프로젝트 설정에서 충돌 내용을 확인할 수 있습니다.',
+        '자동 동기화 중 충돌한 작업은 개인 변경을 보존하고, 나머지 작업은 계속 가져옵니다. 설정의 GitHub 동기화에서 충돌 내용을 확인할 수 있습니다.',
       ),
     ],
   );
@@ -1453,142 +1432,192 @@ class _WorkspaceState extends State<Workspace> {
       ],
     ),
   );
-  Widget settingsPanel() => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      if (s.isProject && widget.session != null && widget.sync != null) ...[
-        TeamPanel(store: s, sync: widget.sync!, session: widget.session!),
-        const SizedBox(height: 24),
-      ],
-      if (widget.sync != null) ...[
-        GitHubPanel(sync: widget.sync!),
-        const SizedBox(height: 24),
-      ],
-      Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Expanded(
-            child: integration(
-              'GitHub',
-              widget.sync?.config.enabled == true ? '자동 동기화 켜짐' : '연결 필요',
-              Icons.merge_outlined,
-              '개인 브랜치와 PR로 변경을 검토하고,\n승인된 통합본을 팀과 공유합니다.',
-              widget.sync?.config.repository.isNotEmpty == true
-                  ? widget.sync!.config.slug
-                  : '팀 데이터 저장소를 지정하세요',
-              '작업별 자동 커밋·PR과 승인된 통합본 가져오기를 지원합니다.',
+  Widget settingsContent(SettingsSection section) => switch (section) {
+    SettingsSection.general => generalSettings(),
+    SettingsSection.team =>
+      s.isProject && widget.session != null && widget.sync != null
+          ? TeamPanel(store: s, sync: widget.sync!, session: widget.session!)
+          : info('프로젝트에 로그인하면 참여자와 역할, 가입 요청을 관리할 수 있습니다.'),
+    SettingsSection.assignments => Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          '파트를 선택하면 기본 작업자와 검토자가 자동으로 배정됩니다.',
+          style: TextStyle(fontSize: 12, color: muted),
+        ),
+        const SizedBox(height: 18),
+        Container(
+          width: double.infinity,
+          decoration: BoxDecoration(
+            color: Colors.white,
+            border: Border.all(color: border),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: DataTable(
+              columnSpacing: 35,
+              headingTextStyle: const TextStyle(fontSize: 11, color: muted),
+              dataTextStyle: const TextStyle(fontSize: 12, color: ink),
+              columns: [
+                '담당 파트',
+                '기본 작업자',
+                '검토자',
+                '후속 파트 (설계)',
+              ].map((v) => DataColumn(label: Text(v))).toList(),
+              rows: s.partRules
+                  .map(
+                    (r) => DataRow(
+                      cells: [
+                        DataCell(Text(r.part)),
+                        DataCell(Text(s.member(r.assigneeId).name)),
+                        DataCell(Text(s.member(r.reviewerId).name)),
+                        DataCell(Text(r.nextPart.isEmpty ? '—' : r.nextPart)),
+                      ],
+                    ),
+                  )
+                  .toList(),
             ),
           ),
-          const SizedBox(width: 22),
-          Expanded(
-            child: integration(
-              'Discord',
-              '미연결',
-              Icons.chat_bubble_outline,
-              '작업 등록 · 검토 · 재작업 · 완료를\n담당자에게 안내하도록 준비합니다.',
-              '작업·검토 요청은 앱 알림함에서 확인',
-              'Discord 메시지 전송은 아직 연결되지 않았습니다.',
-              button: OutlinedButton(
-                onPressed: notifications,
-                child: const Text('앱 알림함 보기', style: TextStyle(fontSize: 11)),
-              ),
+        ),
+      ],
+    ),
+    SettingsSection.github =>
+      widget.sync != null
+          ? GitHubPanel(sync: widget.sync!)
+          : info('프로젝트 저장소에 연결하면 동기화 상태와 전송 대기열을 확인할 수 있습니다.'),
+    SettingsSection.changes => changesPanel(),
+    SettingsSection.notifications => Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        settingsGroup('작업 알림', [
+          (
+            '앱 알림함',
+            '작업 배정, 검토 요청, 재작업 결과를 확인합니다.',
+            '${s.unreadNotificationCount}개 읽지 않음',
+          ),
+          ('Discord', '현재 작업 알림은 이음의 앱 알림함으로 전달됩니다.', '미연결'),
+        ]),
+        const SizedBox(height: 16),
+        OutlinedButton.icon(
+          onPressed: notifications,
+          icon: const Icon(Icons.notifications_none_rounded, size: 18),
+          label: const Text('앱 알림함 열기'),
+        ),
+      ],
+    ),
+  };
+
+  Widget generalSettings() => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      settingsGroup('프로젝트', [
+        ('프로젝트 이름', '현재 열려 있는 작업 공간입니다.', s.project?.name ?? '예시 작업 공간'),
+        (
+          '데이터 저장 위치',
+          '이 컴퓨터의 작업과 전송 대기열을 보관합니다.',
+          s.filename == ':memory:' ? '테스트용 메모리 DB' : s.filename,
+        ),
+        (
+          'GitHub 저장소',
+          '팀의 작업과 통합본을 공유합니다.',
+          widget.sync?.config.repository.isNotEmpty == true
+              ? widget.sync!.config.slug
+              : '연결되지 않음',
+        ),
+      ]),
+      const SizedBox(height: 32),
+      settingsGroup('계정', [
+        ('이름', '이 프로젝트에서 사용하는 이름입니다.', s.actor.name),
+        (
+          '역할',
+          '프로젝트에서 지정된 역할과 권한입니다.',
+          s.isProject ? roleLabels[s.actor.role]! : '테스트 사용자',
+        ),
+      ]),
+      const SizedBox(height: 32),
+      settingsGroup('앱 정보', [
+        ('이음 버전', '업데이트는 창 위쪽의 업데이트 확인에서 받을 수 있습니다.', appVersion),
+      ]),
+    ],
+  );
+
+  Widget settingsGroup(String title, List<(String, String, String)> rows) =>
+      Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: const TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: Color(0xff303632),
+            ),
+          ),
+          const SizedBox(height: 14),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 4),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              border: Border.all(color: const Color(0xffe5e8e6)),
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Column(
+              children: [
+                for (var i = 0; i < rows.length; i++) ...[
+                  if (i > 0) const Divider(height: 1, color: Color(0xffeceeec)),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          flex: 3,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                rows[i].$1,
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              const SizedBox(height: 5),
+                              Text(
+                                rows[i].$2,
+                                style: const TextStyle(
+                                  fontSize: 11,
+                                  color: Color(0xff7d8380),
+                                  height: 1.5,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 24),
+                        Expanded(
+                          flex: 2,
+                          child: SelectableText(
+                            rows[i].$3,
+                            textAlign: TextAlign.right,
+                            style: const TextStyle(
+                              fontSize: 11,
+                              color: Color(0xff666e68),
+                              height: 1.5,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ],
             ),
           ),
         ],
-      ),
-      const SizedBox(height: 29),
-      heading('파트별 기본 배정', '파트를 선택하면 기본 작업자와 검토자가 자동으로 배정됩니다.'),
-      const SizedBox(height: 18),
-      Container(
-        width: double.infinity,
-        decoration: BoxDecoration(
-          color: Colors.white,
-          border: Border.all(color: border),
-          borderRadius: BorderRadius.circular(10),
-        ),
-        child: DataTable(
-          columnSpacing: 35,
-          headingTextStyle: const TextStyle(fontSize: 11, color: muted),
-          dataTextStyle: const TextStyle(fontSize: 12, color: ink),
-          columns: [
-            '담당 파트',
-            '기본 작업자',
-            '검토자',
-            '후속 파트 (설계)',
-          ].map((v) => DataColumn(label: Text(v))).toList(),
-          rows: s.partRules
-              .map(
-                (r) => DataRow(
-                  cells: [
-                    DataCell(Text(r.part)),
-                    DataCell(Text(s.member(r.assigneeId).name)),
-                    DataCell(Text(s.member(r.reviewerId).name)),
-                    DataCell(Text(r.nextPart.isEmpty ? '—' : r.nextPart)),
-                  ],
-                ),
-              )
-              .toList(),
-        ),
-      ),
-      info(
-        '공유 서버 없이 개인 SQLite를 사용합니다. GitHub 연결 후 변경을 자동 제출합니다. Discord 전송과 후속 파트의 새 작업 생성은 다음 구현 단계입니다.',
-      ),
-    ],
-  );
-  Widget integration(
-    String name,
-    String state,
-    IconData icon,
-    String description,
-    String target,
-    String note, {
-    Widget? button,
-  }) => Container(
-    padding: const EdgeInsets.all(27),
-    decoration: BoxDecoration(
-      color: Colors.white,
-      border: Border.all(color: border),
-      borderRadius: BorderRadius.circular(12),
-    ),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(13),
-              decoration: BoxDecoration(
-                color: const Color(0xfff0ecfa),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Icon(icon, color: purple, size: 27),
-            ),
-            const Spacer(),
-            badge(state),
-          ],
-        ),
-        const SizedBox(height: 20),
-        Text(
-          name,
-          style: const TextStyle(fontSize: 21, fontWeight: FontWeight.w600),
-        ),
-        const SizedBox(height: 12),
-        Text(
-          description,
-          style: const TextStyle(fontSize: 12, color: muted, height: 1.9),
-        ),
-        const SizedBox(height: 23),
-        SelectableText(
-          target,
-          style: const TextStyle(fontSize: 12, color: purple),
-        ),
-        const SizedBox(height: 18),
-        ?button,
-        const SizedBox(height: 17),
-        Text(note, style: const TextStyle(fontSize: 10, color: muted)),
-      ],
-    ),
-  );
+      );
   Widget detailBody(BuildContext ctx, WorkTask t) {
     final canEdit = s.canEdit(t);
     final lockReason = t.status == 'review' || !s.canEditContent(t)

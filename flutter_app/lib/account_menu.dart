@@ -50,6 +50,11 @@ class AccountMenu extends StatelessWidget {
           ),
         ),
       ),
+      if (profileControl != null)
+        Padding(
+          padding: const EdgeInsets.fromLTRB(10, 0, 10, 8),
+          child: SizedBox(width: 228, height: 42, child: profileControl),
+        ),
       const Divider(height: 1),
       MenuItemButton(
         key: const Key('account-settings'),
@@ -67,44 +72,29 @@ class AccountMenu extends StatelessWidget {
         ),
       ],
     ],
-    builder: (context, controller, child) => Material(
-      color: Colors.transparent,
-      borderRadius: BorderRadius.circular(8),
-      child: InkWell(
+    builder: (context, controller, child) => Tooltip(
+      message: '$name · $role',
+      child: IconButton(
         key: const Key('sidebar-account'),
-        borderRadius: BorderRadius.circular(8),
-        onTap: () => controller.isOpen ? controller.close() : controller.open(),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-          child: Row(
-            children: [
-              avatar,
-              const SizedBox(width: 9),
-              Expanded(child: identity(control: profileControl)),
-              const SizedBox(width: 6),
-              const Icon(
-                Icons.unfold_more_rounded,
-                size: 16,
-                color: Color(0xff9990a5),
-              ),
-            ],
-          ),
-        ),
+        onPressed: () =>
+            controller.isOpen ? controller.close() : controller.open(),
+        constraints: const BoxConstraints.tightFor(width: 44, height: 44),
+        padding: EdgeInsets.zero,
+        icon: avatar,
       ),
     ),
   );
 
-  Widget identity({Widget? control}) => Column(
+  Widget identity() => Column(
     mainAxisSize: MainAxisSize.min,
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
-      control ??
-          Text(
-            name,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
-          ),
+      Text(
+        name,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+      ),
       const SizedBox(height: 3),
       Text(
         role,

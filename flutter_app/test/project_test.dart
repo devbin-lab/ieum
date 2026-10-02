@@ -436,6 +436,8 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('account-settings')));
       await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('settings-team')));
+      await tester.pumpAndSettle();
       expect(find.text('참여자 · 역할과 권한'), findsOneWidget);
       expect(tester.takeException(), isNull);
       expect(find.byKey(const Key('account-settings')), findsNothing);

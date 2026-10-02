@@ -117,8 +117,12 @@ void main() {
         find.byKey(const Key('sidebar-notifications')),
       );
       final titlebar = tester.getRect(find.byKey(const Key('window-titlebar')));
-      expect(bell.left, greaterThanOrEqualTo(picker.right));
-      expect(bell.center.dy, closeTo(picker.center.dy, 1));
+      expect(bell.top, greaterThan(picker.bottom));
+      expect(bell.center.dx, closeTo(picker.center.dx, 1));
+      expect(
+        tester.getSize(find.byKey(const Key('workspace-sidebar'))).width,
+        64,
+      );
       expect(picker.top - titlebar.bottom, lessThan(20));
       expect(
         tester.getRect(find.byKey(const Key('nav-0'))).top - picker.bottom,
@@ -155,16 +159,40 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('account-settings')));
       await tester.pumpAndSettle();
-      expect(find.byKey(const Key('settings-tabs')), findsOneWidget);
+      expect(find.byKey(const Key('settings-shell')), findsOneWidget);
       expect(find.byKey(const Key('new-task')), findsNothing);
-      await capture('account-settings');
-      await tester.tap(find.byKey(const Key('settings-changes-tab')));
+      final navigation = tester.getRect(
+        find.byKey(const Key('settings-navigation')),
+      );
+      final content = tester.getRect(
+        find.byKey(const Key('settings-content-scroll')),
+      );
+      expect(content.left, navigation.right);
+      await capture('settings-general');
+      await tester.enterText(find.byKey(const Key('settings-search')), '배정');
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('settings-team')), findsNothing);
+      await tester.tap(find.byKey(const Key('settings-assignments')));
+      await tester.pumpAndSettle();
+      expect(find.text('담당 파트'), findsOneWidget);
+      await capture('settings-assignments');
+      await tester.enterText(find.byKey(const Key('settings-search')), '없는설정');
+      await tester.pumpAndSettle();
+      expect(find.text('검색 결과가 없습니다.'), findsOneWidget);
+      await tester.tap(find.byTooltip('검색 지우기'));
+      await tester.pumpAndSettle();
+      for (final section in ['team', 'github', 'notifications']) {
+        await tester.tap(find.byKey(Key('settings-$section')));
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull);
+      }
+      await tester.tap(find.byKey(const Key('settings-changes')));
       await tester.pumpAndSettle();
       expect(find.text('개인 브랜치 · PR'), findsOneWidget);
       await tester.pumpWidget(const SizedBox());
       await tester.pumpWidget(app());
       await tester.pumpAndSettle();
-      expect(find.byKey(const Key('settings-tabs')), findsOneWidget);
+      expect(find.byKey(const Key('settings-shell')), findsOneWidget);
       await tester.tap(find.byKey(const Key('nav-0')));
       await tester.pumpAndSettle();
       await capture('sidebar-cleanup-offline-list');

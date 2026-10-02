@@ -42,7 +42,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('account-settings')), findsNothing);
     if (changes) {
-      await tester.tap(find.byKey(const Key('settings-changes-tab')));
+      await tester.tap(find.byKey(const Key('settings-changes')));
       await tester.pumpAndSettle();
     }
   }
@@ -59,6 +59,8 @@ void main() {
       await tester.pumpWidget(IeumApp(store: store, sync: sync));
       await tester.pumpAndSettle();
       await settings(tester);
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('settings-github')));
       await tester.pumpAndSettle();
       expect(find.text('GitHub 자동 동기화'), findsOneWidget);
       for (final size in [const Size(1480, 940), const Size(1160, 740)]) {
@@ -236,6 +238,8 @@ void main() {
     'custom profile and part menus fit small windows and keep behavior',
     (tester) async {
       await setup(tester, const Size(1160, 740));
+      await tester.tap(find.byKey(const Key('sidebar-account')));
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('profile')));
       await tester.pumpAndSettle();
       final profileOption = find.byKey(const ValueKey('option-dev'));

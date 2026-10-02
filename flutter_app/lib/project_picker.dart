@@ -103,36 +103,25 @@ class ProjectPicker extends StatelessWidget {
       ],
       builder: (context, controller, child) => Tooltip(
         message: '${active?.name ?? '프로젝트 선택'} · ${projects.length}개 프로젝트',
-        child: InkWell(
+        child: IconButton(
           key: const Key('project-picker'),
-          borderRadius: BorderRadius.circular(10),
-          onTap: busy
+          onPressed: busy
               ? null
               : () =>
                     controller.isOpen ? controller.close() : controller.open(),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    busy ? '프로젝트 준비 중…' : active?.name ?? '프로젝트',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
+          constraints: const BoxConstraints.tightFor(width: 44, height: 44),
+          padding: EdgeInsets.zero,
+          icon: busy
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(
+                  Icons.folder_outlined,
+                  size: 21,
+                  color: Color(0xff505753),
                 ),
-                const Icon(
-                  Icons.expand_more_rounded,
-                  size: 16,
-                  color: Color(0xff9990a5),
-                ),
-              ],
-            ),
-          ),
         ),
       ),
     );
