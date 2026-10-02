@@ -17,6 +17,7 @@ import 'team_panel.dart';
 import 'app_release.dart';
 import 'account_menu.dart';
 import 'settings_shell.dart';
+import 'horizontal_viewport.dart';
 
 const purple = Color(0xff7963d5),
     ink = Color(0xff302b3c),
@@ -559,10 +560,10 @@ class _WorkspaceState extends State<Workspace> {
                         ? LayoutBuilder(
                             builder: (ctx, constraints) => SingleChildScrollView(
                               child: Padding(
-                                padding: const EdgeInsets.fromLTRB(
-                                  34,
-                                  34,
-                                  34,
+                                padding: EdgeInsets.fromLTRB(
+                                  constraints.maxWidth < 700 ? 16 : 34,
+                                  constraints.maxWidth < 700 ? 24 : 34,
+                                  constraints.maxWidth < 700 ? 16 : 34,
                                   30,
                                 ),
                                 child: Column(
@@ -639,16 +640,18 @@ class _WorkspaceState extends State<Workspace> {
                                             color: muted,
                                           ),
                                           const SizedBox(width: 5),
-                                          Text(
-                                            s.isProject
-                                                ? '할 일 → 진행 중 → 검토 → 완료'
-                                                : '예시 데이터로 흐름을 테스트해 보세요.',
-                                            style: const TextStyle(
-                                              fontSize: 10,
-                                              color: muted,
+                                          Expanded(
+                                            child: Text(
+                                              s.isProject
+                                                  ? '할 일 → 진행 중 → 검토 → 완료'
+                                                  : '예시 데이터로 흐름을 테스트해 보세요.',
+                                              style: const TextStyle(
+                                                fontSize: 10,
+                                                color: muted,
+                                              ),
                                             ),
                                           ),
-                                          const Spacer(),
+                                          const SizedBox(width: 8),
                                           Text(
                                             '${filtered.length}개 작업 · 자동 저장',
                                             style: const TextStyle(
@@ -662,7 +665,10 @@ class _WorkspaceState extends State<Workspace> {
                                       if (taskView == TaskView.kanban)
                                         board(
                                           filtered,
-                                          constraints.maxWidth - 68,
+                                          constraints.maxWidth -
+                                              (constraints.maxWidth < 700
+                                                  ? 32
+                                                  : 68),
                                         )
                                       else
                                         schedule(filtered),
@@ -809,82 +815,93 @@ class _WorkspaceState extends State<Workspace> {
     ),
     icon: Icon(icon, size: 21, color: selected ? ink : const Color(0xff505753)),
   );
-  Widget stats(List<WorkTask> tasks) => Row(
-    children: List.generate(
-      4,
-      (i) => Expanded(
-        child: Container(
-          margin: EdgeInsets.only(right: i < 3 ? 15 : 0),
-          height: 106,
-          padding: const EdgeInsets.all(20),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            border: Border.all(color: border),
-            borderRadius: BorderRadius.circular(11),
-          ),
-          child: Row(
-            children: [
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisAlignment: MainAxisAlignment.center,
+  Widget stats(List<WorkTask> tasks) => LayoutBuilder(
+    builder: (context, constraints) {
+      final columns = constraints.maxWidth >= 760 ? 4 : 2;
+      final width = (constraints.maxWidth - (columns - 1) * 15) / columns;
+      return Wrap(
+        spacing: 15,
+        runSpacing: 15,
+        children: List.generate(
+          4,
+          (i) => SizedBox(
+            width: width,
+            child: Container(
+              height: 106,
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                border: Border.all(color: border),
+                borderRadius: BorderRadius.circular(11),
+              ),
+              child: Row(
                 children: [
-                  Text(
-                    ['전체 작업', '진행 중', '검토 대기', '완료'][i],
-                    style: const TextStyle(fontSize: 11, color: muted),
-                  ),
-                  const SizedBox(height: 9),
-                  RichText(
-                    text: TextSpan(
-                      style: const TextStyle(
-                        color: ink,
-                        fontFamily: 'Malgun Gothic',
-                      ),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        TextSpan(
-                          text:
-                              '${i == 0 ? tasks.length : tasks.where((t) => t.status == ['', 'doing', 'review', 'done'][i]).length}',
-                          style: const TextStyle(
-                            fontSize: 25,
-                            fontWeight: FontWeight.w600,
-                          ),
+                        Text(
+                          ['전체 작업', '진행 중', '검토 대기', '완료'][i],
+                          style: const TextStyle(fontSize: 11, color: muted),
                         ),
-                        const TextSpan(
-                          text: '  건',
-                          style: TextStyle(fontSize: 10, color: muted),
+                        const SizedBox(height: 9),
+                        RichText(
+                          text: TextSpan(
+                            style: const TextStyle(
+                              color: ink,
+                              fontFamily: 'Malgun Gothic',
+                            ),
+                            children: [
+                              TextSpan(
+                                text:
+                                    '${i == 0 ? tasks.length : tasks.where((t) => t.status == ['', 'doing', 'review', 'done'][i]).length}',
+                                style: const TextStyle(
+                                  fontSize: 25,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              const TextSpan(
+                                text: '  건',
+                                style: TextStyle(fontSize: 10, color: muted),
+                              ),
+                            ],
+                          ),
                         ),
                       ],
                     ),
                   ),
+                  if (width >= 150)
+                    Icon(
+                      [
+                        Icons.folder_copy_outlined,
+                        Icons.play_arrow_outlined,
+                        Icons.verified_user_outlined,
+                        Icons.check_circle_outline,
+                      ][i],
+                      size: 22,
+                      color: i == 2
+                          ? statusColor('review')
+                          : i == 3
+                          ? statusColor('done')
+                          : purple.withValues(alpha: .6),
+                    ),
                 ],
               ),
-              const Spacer(),
-              Icon(
-                [
-                  Icons.folder_copy_outlined,
-                  Icons.play_arrow_outlined,
-                  Icons.verified_user_outlined,
-                  Icons.check_circle_outline,
-                ][i],
-                size: 22,
-                color: i == 2
-                    ? statusColor('review')
-                    : i == 3
-                    ? statusColor('done')
-                    : purple.withValues(alpha: .6),
-              ),
-            ],
+            ),
           ),
         ),
-      ),
-    ),
+      );
+    },
   );
   Widget toolbar() => Wrap(
     alignment: WrapAlignment.spaceBetween,
     runSpacing: 12,
     spacing: 20,
     children: [
-      Row(
-        mainAxisSize: MainAxisSize.min,
+      Wrap(
+        spacing: 5,
+        runSpacing: 6,
         children: [
           for (final entry in {
             'all': '전체 작업',
@@ -942,8 +959,9 @@ class _WorkspaceState extends State<Workspace> {
         onSelectionChanged: (value) =>
             rememberView(() => taskView = value.single),
       ),
-      Row(
-        mainAxisSize: MainAxisSize.min,
+      Wrap(
+        spacing: 9,
+        runSpacing: 10,
         children: [
           SizedBox(
             width: 190,
@@ -958,7 +976,6 @@ class _WorkspaceState extends State<Workspace> {
               ),
             ),
           ),
-          const SizedBox(width: 9),
           SizedBox(
             width: 140,
             child: IeumSelect(
@@ -975,9 +992,8 @@ class _WorkspaceState extends State<Workspace> {
       ),
     ],
   );
-  Widget board(List<WorkTask> tasks, double available) => SingleChildScrollView(
+  Widget board(List<WorkTask> tasks, double available) => HorizontalViewport(
     key: const Key('task-kanban'),
-    scrollDirection: Axis.horizontal,
     child: SizedBox(
       width: max(available, 980),
       child: Row(
@@ -1187,8 +1203,7 @@ class _WorkspaceState extends State<Workspace> {
       border: Border.all(color: border),
       borderRadius: BorderRadius.circular(10),
     ),
-    child: SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
+    child: HorizontalViewport(
       child: DataTable(
         showCheckboxColumn: false,
         columnSpacing: 24,
@@ -1453,8 +1468,7 @@ class _WorkspaceState extends State<Workspace> {
             border: Border.all(color: border),
             borderRadius: BorderRadius.circular(10),
           ),
-          child: SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
+          child: HorizontalViewport(
             child: DataTable(
               columnSpacing: 35,
               headingTextStyle: const TextStyle(fontSize: 11, color: muted),
@@ -1569,48 +1583,7 @@ class _WorkspaceState extends State<Workspace> {
                   if (i > 0) const Divider(height: 1, color: Color(0xffeceeec)),
                   Padding(
                     padding: const EdgeInsets.symmetric(vertical: 16),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Expanded(
-                          flex: 3,
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                rows[i].$1,
-                                style: const TextStyle(
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                              const SizedBox(height: 5),
-                              Text(
-                                rows[i].$2,
-                                style: const TextStyle(
-                                  fontSize: 11,
-                                  color: Color(0xff7d8380),
-                                  height: 1.5,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(width: 24),
-                        Expanded(
-                          flex: 2,
-                          child: SelectableText(
-                            rows[i].$3,
-                            textAlign: TextAlign.right,
-                            style: const TextStyle(
-                              fontSize: 11,
-                              color: Color(0xff666e68),
-                              height: 1.5,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
+                    child: settingRow(rows[i]),
                   ),
                 ],
               ],
@@ -1618,6 +1591,51 @@ class _WorkspaceState extends State<Workspace> {
           ),
         ],
       );
+  Widget settingRow((String, String, String) row) => LayoutBuilder(
+    builder: (context, constraints) {
+      final label = Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            row.$1,
+            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+          ),
+          const SizedBox(height: 5),
+          Text(
+            row.$2,
+            style: const TextStyle(
+              fontSize: 11,
+              color: Color(0xff7d8380),
+              height: 1.5,
+            ),
+          ),
+        ],
+      );
+      final compact = constraints.maxWidth < 560;
+      final value = SelectableText(
+        row.$3,
+        textAlign: compact ? TextAlign.left : TextAlign.right,
+        style: const TextStyle(
+          fontSize: 11,
+          color: Color(0xff666e68),
+          height: 1.5,
+        ),
+      );
+      return compact
+          ? Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [label, const SizedBox(height: 12), value],
+            )
+          : Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(flex: 3, child: label),
+                const SizedBox(width: 24),
+                Expanded(flex: 2, child: value),
+              ],
+            );
+    },
+  );
   Widget detailBody(BuildContext ctx, WorkTask t) {
     final canEdit = s.canEdit(t);
     final lockReason = t.status == 'review' || !s.canEditContent(t)

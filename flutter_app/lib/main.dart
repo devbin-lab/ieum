@@ -13,6 +13,9 @@ import 'app_update.dart';
 import 'app_release.dart';
 import 'update_ui.dart';
 import 'startup_health.dart';
+import 'window_layout.dart';
+
+import 'package:screen_retriever/screen_retriever.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -32,10 +35,20 @@ Future<void> main() async {
     exit(0);
   }
   await windowManager.ensureInitialized();
+  var initialSize = minimumWindowSize;
+  try {
+    final display = await screenRetriever.getPrimaryDisplay().timeout(
+      const Duration(seconds: 2),
+    );
+    initialSize = initialWindowSize(display.visibleSize ?? display.size);
+  } catch (_) {
+    // Screen detection failure must not block startup.
+  }
   await windowManager.waitUntilReadyToShow(
-    const WindowOptions(
-      size: Size(1480, 980),
-      minimumSize: Size(1160, 740),
+    WindowOptions(
+      size: initialSize,
+      minimumSize: minimumWindowSize,
+      center: true,
       title: '이음',
       titleBarStyle: TitleBarStyle.hidden,
       windowButtonVisibility: false,
