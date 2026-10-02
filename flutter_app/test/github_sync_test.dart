@@ -17,6 +17,7 @@ class FakeGitHubApi implements GitHubApi {
   bool allowAdmin = true;
   final invitations = <String>[];
   bool failWrite = false, conflict = false, extraFile = false, allowPush = true;
+  bool peerCreatesPr = false;
   Completer<void>? holdWrite;
 
   Map<String, dynamic> ref(String branch) {
@@ -140,6 +141,10 @@ class FakeGitHubApi implements GitHubApi {
         'changed_files': 1,
       };
       prs.add(pr);
+      if (peerCreatesPr) {
+        peerCreatesPr = false;
+        throw const GitHubFailure('peer already created PR', 422);
+      }
       return pr;
     }
     if (path.startsWith('$root/pulls/')) {
@@ -258,6 +263,58 @@ void main() {
           .every((p) => p.endsWith('.json')),
       isTrue,
     );
+  });
+
+  test('new task creates PR directly without redundant PR discovery', () async {
+    final task = store.save(newTask('빠른 제출'));
+    await idle(sync);
+    expect(api.prs, hasLength(1));
+    expect(
+      api.calls.where((call) => call == 'GET /repos/team/data/pulls'),
+      isEmpty,
+    );
+    expect(
+      api.calls.where(
+        (call) => call == 'GET /repos/team/data/git/ref/heads/main',
+      ),
+      hasLength(1),
+    );
+    expect(
+      api.calls.where((call) => call == 'POST /repos/team/data/merges'),
+      isEmpty,
+    );
+    final before = api.calls.length;
+    store.save({
+      ...task.data,
+      'title': '수정된 제출',
+    }, expectedVersion: task.version);
+    await idle(sync);
+    expect(api.prs, hasLength(1));
+    expect(api.calls.skip(before), contains('GET /repos/team/data/pulls'));
+  });
+
+  test(
+    'existing branch at current main needs no merge before submission',
+    () async {
+      sync.disable();
+      final task = store.save(newTask('같은 기준본'));
+      final branch = 'ieum/tasks/tester/${task.id}';
+      api.refs[branch] = api.refs['main']!;
+      api.files[branch] = Map.of(api.files['main']!);
+      final receipt = await publisher.publish(config, sync.jobs.single);
+      expect(receipt.request?['head']['ref'], branch);
+      expect(api.calls, isNot(contains('POST /repos/team/data/merges')));
+    },
+  );
+
+  test('peer creating a PR on the new branch recovers without duplicate submission', () async {
+    api.peerCreatesPr = true;
+    store.save(newTask('다른 앱과 동시 제출'));
+    await idle(sync);
+    expect(api.prs, hasLength(1));
+    expect(api.writes, 1);
+    expect(sync.jobs.single['state'], 'sent');
+    expect(sync.jobs.single['prUrl'], api.prs.single['html_url']);
   });
 
   test('uncertain response retry reuses commit and PR; state changes update same task PR', () async {

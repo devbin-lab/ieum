@@ -309,6 +309,7 @@ class GitHubSession {
   }
 
   void signOut() {
+    if (_rawApi is HttpGitHubApi) _rawApi.close();
     _authGeneration++;
     _oauthTokens = null;
     _remember = false;

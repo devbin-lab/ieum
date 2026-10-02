@@ -85,8 +85,18 @@ abstract interface class GitHubApi {
 }
 
 class HttpGitHubApi implements GitHubApi {
-  HttpGitHubApi(this.token);
+  HttpGitHubApi(this.token, {HttpClient Function()? createClient})
+    : _createClient = createClient ?? HttpClient.new;
   final Future<String> Function() token;
+  final HttpClient Function() _createClient;
+  HttpClient? _client;
+
+  // Keep TLS connections alive across the sequential commit/PR requests.
+  // Credentials are still retrieved and set separately for every request.
+  void close() {
+    _client?.close();
+    _client = null;
+  }
 
   @override
   Future<dynamic> call(
@@ -97,8 +107,9 @@ class HttpGitHubApi implements GitHubApi {
   }) async {
     final credential = await token();
     if (credential.isEmpty) throw const GitHubFailure('GitHub 인증이 필요합니다.');
-    final client = HttpClient()
-      ..connectionTimeout = const Duration(seconds: 15);
+    final client = _client ??= _createClient()
+      ..connectionTimeout = const Duration(seconds: 15)
+      ..idleTimeout = const Duration(seconds: 15);
     try {
       final uri = Uri.https('api.github.com', path, query);
       final request = await client
@@ -145,8 +156,6 @@ class HttpGitHubApi implements GitHubApi {
       throw const GitHubFailure('네트워크에 연결할 수 없습니다. 작업은 로컬에 보관됩니다.');
     } on TimeoutException {
       throw const GitHubFailure('GitHub 응답 시간이 초과되었습니다. 재시도할 수 있습니다.');
-    } finally {
-      client.close(force: true);
     }
   }
 }
@@ -157,9 +166,11 @@ class SyncReceipt {
     this.commitSha,
     this.branch, {
     this.integrated = false,
+    this.request,
   });
   final bool integrated;
   final String prUrl, commitSha, branch;
+  final Map<String, dynamic>? request;
 }
 
 class GitHubPublisher {
@@ -168,7 +179,6 @@ class GitHubPublisher {
   final Map<String, Map<String, dynamic>> _blobCache = {};
   final Map<String, String> _badBlobs = {};
   final Map<String, Map<String, dynamic>> _snapshots = {};
-  Map<String, dynamic>? _checkedIdentity;
 
   Future<String> head(GitHubConfig config) async {
     final ref = await api.call(
@@ -209,6 +219,11 @@ class GitHubPublisher {
   }
 
   Future<String> check(GitHubConfig config, {bool readBase = true}) async {
+    return (await _checkAccess(config, readBase: readBase)).login;
+  }
+
+  Future<({String login, Map<String, dynamic> identity, String? baseSha})>
+  _checkAccess(GitHubConfig config, {required bool readBase}) async {
     config.validate();
     final checked = await Future.wait([
       api.call('GET', '/user'),
@@ -218,28 +233,32 @@ class GitHubPublisher {
     ]);
     final user = checked[0];
     final repository = checked[1];
-    _checkedIdentity = Map<String, dynamic>.from(user);
     if (repository['permissions']?['push'] != true) {
       throw const GitHubFailure('이 저장소에 개인 브랜치를 올릴 수 있는 쓰기 권한이 필요합니다.');
     }
-    return user['login'] as String;
+    return (
+      login: user['login'] as String,
+      identity: Map<String, dynamic>.from(user),
+      baseSha: readBase ? checked[2]['object']['sha'] as String : null,
+    );
   }
 
   Future<SyncReceipt> publish(
     GitHubConfig config,
     Map<String, dynamic> job,
   ) async {
-    final login = await check(config, readBase: false);
+    final access = await _checkAccess(config, readBase: true);
+    final login = access.login;
     if (job['githubLogin'] != null && job['githubLogin'] != login) {
       throw const GitHubFailure('이 작업을 등록한 GitHub 계정으로 다시 연결하세요.');
     }
     final proposal = job['proposal'] as Map;
     if (proposal['projectId'] != 'ieum-demo') {
-      final manifest = await project(config);
+      final manifest = await project(config, ref: access.baseSha);
       final actor = await projectActor(
         config,
         manifest,
-        checkedIdentity: _checkedIdentity,
+        checkedIdentity: access.identity,
       );
       if (manifest.id != proposal['projectId'] ||
           actor.id != proposal['authorId']) {
@@ -288,28 +307,32 @@ class GitHubPublisher {
       'base': config.base,
     };
     List prs;
-    final baseRef = await api.call('GET', '$root/git/ref/heads/${config.base}');
+    final baseSha = access.baseSha!;
+    var createdBranch = false;
     try {
-      await api.call('GET', '$root/git/ref/heads/$branch');
+      final branchRef = await api.call('GET', '$root/git/ref/heads/$branch');
       // Advance/merge main into an existing personal branch without force push.
       // Conflicts stop here, leaving the saved task and queue intact.
-      await api.call(
-        'POST',
-        '$root/merges',
-        body: {
-          'base': branch,
-          'head': baseRef['object']['sha'],
-          'commit_message': 'Sync ${config.base} before IEUM task submission',
-        },
-      );
+      if (branchRef['object']['sha'] != baseSha) {
+        await api.call(
+          'POST',
+          '$root/merges',
+          body: {
+            'base': branch,
+            'head': baseSha,
+            'commit_message': 'Sync ${config.base} before IEUM task submission',
+          },
+        );
+      }
     } on GitHubFailure catch (e) {
       if (e.status != 404) rethrow;
       try {
         await api.call(
           'POST',
           '$root/git/refs',
-          body: {'ref': 'refs/heads/$branch', 'sha': baseRef['object']['sha']},
+          body: {'ref': 'refs/heads/$branch', 'sha': baseSha},
         );
+        createdBranch = true;
       } on GitHubFailure catch (e) {
         if (e.status != 422) rethrow;
         try {
@@ -368,9 +391,18 @@ class GitHubPublisher {
       final ref = await api.call('GET', '$root/git/ref/heads/$branch');
       commitSha = ref['object']['sha'] as String;
     }
-    prs = await api.call('GET', '$root/pulls', query: query) as List;
+    // A newly created branch has no earlier PR. A peer creating one in the
+    // meantime is handled by the existing 422 recovery path below.
+    prs = createdBranch
+        ? []
+        : await api.call('GET', '$root/pulls', query: query) as List;
     if (prs.isNotEmpty) {
-      return SyncReceipt(prs.first['html_url'] as String, commitSha, branch);
+      return SyncReceipt(
+        prs.first['html_url'] as String,
+        commitSha,
+        branch,
+        request: Map<String, dynamic>.from(prs.first),
+      );
     }
     // A POST response can be lost after another app already integrated the PR.
     // Check the authoritative file before attempting another no-diff PR.
@@ -415,12 +447,22 @@ class GitHubPublisher {
           'body': '등록한 작업의 JSON 변경안입니다. 이음 앱에서 작성자·역할·최신 작업 기준을 확인한 뒤 자동 통합합니다. 수동 통합 모드에서는 변경을 확인하고 승인해 주세요.\n\nSQLite DB와 인증 정보는 포함하지 않습니다.',
         },
       );
-      return SyncReceipt(pr['html_url'] as String, commitSha, branch);
+      return SyncReceipt(
+        pr['html_url'] as String,
+        commitSha,
+        branch,
+        request: Map<String, dynamic>.from(pr),
+      );
     } on GitHubFailure catch (e) {
       if (e.status != 422) rethrow;
       prs = await api.call('GET', '$root/pulls', query: query) as List;
       if (prs.isEmpty) rethrow;
-      return SyncReceipt(prs.first['html_url'] as String, commitSha, branch);
+      return SyncReceipt(
+        prs.first['html_url'] as String,
+        commitSha,
+        branch,
+        request: Map<String, dynamic>.from(prs.first),
+      );
     }
   }
 
@@ -684,16 +726,20 @@ class GitHubPublisher {
 
 class GitHubSync extends ChangeNotifier {
   GitHubSync(this.store, {GitHubPublisher? publisher}) {
-    this.publisher = publisher ?? GitHubPublisher(HttpGitHubApi(_credential));
+    if (publisher == null) {
+      _ownedApi = HttpGitHubApi(_credential);
+    }
+    this.publisher = publisher ?? GitHubPublisher(_ownedApi!);
     store.addListener(_onStoreChange);
   }
   final TaskStore store;
   late final GitHubPublisher publisher;
+  HttpGitHubApi? _ownedApi;
   bool busy = false, pulling = false, _disposed = false;
   bool _paused = false, _cycling = false;
   DateTime? _retryUntil;
   final Map<String, ({String key, DateTime at})> _integrationAttempts = {};
-  static const pollInterval = Duration(seconds: 5);
+  static const pollInterval = Duration(seconds: 10);
   DateTime? get retryAt => _retryUntil;
   bool get _waiting => _retryUntil?.isAfter(DateTime.now()) == true;
 
@@ -1015,6 +1061,7 @@ class GitHubSync extends ChangeNotifier {
     _notify();
     final settings = config;
     var submitted = false;
+    final submittedRequests = <String, Map<String, dynamic>>{};
     try {
       final pending = jobs
           .where(
@@ -1049,6 +1096,9 @@ class GitHubSync extends ChangeNotifier {
                 );
           final receipt = await publisher.publish(original, job);
           submitted = true;
+          if (receipt.request != null) {
+            submittedRequests[receipt.prUrl] = receipt.request!;
+          }
           _put({
             ...job,
             'state': receipt.integrated ? 'merged' : 'sent',
@@ -1087,7 +1137,13 @@ class GitHubSync extends ChangeNotifier {
         !_paused &&
         autoMergeEnabled &&
         config.enabled) {
-      await integratePending();
+      // The publication response already identifies the PRs we just sent.
+      // Full team PR discovery remains on the periodic receive cycle.
+      await integratePending(
+        requests: submittedRequests.isEmpty
+            ? null
+            : submittedRequests.values.toList(),
+      );
       await pullLatest();
     }
     if (!_disposed &&
@@ -1479,6 +1535,7 @@ class GitHubSync extends ChangeNotifier {
     _disposed = true;
     _timer?.cancel();
     store.removeListener(_onStoreChange);
+    _ownedApi?.close();
     _sessionToken = '';
     super.dispose();
   }

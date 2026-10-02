@@ -251,8 +251,10 @@ internal static class PortableLauncher
     {
         var match = Regex.Match(value ?? "", @"^([0-9]+)\.([0-9]+)\.([0-9]+)(?:\+([0-9]+))?$");
         if (!match.Success) throw new FormatException("Invalid update version.");
+        // Accept old +build tags without treating build metadata as a release.
+        if (match.Groups[4].Success) Int32.Parse(match.Groups[4].Value);
         return new Version(Int32.Parse(match.Groups[1].Value), Int32.Parse(match.Groups[2].Value),
-            Int32.Parse(match.Groups[3].Value), match.Groups[4].Success ? Int32.Parse(match.Groups[4].Value) : 0);
+            Int32.Parse(match.Groups[3].Value));
     }
 
     private static string FindUpdate(string appRoot)

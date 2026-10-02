@@ -17,9 +17,12 @@ class ReleaseVersion implements Comparable<ReleaseVersion> {
   }
   final String value;
   late final List<int> parts;
+  // Legacy releases containing +build remain readable, but only x.y.z decides
+  // update order and appears in the UI. New packages use x.y.z exclusively.
+  String get label => parts.take(3).join('.');
   @override
   int compareTo(ReleaseVersion other) {
-    for (var i = 0; i < 4; i++) {
+    for (var i = 0; i < 3; i++) {
       final result = parts[i].compareTo(other.parts[i]);
       if (result != 0) return result;
     }
@@ -312,7 +315,9 @@ class AppUpdater extends ChangeNotifier {
       if (release.version.compareTo(ReleaseVersion(currentVersion)) <= 0 ||
           ready &&
               release.version.compareTo(ReleaseVersion(readyVersion)) <= 0) {
-        message = ready ? '업데이트 후 재시작' : '최신 버전 $currentVersion';
+        message = ready
+            ? '업데이트 후 재시작'
+            : '최신 버전 ${ReleaseVersion(currentVersion).label}';
         return;
       }
       final file = packageFor(release.version.value);

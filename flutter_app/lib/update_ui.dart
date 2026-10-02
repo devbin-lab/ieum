@@ -23,9 +23,9 @@ class UpdateButton extends StatelessWidget {
     final updater = scope.notifier!;
     return Tooltip(
       message: updater.ready
-          ? '${updater.readyVersion} · 다음 실행 때 자동 적용'
+          ? '${ReleaseVersion(updater.readyVersion).label} · 다음 실행 때 자동 적용'
           : updater.lastError.isEmpty
-          ? '현재 ${updater.currentVersion} · 클릭하여 확인'
+          ? '현재 ${ReleaseVersion(updater.currentVersion).label} · 클릭하여 확인'
           : updater.lastError,
       child: TextButton.icon(
         key: const Key('app-update-button'),

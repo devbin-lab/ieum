@@ -28,6 +28,8 @@ internal static class LauncherTests
     public static int Main(string[] args)
     {
         var root = args[0];
+        Check(((Version)Call("ParseVersion", "0.2.1")).CompareTo((Version)Call("ParseVersion", "0.2.1+7")) == 0, "build metadata cannot change release order");
+        Check(((Version)Call("ParseVersion", "0.2.2")).CompareTo((Version)Call("ParseVersion", "0.2.1+99")) > 0, "three-part patch release follows legacy build");
         var fallback = Path.Combine(root, "builds", "previous", "ieum_flutter.exe");
         Directory.CreateDirectory(Path.GetDirectoryName(fallback));
         File.Copy(args[1], fallback);

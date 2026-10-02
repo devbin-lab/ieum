@@ -78,10 +78,7 @@ void main() {
       ReleaseVersion('0.10.0+1').compareTo(ReleaseVersion('0.9.9+99')),
       greaterThan(0),
     );
-    expect(
-      ReleaseVersion('1.0.0+4').compareTo(ReleaseVersion('1.0.0+3')),
-      greaterThan(0),
-    );
+    expect(ReleaseVersion('1.0.0+4').compareTo(ReleaseVersion('1.0.0+3')), 0);
     for (final value in [
       '../2.0.0',
       '1.0.0/bad',
@@ -91,6 +88,25 @@ void main() {
       expect(() => ReleaseVersion(value), throwsFormatException);
     }
   });
+  test(
+    'three-part release order supports patches, features and major changes',
+    () {
+      expect(
+        ReleaseVersion('0.2.2').compareTo(ReleaseVersion('0.2.1+7')),
+        greaterThan(0),
+      );
+      expect(
+        ReleaseVersion('0.3.0').compareTo(ReleaseVersion('0.2.99')),
+        greaterThan(0),
+      );
+      expect(
+        ReleaseVersion('1.0.0').compareTo(ReleaseVersion('0.99.99')),
+        greaterThan(0),
+      );
+      expect(ReleaseVersion('0.2.1').compareTo(ReleaseVersion('0.2.1+7')), 0);
+      expect(ReleaseVersion('0.2.1+7').label, '0.2.1');
+    },
+  );
   test(
     'login during an update check schedules another check with new credentials',
     () async {
@@ -213,6 +229,7 @@ void main() {
     await tester.runAsync(updater.check);
     await tester.pump();
     expect(find.text('업데이트 후 재시작'), findsOneWidget);
+    expect(find.byTooltip('0.2.0 · 다음 실행 때 자동 적용'), findsOneWidget);
     expect(restarts, 0);
     await tester.tap(find.byKey(const Key('app-update-button')));
     expect(restarts, 1);

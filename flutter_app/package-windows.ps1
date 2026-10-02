@@ -2,7 +2,7 @@
 $ErrorActionPreference = 'Stop'
 if ($BuildId -notmatch '^[0-9]{8}-[0-9]{6}$') { throw '잘못된 빌드 ID입니다.' }
 $taskRoot = Split-Path $PSScriptRoot -Parent
-$taskVersion = ([regex]::Match([IO.File]::ReadAllText((Join-Path $PSScriptRoot 'pubspec.yaml')),'(?m)^version: ([0-9.]+\+[0-9]+)')).Groups[1].Value
+$taskVersion = ([regex]::Match([IO.File]::ReadAllText((Join-Path $PSScriptRoot 'pubspec.yaml')),'(?m)^version: ([0-9]+\.[0-9]+\.[0-9]+)\r?$')).Groups[1].Value
 if (-not $taskVersion -or [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'lib\app_release.dart')) -notmatch ([regex]::Escape("const appVersion = '$taskVersion';"))) { throw '앱/배포 버전이 일치하지 않습니다.' }
 $taskRelease = Join-Path $PSScriptRoot 'build\windows\x64\runner\Release'
 $taskStage = Join-Path $taskRoot ".local\packages\$BuildId"
@@ -50,7 +50,7 @@ ZIP 배포본을 사용할 때에는 전체 압축을 풀고 ieum_flutter.exe를
 개설자가 참여 요청을 승인하고 역할을 지정합니다.
 작업을 저장하면 자동 커밋 -> 작업별 PR -> 검증 후 자동 통합 -> 개인 DB 가져오기를 진행합니다.
 자동 통합은 앱 실행 중 동작하며, GitHub 연결에서 켜거나 끌 수 있습니다.
-저장 직후 전송하고 약 5초마다 변경을 확인합니다. 통신 오류와 GitHub 요청 제한 때는 재시도 간격을 늘립니다.
+저장 직후 전송하고 약 10초마다 변경을 확인합니다. 전송 시 연결을 재사용하고 불필요한 조회를 줄였습니다. 통신 오류와 GitHub 요청 제한 때는 재시도 간격을 늘립니다.
 왼쪽 위에서 여러 프로젝트를 전환하거나 생성·참여할 수 있습니다.
 로그인 유지 시 마지막 프로젝트와 마지막 목록·칸반 화면을 자동으로 엽니다.
 검토 중 내용은 잠기며 완료 작업은 수정할 수 없습니다. 담당 작업·검토 요청은 앱 알림함에서 확인합니다.

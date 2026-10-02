@@ -214,11 +214,11 @@ void main() {
     session.signOut();
   });
 
-  test('idle five-second cycle uses two lightweight reads and no manifest downloads', () async {
+  test('idle ten-second cycle uses two lightweight reads and no manifest downloads', () async {
     await sync.cycle();
     final before = api.calls.length;
     await sync.cycle(background: true);
-    expect(GitHubSync.pollInterval, const Duration(seconds: 5));
+    expect(GitHubSync.pollInterval, const Duration(seconds: 10));
     expect(api.calls.skip(before), [
       'GET /repos/team/data/git/ref/heads/main',
       'GET /repos/team/data/pulls',
