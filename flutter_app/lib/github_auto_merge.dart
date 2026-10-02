@@ -23,18 +23,16 @@ extension AutoTaskIntegration on GitHubPublisher {
       throw const GitHubFailure('연결된 프로젝트와 원격 프로젝트가 다릅니다.');
     }
     final executor = await projectActor(config, manifest);
-    if (!executor.active || executor.role == 'viewer') {
+    if (!executor.canMutate) {
       throw const GitHubFailure('자동 통합 권한이 없습니다.');
     }
     final authorId = 'gh-${pr['user']?['id']}';
     final authors = manifest.people.where((p) => p.id == authorId);
-    if (authors.isEmpty ||
-        !authors.single.active ||
-        authors.single.role == 'viewer') {
+    if (authors.isEmpty || !authors.single.canMutate) {
       throw const GitHubFailure('PR 작성자의 참여 승인을 받거나 현재 역할을 확인하세요.');
     }
     final author = authors.single;
-    if (!executor.manages && executor.id != author.id) {
+    if (!executor.has('task.integrate') && executor.id != author.id) {
       throw const GitHubFailure('내 작업 PR만 자동 통합할 수 있습니다.');
     }
     final diff = await api.call('GET', '$root/compare/$revision...$head');
@@ -109,9 +107,12 @@ extension AutoTaskIntegration on GitHubPublisher {
     } on StateError catch (e) {
       throw GitHubFailure(e.message.toString());
     }
-    for (final id in [task.assigneeId, task.reviewerId]) {
+    for (final (id, reviewer) in [
+      (task.assigneeId, false),
+      (task.reviewerId, true),
+    ]) {
       if (!manifest.people.any(
-        (p) => p.id == id && p.active && p.role != 'viewer',
+        (p) => p.id == id && (reviewer ? p.canReview : p.canWork),
       )) {
         throw const GitHubFailure('작업 담당자의 현재 참여 권한을 확인하세요.');
       }

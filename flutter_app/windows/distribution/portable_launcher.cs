@@ -10,6 +10,10 @@ using System.Text.RegularExpressions;
 using System.Threading;
 using System.Windows.Forms;
 
+[assembly: AssemblyVersion("__APP_VERSION__.0")]
+[assembly: AssemblyFileVersion("__APP_VERSION__.0")]
+[assembly: AssemblyInformationalVersion("__APP_VERSION__")]
+
 // Windows 10/11 include .NET Framework 4.x. No SDK or global installation.
 internal static class PortableLauncher
 {

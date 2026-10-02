@@ -423,6 +423,127 @@ class GitHubSession {
     return ProjectManifest.fromJson(file['data']);
   }
 
+  /// Re-read and re-authorize each SHA retry; never overwrite a concurrent edit.
+  Future<ProjectManifest> changeManifest(
+    GitHubConfig config,
+    String message,
+    Future<ProjectManifest> Function(ProjectManifest, Person) change, {
+    String? expectedProjectId,
+  }) async {
+    if (user == null) throw const GitHubFailure('로그인이 필요합니다.');
+    final accountId = user!.id;
+    for (var attempt = 0; attempt < 3; attempt++) {
+      final file = await readJson(config, '.ieum/project.json');
+      if (file == null) throw const GitHubFailure('프로젝트를 찾지 못했습니다.');
+      final current = ProjectManifest.fromJson(file['data']);
+      if (expectedProjectId != null && current.id != expectedProjectId) {
+        throw const GitHubFailure('저장소의 프로젝트가 변경되었습니다. 다시 연결하세요.');
+      }
+      final actor = current.people.where((p) => p.id == accountId).firstOrNull;
+      if (user?.id != accountId || actor == null || !actor.active) {
+        throw const GitHubFailure('승인된 참여자만 변경할 수 있습니다.');
+      }
+      final next = await change(current, actor);
+      if (jsonEncode(current.json) == jsonEncode(next.json)) return current;
+      try {
+        await writeJson(
+          config,
+          '.ieum/project.json',
+          next.json,
+          sha: file['sha'],
+          message: message,
+        );
+        return next;
+      } on GitHubFailure catch (error) {
+        if (error.status != 409 || attempt == 2) rethrow;
+      }
+    }
+    throw const GitHubFailure('다른 변경이 진행 중입니다. 다시 저장하세요.');
+  }
+
+  Future<ProjectManifest> rename(
+    GitHubConfig config,
+    String nickname, {
+    String? expectedProjectId,
+  }) {
+    final value = nickname.trim();
+    if (value.isEmpty || value.length > 40) {
+      throw StateError('이름은 1~40자로 입력하세요.');
+    }
+    return changeManifest(
+      config,
+      'Update IEUM display name',
+      (current, actor) async => ProjectManifest.fromJson({
+        ...current.json,
+        'members': [
+          for (final person in current.people)
+            {...person.json, if (person.id == actor.id) 'name': value},
+        ],
+      }),
+      expectedProjectId: expectedProjectId,
+    );
+  }
+
+  Future<ProjectManifest> saveRole(
+    GitHubConfig config,
+    ProjectRole role,
+  ) => changeManifest(config, 'Update IEUM project role', (
+    current,
+    actor,
+  ) async {
+    final validated = ProjectRole.fromJson(role.json);
+    if (!actor.has('role.manage') ||
+        !actor.permissions.containsAll(validated.permissions)) {
+      throw const GitHubFailure('역할 관리 권한이 필요하며 본인 권한을 초과해 부여할 수 없습니다.');
+    }
+    final previous = current.roles.where((r) => r.id == role.id).firstOrNull;
+    if (previous != null &&
+        !actor.permissions.containsAll(previous.permissions)) {
+      throw const GitHubFailure('본인보다 권한이 높은 역할은 변경할 수 없습니다.');
+    }
+    if (previous != null &&
+        !validated.permissions.containsAll(previous.permissions)) {
+      for (final member in current.people.where((p) => p.role == role.id)) {
+        final blockers = await GitHubPublisher(api)
+            .memberBlockers(config, current, member.id);
+        if (blockers.isNotEmpty) {
+          throw GitHubFailure(
+            '${member.name}의 작업과 PR을 먼저 인수인계하세요: ${blockers.take(5).join(', ')}',
+          );
+        }
+      }
+    }
+    return ProjectManifest.fromJson({
+      ...current.json,
+      'roles': [
+        ...current.roles.where((r) => r.id != role.id).map((r) => r.json),
+        validated.json,
+      ],
+    });
+  });
+
+  Future<ProjectManifest> deleteRole(GitHubConfig config, String roleId) =>
+      changeManifest(config, 'Delete IEUM project role', (
+        current,
+        actor,
+      ) async {
+        final role = current.roles.where((r) => r.id == roleId).firstOrNull;
+        if (!actor.has('role.manage') ||
+            role == null ||
+            !actor.permissions.containsAll(role.permissions)) {
+          throw const GitHubFailure('삭제할 역할과 역할 관리 권한을 확인하세요.');
+        }
+        if (current.people.any((p) => p.role == roleId)) {
+          throw const GitHubFailure('사용 중인 역할입니다. 참여자에게 다른 역할을 먼저 지정하세요.');
+        }
+        return ProjectManifest.fromJson({
+          ...current.json,
+          'roles': [
+            for (final r in current.roles.where((r) => r.id != roleId)) r.json,
+          ],
+        });
+      });
+
   Future<ProjectManifest> createProject(
     GitHubConfig config,
     String name,
@@ -664,14 +785,18 @@ class GitHubSession {
     final actors = current.people.where((p) => p.id == user!.id);
     final executor = actors.isEmpty ? null : actors.single;
     final target = current.people.where((p) => p.id == member.id);
-    if (executor?.manages != true ||
+    final resolved = member.resolved(current.roles);
+    if (executor == null ||
+        !executor.has('member.manage') ||
         member.id == current.ownerId ||
-        executor!.role != 'owner' &&
+        !resolved.active && member.role != 'disabled' ||
+        !executor.permissions.containsAll(resolved.permissions) ||
+        target.any((p) => !executor.permissions.containsAll(p.permissions)) ||
+        executor.role != 'owner' &&
             (member.role == 'manager' ||
-                target.any((p) => p.role == 'manager')) ||
-        !['manager', 'worker', 'viewer', 'disabled'].contains(member.role)) {
+                target.any((p) => p.role == 'manager'))) {
       throw const GitHubFailure(
-        '참여자 관리는 개설자와 PD / PM에게 허용됩니다. 관리자 권한 변경은 개설자가 처리하세요.',
+        '참여자 관리 권한이 필요합니다. 본인보다 높은 권한을 부여하거나 변경할 수 없습니다.',
       );
     }
     if (request != null) {
@@ -697,8 +822,9 @@ class GitHubSession {
     )) {
       throw const GitHubFailure('승인된 참여자를 선택하세요.');
     }
-    if (['viewer', 'disabled'].contains(member.role) &&
-        target.any((p) => p.active && p.role != 'viewer')) {
+    if (target.any(
+      (p) => p.active && !resolved.permissions.containsAll(p.permissions),
+    )) {
       final blockers = await GitHubPublisher(api)
           .memberBlockers(config, current, member.id);
       if (blockers.isNotEmpty) {
@@ -711,7 +837,7 @@ class GitHubSession {
       ...current.json,
       'members': [
         ...current.people.where((p) => p.id != member.id).map((p) => p.json),
-        member.json,
+        {...member.json, if (target.isNotEmpty) 'name': target.single.name},
       ],
     });
     await writeJson(
@@ -745,7 +871,7 @@ class GitHubSession {
         targetId == current.ownerId ||
         target.isEmpty ||
         !target.single.active ||
-        target.single.role == 'viewer') {
+        !target.single.canWork) {
       throw const GitHubFailure('현재 개설자가 승인된 작업자 또는 관리자에게 소유권을 이전할 수 있습니다.');
     }
     final next = ProjectManifest.fromJson({

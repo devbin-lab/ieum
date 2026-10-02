@@ -104,10 +104,7 @@ class _TeamPanelState extends State<TeamPanel> {
   Future<void> transfer() async {
     final candidates = widget.store.people
         .where(
-          (p) =>
-              p.id != widget.store.project!.ownerId &&
-              p.active &&
-              p.role != 'viewer',
+          (p) => p.id != widget.store.project!.ownerId && p.active && p.canWork,
         )
         .toList();
     if (candidates.isEmpty) {
@@ -178,7 +175,7 @@ class _TeamPanelState extends State<TeamPanel> {
       final project = await widget.session.loadProject(widget.sync.config);
       if (!mounted) return;
       widget.store.updateProject(project);
-      if (widget.store.manages) {
+      if (widget.store.actor.has('member.manage')) {
         requests = await widget.session.requests(widget.sync.config);
       }
     } catch (e) {
@@ -189,7 +186,33 @@ class _TeamPanelState extends State<TeamPanel> {
   }
 
   Future<void> assign(Person person, {Map<String, dynamic>? request}) async {
-    var role = person.role == 'pending' ? 'worker' : person.role;
+    final assignable =
+        [
+              'manager',
+              'worker',
+              'viewer',
+              'disabled',
+              ...widget.store.project!.roles.map((r) => r.id),
+            ]
+            .where(
+              (id) =>
+                  (widget.store.owns || id != 'manager') &&
+                  widget.store.actor.permissions.containsAll(
+                    Person(
+                      '',
+                      '',
+                      '',
+                      id,
+                      0,
+                    ).resolved(widget.store.project!.roles).permissions,
+                  ),
+            )
+            .toList();
+    var role = assignable.contains(person.role)
+        ? person.role
+        : assignable.contains('worker')
+        ? 'worker'
+        : assignable.first;
     final parts = person.parts.toSet();
     final result = await showDialog<Person>(
       context: context,
@@ -210,13 +233,14 @@ class _TeamPanelState extends State<TeamPanel> {
                 key: const Key('member-role'),
                 value: role,
                 values: {
-                  for (final id in [
-                    if (widget.store.owns) 'manager',
-                    'worker',
-                    'viewer',
-                    'disabled',
-                  ])
-                    id: roleLabels[id]!,
+                  for (final id in assignable)
+                    id: Person(
+                      '',
+                      '',
+                      '',
+                      id,
+                      0,
+                    ).resolved(widget.store.project!.roles).roleLabel,
                 },
                 onChanged: (value) => update(() => role = value),
               ),
@@ -240,8 +264,12 @@ class _TeamPanelState extends State<TeamPanel> {
                 ],
               ),
               const SizedBox(height: 14),
-              const Text(
-                'PD / PM: 작업 등록·배정·통합 승인\n작업자: 배정된 작업 수정·진행·검토\n열람자: 목록 조회\n참여 중지: 읽기 전용, 작업 제출 차단',
+              Text(
+                Person('', '', '', role, 0)
+                    .resolved(widget.store.project!.roles)
+                    .permissions
+                    .map((p) => permissionLabels[p])
+                    .join(' · '),
                 style: TextStyle(fontSize: 11, height: 1.7),
               ),
             ],
@@ -332,7 +360,7 @@ class _TeamPanelState extends State<TeamPanel> {
             ),
           ),
         Text(
-          '내 역할: ${roleLabels[widget.store.actor.role]} · ${widget.store.people.length}명 참여',
+          '내 역할: ${widget.store.actor.roleLabel} · ${widget.store.people.length}명 참여',
           style: const TextStyle(fontSize: 11),
         ),
         const SizedBox(height: 12),
@@ -343,12 +371,15 @@ class _TeamPanelState extends State<TeamPanel> {
               children: [
                 Expanded(
                   child: Text(
-                    '${member.name}  @${member.login}\n${roleLabels[member.role]} · ${member.parts.isEmpty ? '파트 미지정' : member.parts.join(', ')}',
+                    '${member.name}  @${member.login}\n${member.roleLabel} · ${member.parts.isEmpty ? '파트 미지정' : member.parts.join(', ')}',
                     style: const TextStyle(fontSize: 12, height: 1.6),
                   ),
                 ),
-                if (widget.store.manages &&
+                if (widget.store.actor.has('member.manage') &&
                     (widget.store.owns || member.role != 'manager') &&
+                    widget.store.actor.permissions.containsAll(
+                      member.permissions,
+                    ) &&
                     member.role != 'owner' &&
                     member.role != 'pending')
                   TextButton(
@@ -358,7 +389,7 @@ class _TeamPanelState extends State<TeamPanel> {
               ],
             ),
           ),
-        if (widget.store.manages) ...[
+        if (widget.store.actor.has('member.manage')) ...[
           const Divider(height: 24),
           const Text(
             '가입 승인 대기 · 요청을 자동으로 확인합니다.',

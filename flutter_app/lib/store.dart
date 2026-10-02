@@ -107,24 +107,21 @@ class TaskStore extends ChangeNotifier {
   Person get actor => member(profileId);
   bool get manages => actor.manages;
   bool get owns => actor.role == 'owner';
-  bool get canCreate => !isProject || manages;
+  bool get canCreate => !isProject || actor.has('task.create');
   bool canEdit(WorkTask task) => canEditTask(actor, task);
   bool canEditContent(WorkTask task) => canEditTaskContent(actor, task);
   String editLockReason(WorkTask task) => task.status == 'done'
       ? '완료된 작업은 수정할 수 없습니다. 변경이 필요하면 새 작업을 등록하세요.'
       : task.status == 'review'
       ? '검토 결과를 기다리는 중입니다. 제출 내용은 잠겨 있으며 조회할 수 있습니다.'
-      : '현재 담당자 또는 PD / PM이 내용을 수정할 수 있습니다.';
+      : '본인 담당 작업 또는 전체 작업 수정 권한이 필요합니다.';
   List<PartRule> get partRules => !isProject
       ? rules
       : rules.map((r) {
           final candidates =
               people
                   .where(
-                    (p) =>
-                        p.active &&
-                        p.role != 'viewer' &&
-                        p.parts.contains(r.part),
+                    (p) => p.active && p.canWork && p.parts.contains(r.part),
                   )
                   .toList()
                 ..sort(
@@ -351,14 +348,17 @@ class TaskStore extends ChangeNotifier {
       'updatedAt': DateTime.now().toUtc().toIso8601String(),
     });
     if (isProject) {
-      for (final id in [next.assigneeId, next.reviewerId]) {
+      for (final (id, reviewer) in [
+        (next.assigneeId, false),
+        (next.reviewerId, true),
+      ]) {
         final assigned = member(id);
-        if (!assigned.active || assigned.role == 'viewer') {
+        if (!(reviewer ? assigned.canReview : assigned.canWork)) {
           throw StateError('승인된 작업자 또는 관리자를 담당자로 지정하세요.');
         }
       }
       if (old != null &&
-          !manages &&
+          !actor.has('task.assign') &&
           [
             'part',
             'assigneeId',
@@ -367,7 +367,7 @@ class TaskStore extends ChangeNotifier {
             'dueDate',
             'priority',
           ].any((key) => old.data[key] != next.data[key])) {
-        throw StateError('배정·일정·우선순위 변경은 PD / PM에게 허용됩니다.');
+        throw StateError('배정·일정·우선순위 변경 권한이 필요합니다.');
       }
     }
     if (old != null && old.same(next)) return old;

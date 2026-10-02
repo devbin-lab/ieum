@@ -43,6 +43,11 @@ class ProjectCatalog {
   final File file;
   final Map<String, List<SavedProject>> _accounts = {};
   final Map<String, String> _last = {};
+  final Map<String, String> _names = {};
+  final Map<String, List<String>> _pendingNames = {};
+  String? nameFor(String id) => _names[id];
+  List<String> pendingNames(String id) =>
+      List.unmodifiable(_pendingNames[id] ?? []);
   Map<String, dynamic>? legacy;
   String warning = '';
   List<SavedProject> forAccount(String id) =>
@@ -83,6 +88,12 @@ class ProjectCatalog {
             }
             _accounts[entry.key as String] = projects;
             _last[entry.key as String] = value['lastPath'] as String? ?? '';
+            if (value['displayName'] is String) {
+              _names[entry.key as String] = value['displayName'];
+            }
+            _pendingNames[entry.key as String] = List<String>.from(
+              value['pendingNames'] ?? [],
+            );
           }
           if (raw['legacy'] is Map) {
             legacy = Map<String, dynamic>.from(raw['legacy']);
@@ -99,6 +110,8 @@ class ProjectCatalog {
       } catch (_) {
         _accounts.clear();
         _last.clear();
+        _names.clear();
+        _pendingNames.clear();
         warning = '프로젝트 목록을 읽지 못했습니다. 기존 DB 폴더로 다시 참여하면 데이터를 복구할 수 있습니다.';
       }
     }
@@ -116,12 +129,53 @@ class ProjectCatalog {
       project,
       ...forAccount(accountId).where((p) => p.path != project.path),
     ];
+    _persist(accountId, entries, project.path, migrateLegacy: migrateLegacy);
+    _accounts[accountId] = entries;
+    _last[accountId] = project.path;
+    if (migrateLegacy) legacy = null;
+  }
+
+  void setName(String accountId, String name, List<String> pending) {
+    if (!RegExp(r'^gh-[0-9]+$').hasMatch(accountId) ||
+        name.trim().isEmpty ||
+        name.length > 40) {
+      throw const FormatException('이름을 확인하세요.');
+    }
+    final previousName = _names[accountId];
+    final previousPending = _pendingNames[accountId];
+    _names[accountId] = name.trim();
+    _pendingNames[accountId] = List.of(pending);
+    try {
+      _persist(accountId, forAccount(accountId), _last[accountId] ?? '');
+    } catch (_) {
+      if (previousName == null) {
+        _names.remove(accountId);
+      } else {
+        _names[accountId] = previousName;
+      }
+      if (previousPending == null) {
+        _pendingNames.remove(accountId);
+      } else {
+        _pendingNames[accountId] = previousPending;
+      }
+      rethrow;
+    }
+  }
+
+  void _persist(
+    String accountId,
+    List<SavedProject> entries,
+    String lastPath, {
+    bool migrateLegacy = false,
+  }) {
     final data = <String, dynamic>{
       'schema': 2,
       'accounts': {
         for (final id in {..._accounts.keys, accountId})
           id: {
-            'lastPath': id == accountId ? project.path : _last[id],
+            'lastPath': id == accountId ? lastPath : _last[id],
+            'displayName': _names[id],
+            'pendingNames': _pendingNames[id] ?? [],
             'projects': (id == accountId ? entries : forAccount(id))
                 .map((p) => p.json)
                 .toList(),
@@ -143,8 +197,5 @@ class ProjectCatalog {
       } catch (_) {}
     }
     temporary.renameSync(file.path);
-    _accounts[accountId] = entries;
-    _last[accountId] = project.path;
-    if (migrateLegacy) legacy = null;
   }
 }

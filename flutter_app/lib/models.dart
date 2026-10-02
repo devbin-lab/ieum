@@ -54,6 +54,55 @@ int nextTaskVersion(int current) {
   return current + 1;
 }
 
+/// Stable permission IDs are shared by local editing and GitHub validation.
+const permissionLabels = {
+  'task.create': '작업 등록',
+  'task.assign': '담당자·일정·우선순위 배정',
+  'task.work': '본인 담당 작업 수정·진행·제출',
+  'task.editAll': '전체 작업 수정·진행·제출',
+  'task.review': '본인에게 배정된 검토 승인·재작업',
+  'task.reviewAll': '전체 작업 검토',
+  'task.integrate': '다른 참여자의 작업 PR 통합',
+  'member.manage': '가입 승인·참여자 역할 배정',
+  'role.manage': '역할 생성·수정·삭제',
+};
+const workerPermissions = {'task.work', 'task.review'};
+const managerPermissions = {
+  'task.create',
+  'task.assign',
+  'task.work',
+  'task.editAll',
+  'task.review',
+  'task.reviewAll',
+  'task.integrate',
+  'member.manage',
+};
+
+class ProjectRole {
+  const ProjectRole(this.id, this.name, this.permissions);
+  final String id, name;
+  final Set<String> permissions;
+  Map<String, dynamic> get json => {
+    'id': id,
+    'name': name,
+    'permissions': permissions.toList()..sort(),
+  };
+  factory ProjectRole.fromJson(Map<String, dynamic> value) {
+    final id = value['id'], name = value['name'], raw = value['permissions'];
+    if (id is! String ||
+        !RegExp(r'^role-[a-zA-Z0-9-]{1,60}$').hasMatch(id) ||
+        name is! String ||
+        name.trim().isEmpty ||
+        name.length > 40 ||
+        raw is! List ||
+        raw.any((p) => !permissionLabels.containsKey(p)) ||
+        raw.toSet().length != raw.length) {
+      throw StateError('역할 이름과 권한을 확인하세요.');
+    }
+    return ProjectRole(id, name.trim(), Set.unmodifiable(raw.cast<String>()));
+  }
+}
+
 class Person {
   final String id, name, initials, role;
   final int color;
@@ -67,9 +116,35 @@ class Person {
     this.color, {
     this.login = '',
     this.parts = const [],
+    this.customRole,
   });
-  bool get manages => role == 'owner' || role == 'manager';
-  bool get active => ['owner', 'manager', 'worker', 'viewer'].contains(role);
+  final ProjectRole? customRole;
+  Set<String> get permissions => switch (role) {
+    'owner' => permissionLabels.keys.toSet(),
+    'manager' => managerPermissions,
+    'worker' => workerPermissions,
+    _ => customRole?.permissions ?? const <String>{},
+  };
+  bool has(String permission) => active && permissions.contains(permission);
+  String get roleLabel => roleLabels[role] ?? customRole?.name ?? '알 수 없는 역할';
+  bool get manages => has('task.editAll');
+  bool get active =>
+      ['owner', 'manager', 'worker', 'viewer'].contains(role) ||
+      customRole != null;
+  bool get canWork => has('task.work') || has('task.editAll');
+  bool get canReview => has('task.review') || has('task.reviewAll');
+  bool get canMutate => active && permissions.any((p) => p.startsWith('task.'));
+  Person resolved(List<ProjectRole> roles) => Person(
+    id,
+    name,
+    initials,
+    role,
+    color,
+    login: login,
+    parts: parts,
+    customRole: roles.where((r) => r.id == role).firstOrNull,
+  );
+
   Map<String, dynamic> get json => {
     'id': id,
     'name': name,
@@ -89,7 +164,9 @@ class Person {
         name.length > 40 ||
         login is! String ||
         !RegExp(r'^[A-Za-z0-9-]+$').hasMatch(login) ||
-        !roleLabels.containsKey(role) ||
+        (role is! String ||
+            !roleLabels.containsKey(role) &&
+                !RegExp(r'^role-[a-zA-Z0-9-]{1,60}$').hasMatch(role)) ||
         data['parts'] is! List) {
       throw StateError('참여자 정보가 올바르지 않습니다.');
     }
@@ -101,7 +178,7 @@ class Person {
       id,
       name.trim(),
       name.trim().substring(0, 1),
-      role as String,
+      role,
       0xff7963d5,
       login: login,
       parts: List.unmodifiable(parts),
@@ -120,12 +197,15 @@ const roleLabels = {
 
 class ProjectManifest {
   final String id, name, ownerId, founderId;
-  final List<Person> people;
+  final List<Person> _people;
+  final List<ProjectRole> roles;
+  List<Person> get people => _people.map((p) => p.resolved(roles)).toList();
   const ProjectManifest(
     this.id,
     this.name,
     this.ownerId,
-    this.people, {
+    this._people, {
+    this.roles = const [],
     String? founderId,
   }) : founderId = founderId ?? ownerId;
   Map<String, dynamic> get json => {
@@ -135,6 +215,7 @@ class ProjectManifest {
     'ownerId': ownerId,
     'founderId': founderId,
     'members': people.map((p) => p.json).toList(),
+    if (roles.isNotEmpty) 'roles': roles.map((r) => r.json).toList(),
   };
   factory ProjectManifest.fromJson(Map<String, dynamic> raw) {
     if (raw['schemaVersion'] != 1 ||
@@ -147,10 +228,27 @@ class ProjectManifest {
         (raw['members'] as List).length > 200) {
       throw StateError('프로젝트 설정 형식이 올바르지 않습니다.');
     }
+    final roleValues = raw['roles'] ?? [];
+    if (roleValues is! List || roleValues.length > 50) {
+      throw StateError('프로젝트 역할 목록을 확인하세요.');
+    }
+    final roles = roleValues
+        .map((r) => ProjectRole.fromJson(Map<String, dynamic>.from(r)))
+        .toList();
+    if (roles.map((r) => r.id).toSet().length != roles.length ||
+        roles.map((r) => r.name.toLowerCase()).toSet().length != roles.length ||
+        roles.any((r) => roleLabels.values.contains(r.name))) {
+      throw StateError('역할 이름과 ID는 중복될 수 없습니다.');
+    }
     final people = (raw['members'] as List)
         .map((p) => Person.fromJson(Map<String, dynamic>.from(p)))
         .toList();
-    if (people.map((p) => p.id).toSet().length != people.length ||
+    if (people.any(
+          (p) =>
+              !roleLabels.containsKey(p.role) &&
+              !roles.any((r) => r.id == p.role),
+        ) ||
+        people.map((p) => p.id).toSet().length != people.length ||
         !RegExp(r'^gh-[0-9]+$')
             .hasMatch('${raw['founderId'] ?? raw['ownerId']}') ||
         people.where((p) => p.role == 'owner').length != 1 ||
@@ -163,6 +261,7 @@ class ProjectManifest {
       raw['ownerId'],
       List.unmodifiable(people),
       founderId: raw['founderId'] ?? raw['ownerId'],
+      roles: List.unmodifiable(roles),
     );
   }
 }
@@ -287,15 +386,21 @@ class WorkTask {
 bool canEditTaskContent(Person actor, WorkTask task) =>
     actor.active &&
     !['review', 'done'].contains(task.status) &&
-    (actor.manages || actor.role == 'worker' && actor.id == task.assigneeId);
+    (actor.has('task.editAll') ||
+        actor.has('task.work') && actor.id == task.assigneeId);
 
 bool canEditTask(Person actor, WorkTask task) =>
-    task.status != 'done' && (actor.manages || canEditTaskContent(actor, task));
+    task.status != 'done' &&
+    (actor.has('task.assign') || canEditTaskContent(actor, task));
 
 bool canTransitionTask(Person actor, WorkTask task, String status) {
-  if (!actor.active || actor.role == 'viewer') return false;
-  final worker = actor.id == task.assigneeId || actor.manages;
-  final reviewer = actor.id == task.reviewerId || actor.manages;
+  if (!actor.active) return false;
+  final worker =
+      actor.has('task.editAll') ||
+      actor.has('task.work') && actor.id == task.assigneeId;
+  final reviewer =
+      actor.has('task.reviewAll') ||
+      actor.has('task.review') && actor.id == task.reviewerId;
   return status == 'doing' &&
           ['todo', 'rework'].contains(task.status) &&
           worker ||
@@ -314,11 +419,11 @@ void validateTaskMutation({
   WorkTask? current,
   bool allowCollapsedTransitions = false,
 }) {
-  if (!actor.active || actor.role == 'viewer') {
+  if (!actor.canMutate) {
     throw StateError('작업을 변경할 권한이 없습니다.');
   }
   if (current == null) {
-    if (!actor.manages) throw StateError('작업 등록은 개설자 또는 PD / PM에게 허용됩니다.');
+    if (!actor.has('task.create')) throw StateError('작업 등록 권한이 필요합니다.');
     if (next.version >
         (allowCollapsedTransitions ? maxTaskRevisionAdvance : 1)) {
       throw StateError('신규 작업 버전이 올바르지 않습니다.');
@@ -351,9 +456,9 @@ void validateTaskMutation({
   if (current.status == 'done') {
     throw StateError('완료된 작업은 수정할 수 없습니다. 별도 작업을 등록하세요.');
   }
-  if (!actor.manages &&
+  if (!actor.has('task.assign') &&
       assignmentFields.any((key) => current.data[key] != next.data[key])) {
-    throw StateError('배정·일정·우선순위 변경은 PD / PM에게 허용됩니다.');
+    throw StateError('배정·일정·우선순위 변경 권한이 필요합니다.');
   }
 
   final contentChanged = [
@@ -397,7 +502,8 @@ void validateTaskMutation({
       if (!allowCollapsedTransitions && contentChanged) continue;
       final becomesEditable =
           !['review', 'done'].contains(destination) &&
-          (actor.manages || actor.id == current.assigneeId);
+          (actor.has('task.editAll') ||
+              actor.has('task.work') && actor.id == current.assigneeId);
       queue.add((
         destination,
         editable || becomesEditable,

@@ -335,7 +335,7 @@ class GitHubPanel extends StatelessWidget {
                           style: const TextStyle(fontSize: 11),
                         ),
                       ),
-                      if (sync.store.manages)
+                      if (sync.store.actor.has('task.integrate'))
                         OutlinedButton(
                           onPressed: busy
                               ? null

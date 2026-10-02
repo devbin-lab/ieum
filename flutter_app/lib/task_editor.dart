@@ -70,7 +70,10 @@ class _TaskEditorState extends State<TaskEditor> {
       : widget.store.canEditContent(currentTask!);
   bool get assignmentEditable =>
       currentTask?.status != 'done' &&
-      (!widget.store.isProject || widget.store.manages);
+      (!widget.store.isProject ||
+          (widget.task == null
+              ? widget.store.canCreate
+              : widget.store.actor.has('task.assign')));
   bool get canSave => currentTask == null
       ? widget.store.canCreate
       : widget.store.canEdit(currentTask!);
@@ -276,7 +279,7 @@ class _TaskEditorState extends State<TaskEditor> {
                       Expanded(
                         child: select('task-assignee', '담당자', assigneeId, {
                           for (final p in widget.store.people.where(
-                            (p) => p.active && p.role != 'viewer',
+                            (p) => p.canWork,
                           ))
                             p.id: p.name,
                         }, (v) => assigneeId = v),
@@ -285,7 +288,7 @@ class _TaskEditorState extends State<TaskEditor> {
                       Expanded(
                         child: select('task-reviewer', '검토자', reviewerId, {
                           for (final p in widget.store.people.where(
-                            (p) => p.active && p.role != 'viewer',
+                            (p) => p.canReview,
                           ))
                             p.id: p.name,
                         }, (v) => reviewerId = v),

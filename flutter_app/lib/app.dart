@@ -18,6 +18,8 @@ import 'app_release.dart';
 import 'account_menu.dart';
 import 'settings_shell.dart';
 import 'horizontal_viewport.dart';
+import 'update_ui.dart';
+import 'roles_panel.dart';
 
 const purple = Color(0xff7963d5),
     ink = Color(0xff302b3c),
@@ -182,6 +184,7 @@ class Workspace extends StatefulWidget {
   final GitHubSession? session;
   final Widget? projectSwitcher;
   final String? sessionNotice;
+  final Future<String> Function(String)? onRename;
   const Workspace({
     super.key,
     required this.store,
@@ -190,6 +193,7 @@ class Workspace extends StatefulWidget {
     this.session,
     this.projectSwitcher,
     this.sessionNotice,
+    this.onRename,
   });
   @override
   State<Workspace> createState() => _WorkspaceState();
@@ -779,7 +783,7 @@ class _WorkspaceState extends State<Workspace> {
         const Divider(color: Color(0xffe1e4e3), height: 24),
         AccountMenu(
           name: s.actor.name,
-          role: s.isProject ? roleLabels[s.actor.role]! : '테스트 사용자',
+          role: s.isProject ? s.actor.roleLabel : '테스트 사용자',
           avatar: avatar(s.actor),
           onSettings: () => selectSettings(SettingsSection.general),
           onSignOut: widget.onSignOut,
@@ -1449,6 +1453,12 @@ class _WorkspaceState extends State<Workspace> {
   );
   Widget settingsContent(SettingsSection section) => switch (section) {
     SettingsSection.general => generalSettings(),
+    SettingsSection.roles =>
+      s.isProject && widget.session != null && widget.sync != null
+          ? RolesPanel(store: s, sync: widget.sync!, session: widget.session!)
+          : settingsGroup('역할', [
+              ('프로젝트 필요', '프로젝트를 연결하면 역할을 관리할 수 있습니다.', ''),
+            ]),
     SettingsSection.team =>
       s.isProject && widget.session != null && widget.sync != null
           ? TeamPanel(store: s, sync: widget.sync!, session: widget.session!)
@@ -1522,6 +1532,77 @@ class _WorkspaceState extends State<Workspace> {
     ),
   };
 
+  bool nameBusy = false;
+  String nameNotice = '';
+  Future<void> renameAccount() async {
+    final controller = TextEditingController(text: s.actor.name);
+    final name = await showDialog<String>(
+      context: context,
+      builder: (ctx) => IeumDialog(
+        title: const Text('이름 변경'),
+        icon: Icons.edit_outlined,
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            TextField(
+              key: const Key('account-display-name'),
+              controller: controller,
+              maxLength: 40,
+              decoration: const InputDecoration(labelText: '이름 / 닉네임'),
+            ),
+            const SizedBox(height: 12),
+            const Text(
+              '이 컴퓨터에 연결된 모든 참여 프로젝트에 커밋으로 반영합니다. GitHub 아이디와 기존 브랜치는 유지됩니다.',
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('취소'),
+          ),
+          FilledButton(
+            onPressed: () {
+              if (controller.text.trim().isNotEmpty) {
+                Navigator.pop(ctx, controller.text.trim());
+              }
+            },
+            child: const Text('변경'),
+          ),
+        ],
+      ),
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 250));
+    controller.dispose();
+    if (name == null || !mounted) return;
+    setState(() {
+      nameBusy = true;
+      nameNotice = '';
+    });
+    try {
+      final result = widget.onRename != null
+          ? await widget.onRename!(name)
+          : await renameCurrent(name);
+      if (mounted) setState(() => nameNotice = result);
+    } catch (e) {
+      if (mounted) setState(() => nameNotice = '$e');
+    } finally {
+      if (mounted) setState(() => nameBusy = false);
+    }
+  }
+
+  Future<String> renameCurrent(String name) async {
+    s.updateProject(
+      await widget.session!.rename(
+        widget.sync!.config,
+        name,
+        expectedProjectId: s.project!.id,
+      ),
+    );
+    return '이름을 변경했습니다.';
+  }
+
   Widget generalSettings() => Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
@@ -1542,17 +1623,34 @@ class _WorkspaceState extends State<Workspace> {
       ]),
       const SizedBox(height: 32),
       settingsGroup('계정', [
-        ('이름', '이 프로젝트에서 사용하는 이름입니다.', s.actor.name),
+        ('이름', '참여 중인 프로젝트에서 사용하는 표시 이름입니다.', s.actor.name),
         (
           '역할',
           '프로젝트에서 지정된 역할과 권한입니다.',
-          s.isProject ? roleLabels[s.actor.role]! : '테스트 사용자',
+          s.isProject ? s.actor.roleLabel : '테스트 사용자',
         ),
       ]),
+      if (s.isProject && widget.session != null)
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton.icon(
+            key: const Key('change-account-name'),
+            onPressed: nameBusy ? null : renameAccount,
+            icon: const Icon(Icons.edit_outlined, size: 16),
+            label: Text(nameBusy ? '이름 반영 중…' : '모든 프로젝트의 이름 변경'),
+          ),
+        ),
+      if (nameNotice.isNotEmpty)
+        Padding(
+          padding: const EdgeInsets.only(top: 8),
+          child: SelectableText(
+            nameNotice,
+            style: const TextStyle(fontSize: 12),
+          ),
+        ),
       const SizedBox(height: 32),
-      settingsGroup('앱 정보', [
-        ('이음 버전', '업데이트는 창 위쪽의 업데이트 확인에서 받을 수 있습니다.', appVersion),
-      ]),
+      settingsGroup('앱 정보', [('이음 버전', '새 버전을 확인하고 다운로드합니다.', appVersion)]),
+      const Align(alignment: Alignment.centerLeft, child: UpdateButton()),
     ],
   );
 

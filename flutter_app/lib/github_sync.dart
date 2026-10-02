@@ -294,9 +294,12 @@ class GitHubPublisher {
       } on StateError catch (e) {
         throw GitHubFailure(e.message.toString());
       }
-      for (final id in [task.assigneeId, task.reviewerId]) {
+      for (final (id, reviewer) in [
+        (task.assigneeId, false),
+        (task.reviewerId, true),
+      ]) {
         if (!manifest.people.any(
-          (p) => p.id == id && p.active && p.role != 'viewer',
+          (p) => p.id == id && (reviewer ? p.canReview : p.canWork),
         )) {
           throw const GitHubFailure('작업 담당자의 현재 참여 권한을 확인하세요.');
         }
@@ -1063,7 +1066,7 @@ class GitHubSync extends ChangeNotifier {
       _integrationAttempts.removeWhere(
         (url, _) => !requests!.any((pr) => pr['html_url'] == url),
       );
-      if (!executor.active || executor.role == 'viewer') return;
+      if (!executor.canMutate) return;
       for (final pr in requests) {
         if (_disposed ||
             _paused ||
@@ -1073,7 +1076,7 @@ class GitHubSync extends ChangeNotifier {
           break;
         }
         if (!(pr['head']['ref'] as String).startsWith('ieum/tasks/')) continue;
-        if (!executor.manages &&
+        if (!executor.has('task.integrate') &&
             pr['user']?['id'].toString() !=
                 executor.id.replaceFirst('gh-', '')) {
           continue;
@@ -1635,8 +1638,8 @@ class GitHubSync extends ChangeNotifier {
         store.updateProject(manifest);
         final actor = await publisher.projectActor(config, manifest);
         if (_disposed) return;
-        if (!actor.manages) {
-          throw const GitHubFailure('통합 승인은 개설자 또는 PD / PM에게 허용됩니다.');
+        if (!actor.has('task.integrate')) {
+          throw const GitHubFailure('다른 참여자의 PR 통합 권한이 필요합니다.');
         }
       }
       await publisher.approve(config, review, demo: !store.isProject);

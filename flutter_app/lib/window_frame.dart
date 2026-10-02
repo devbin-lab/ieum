@@ -1,8 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:window_manager/window_manager.dart';
 
-import 'update_ui.dart';
-
 /// Lives above the navigator so window controls remain available in dialogs.
 class DesktopFrame extends StatelessWidget {
   const DesktopFrame({super.key, required this.child});
@@ -82,7 +80,6 @@ class _IeumTitleBarState extends State<IeumTitleBar> with WindowListener {
               ),
             ),
           ),
-          const UpdateButton(),
           _WindowButton(
             key: const Key('window-minimize'),
             label: '최소화',

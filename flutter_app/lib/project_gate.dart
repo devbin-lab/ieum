@@ -11,6 +11,7 @@ import 'github_sync.dart';
 import 'github_oauth.dart';
 import 'project_service.dart';
 import 'project_catalog.dart';
+import 'profile_service.dart';
 import 'project_picker.dart';
 import 'store.dart';
 import 'update_ui.dart';
@@ -102,7 +103,7 @@ class _ProjectGateState extends State<ProjectGate> {
     await session.logout();
     final user = await session.signIn(token: token.text);
     token.clear();
-    nickname.text = user.name;
+    nickname.text = catalog.nameFor(user.id) ?? user.name;
     if (mounted) {
       setState(() {});
       UpdateScope.of(context)?.notifier?.credentialsChanged();
@@ -111,7 +112,7 @@ class _ProjectGateState extends State<ProjectGate> {
   });
 
   void authenticated() {
-    nickname.text = session.user!.name;
+    nickname.text = catalog.nameFor(session.user!.id) ?? session.user!.name;
     if (mounted) {
       setState(() {});
       UpdateScope.of(context)?.notifier?.credentialsChanged();
@@ -200,6 +201,21 @@ class _ProjectGateState extends State<ProjectGate> {
     }
   });
 
+  Future<String> renameAll(String name) async {
+    nickname.text = name;
+    return renameParticipatingProjects(
+      catalog,
+      session,
+      name,
+      onProject: (entry, project) {
+        if (store?.project?.id == project.id &&
+            sync?.config.slug == entry.config.slug) {
+          store!.updateProject(project);
+        }
+      },
+    );
+  }
+
   Future<void> openStore(
     TaskStore next,
     GitHubConfig config, {
@@ -225,6 +241,29 @@ class _ProjectGateState extends State<ProjectGate> {
         next.setMeta('github.login', session.user!.login);
       }
       if (!mounted) throw StateError('프로젝트 열기가 취소되었습니다.');
+      if (!cached &&
+          catalog
+              .pendingNames(session.user!.id)
+              .contains('${config.slug}|${next.project!.id}')) {
+        try {
+          final renamed = await session.rename(
+            config,
+            catalog.nameFor(session.user!.id)!,
+            expectedProjectId: next.project!.id,
+          );
+          next.updateProject(renamed);
+          catalog.setName(
+            session.user!.id,
+            catalog.nameFor(session.user!.id)!,
+            catalog
+                .pendingNames(session.user!.id)
+                .where((id) => id != '${config.slug}|${renamed.id}')
+                .toList(),
+          );
+        } catch (e) {
+          error = '이름 변경 전송 대기: $e';
+        }
+      }
       catalog.remember(
         session.user!.id,
         SavedProject(
@@ -393,6 +432,7 @@ class _ProjectGateState extends State<ProjectGate> {
           store: store!,
           sync: sync,
           session: session,
+          onRename: renameAll,
           onSignOut: signOut,
           sessionNotice: [
             session.connectionNotice.value,
