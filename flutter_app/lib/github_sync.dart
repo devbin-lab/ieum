@@ -132,6 +132,16 @@ class HttpGitHubApi implements GitHubApi {
           .join()
           .timeout(const Duration(seconds: 30));
       if (response.statusCode < 200 || response.statusCode >= 300) {
+        var serverMessage = '';
+        try {
+          serverMessage = '${jsonDecode(raw)['message']}'.toLowerCase();
+        } catch (_) {}
+        final limited =
+            response.statusCode == 429 ||
+            response.headers.value('retry-after') != null ||
+            response.headers.value('x-ratelimit-remaining') == '0' ||
+            serverMessage.contains('rate limit') ||
+            serverMessage.contains('abuse detection');
         final explanation = switch (response.statusCode) {
           401 => 'GitHub 인증이 만료되었거나 토큰이 올바르지 않습니다.',
           403 => '저장소 쓰기·PR 권한 또는 GitHub 요청 한도를 확인하세요.',
@@ -148,6 +158,7 @@ class HttpGitHubApi implements GitHubApi {
             response.headers.value('retry-after'),
             response.headers.value('x-ratelimit-remaining'),
             response.headers.value('x-ratelimit-reset'),
+            rateLimited: limited,
           ),
         );
       }
@@ -573,7 +584,7 @@ class GitHubPublisher {
         _badBlobs['$sha:$path'] = error;
         quarantined.add({
           'path': path,
-          'taskId': _taskIdAtPath(path),
+          'taskId': _quarantineTaskId(path),
           'error': error,
         });
       } else if (proposal != null) {
@@ -589,6 +600,28 @@ class GitHubPublisher {
       'proposals': proposals,
       'quarantined': quarantined,
     };
+  }
+
+  Future<List<String>> memberBlockers(
+    GitHubConfig config,
+    ProjectManifest project,
+    String memberId,
+  ) async {
+    final snapshot = (await pull(config, ''))!;
+    final remote = _RemoteTasks(snapshot, project.id);
+    if (remote.blocked.isNotEmpty) {
+      throw const GitHubFailure('손상된 작업을 복구한 뒤 참여자 권한을 변경하세요.');
+    }
+    return [
+      for (final task in remote.tasks.values)
+        if (task.status != 'done' &&
+            (task.assigneeId == memberId || task.reviewerId == memberId))
+          task.title,
+      for (final pr in await openRequests(config))
+        if ('gh-${pr['user']?['id']}' == memberId &&
+            (pr['head']['ref'] as String).startsWith('ieum/tasks/'))
+          '통합 대기 PR #${pr['number']}',
+    ];
   }
 
   Future<List<Map<String, dynamic>>> openRequests(GitHubConfig config) async {
@@ -706,7 +739,7 @@ class GitHubPublisher {
         config,
         reviewed['url'] as String,
         projectId: manifest.id,
-        ownerId: manifest.ownerId,
+        founderId: manifest.founderId,
         expectedHead: reviewed['sha'] as String,
       );
       return;
@@ -801,12 +834,74 @@ class GitHubSync extends ChangeNotifier {
         : GitHubConfig.fromJson(Map<String, dynamic>.from(jsonDecode(raw)));
   }
 
-  List<Map<String, dynamic>> get jobs => store.db
-      .select('SELECT body FROM github_queue ORDER BY rowid DESC')
-      .map(
-        (row) => Map<String, dynamic>.from(jsonDecode(row['body'] as String)),
-      )
-      .toList();
+  List<Map<String, dynamic>> get jobs => _readJobs('github_queue');
+
+  List<Map<String, dynamic>> _readJobs(String table) {
+    final result = <Map<String, dynamic>>[];
+    for (final row in store.db.select(
+      'SELECT id,body FROM $table ORDER BY rowid DESC',
+    )) {
+      try {
+        final job = Map<String, dynamic>.from(
+          jsonDecode(row['body'] as String),
+        );
+        final proposal = Map<String, dynamic>.from(job['proposal']);
+        _validateTaskProposal(proposal);
+        final task = WorkTask.fromJson(
+          Map<String, dynamic>.from(
+            (proposal['changes'] as List).single['task'],
+          ),
+        );
+        if (job['taskId'] != task.id ||
+            (table == 'github_queue' && row['id'] != task.id) ||
+            (table == 'github_sent' && row['id'] != job['revision']) ||
+            job['revision'] is! String ||
+            (job['revision'] as String).isEmpty ||
+            job['repository'] is! String ||
+            job['title'] is! String ||
+            (job['attempts'] != null &&
+                (job['attempts'] is! int || job['attempts'] < 0)) ||
+            [
+              'error',
+              'retryAt',
+              'prUrl',
+              'commitSha',
+              'branch',
+              'githubLogin',
+              'createdAt',
+            ].any((key) => job[key] != null && job[key] is! String) ||
+            ![
+              'pending',
+              'sending',
+              'sent',
+              'merged',
+              'failed',
+            ].contains(job['state'])) {
+          throw const FormatException('전송 기록의 항목이 올바르지 않습니다.');
+        }
+        result.add(job);
+      } catch (error) {
+        store.transaction(() {
+          store.db.execute('INSERT INTO sync_recovery VALUES (?,?)', [
+            const Uuid().v4(),
+            jsonEncode({
+              'table': table,
+              'recordId': row['id'],
+              'raw': row['body'],
+              'error': '$error',
+              'createdAt': DateTime.now().toUtc().toIso8601String(),
+            }),
+          ]);
+          store.db.execute('DELETE FROM $table WHERE id=?', [row['id']]);
+          store.setMeta(
+            'github.recoveryNotice',
+            '손상된 전송 기록을 복구 기록에 보관했습니다. 저장된 작업을 기준으로 전송을 다시 준비합니다.',
+          );
+        });
+      }
+    }
+    return result;
+  }
 
   Future<String> _credential() async {
     if (_sessionToken.isNotEmpty) return _sessionToken;
@@ -857,7 +952,7 @@ class GitHubSync extends ChangeNotifier {
         final manifest = await publisher.project(value);
         if (_disposed) return;
         if (manifest.id != store.project!.id ||
-            manifest.ownerId != store.project!.ownerId) {
+            manifest.founderId != store.project!.founderId) {
           throw const GitHubFailure('이 DB와 연결된 프로젝트 저장소가 아닙니다.');
         }
         final user = await publisher.api.call('GET', '/user');
@@ -950,7 +1045,7 @@ class GitHubSync extends ChangeNotifier {
     busy = true;
     _notify();
     final settings = config;
-    final projectId = store.project!.id, ownerId = store.project!.ownerId;
+    final projectId = store.project!.id, founderId = store.project!.founderId;
     final executor = store.actor;
     var merged = 0, attempted = 0;
     try {
@@ -994,7 +1089,7 @@ class GitHubSync extends ChangeNotifier {
             settings,
             url,
             projectId: projectId,
-            ownerId: ownerId,
+            founderId: founderId,
           );
           if (_disposed) return;
           autoMergeErrors.remove(url);
@@ -1162,6 +1257,26 @@ class GitHubSync extends ChangeNotifier {
         'INSERT INTO github_sent VALUES (?,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body',
         [job['revision'], jsonEncode(job)],
       );
+      if (job['state'] == 'merged') {
+        final version =
+            (job['proposal']['changes'] as List).single['task']['version'];
+        // A confirmed latest receipt subsumes older submissions by this author.
+        // Keep newer in-flight submissions for acknowledgement after a lost reply.
+        store.db.execute(
+          '''DELETE FROM github_sent WHERE id != ? AND json_valid(body)
+          AND json_extract(body, '\$.repository') = ?
+          AND json_extract(body, '\$.taskId') = ?
+          AND json_extract(body, '\$.githubLogin') = ?
+          AND json_extract(body, '\$.proposal.changes[0].task.version') <= ?''',
+          [
+            job['revision'],
+            job['repository'],
+            job['taskId'],
+            job['githubLogin'],
+            version,
+          ],
+        );
+      }
     }
     final rows = store.db.select('SELECT body FROM github_queue WHERE id=?', [
       job['taskId'],
@@ -1279,14 +1394,20 @@ class GitHubSync extends ChangeNotifier {
       final incoming = Map<String, WorkTask>.from(store.baseline);
       final acknowledged = Map<String, WorkTask>.from(store.baseline);
       final receipts = [
-        ...store.db
-            .select('SELECT body FROM github_sent')
-            .map(
-              (row) =>
-                  Map<String, dynamic>.from(jsonDecode(row['body'] as String)),
-            ),
+        ..._readJobs('github_sent'),
         ...jobs,
       ].where((job) => job['repository'] == settings.slug).toList();
+      final receiptTasks = <String, List<WorkTask>>{};
+      for (final receipt in receipts) {
+        final key = '${receipt['taskId']}:${receipt['githubLogin']}';
+        (receiptTasks[key] ??= []).add(
+          WorkTask.fromJson(
+            Map<String, dynamic>.from(
+              (receipt['proposal']['changes'] as List).single['task'],
+            ),
+          ),
+        );
+      }
       for (final proposal in data['proposals'] as List) {
         if (proposal['projectId'] != store.meta('projectId')) continue;
         final task = WorkTask.fromJson(
@@ -1297,18 +1418,9 @@ class GitHubSync extends ChangeNotifier {
         if (remote.blocked.contains(task.id)) continue;
         final base = acknowledged[task.id];
         if ((base == null || base.version <= task.version) &&
-            receipts.any((job) {
-              if (job['taskId'] != task.id ||
-                  job['githubLogin'] != proposal['githubLogin']) {
-                return false;
-              }
-              final own = WorkTask.fromJson(
-                Map<String, dynamic>.from(
-                  (job['proposal']['changes'] as List).single['task'],
-                ),
-              );
-              return own.version == task.version && own.same(task);
-            })) {
+            (receiptTasks['${task.id}:${proposal['githubLogin']}'] ?? []).any(
+              (own) => own.version == task.version && own.same(task),
+            )) {
           acknowledged[task.id] = task;
         }
       }
@@ -1355,7 +1467,7 @@ class GitHubSync extends ChangeNotifier {
         if (result.conflicts.isNotEmpty)
           '충돌 ${result.conflicts.length}건의 개인 변경을 보존했습니다. 다른 작업은 동기화됩니다.',
         if (remote.warnings.isNotEmpty)
-          '손상·중복 작업 ${remote.blocked.length}건을 제외했습니다. ${remote.warnings.join(' / ')}',
+          '문제 파일 ${remote.warnings.length}건을 격리했습니다. 정상 작업은 계속 동기화됩니다. ${remote.warnings.join(' / ')}',
       ];
       pullMessage = messages.join(' ');
       if (autoMergeEnabled) {

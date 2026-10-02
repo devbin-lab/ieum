@@ -7,6 +7,7 @@ using System.Runtime.Serialization;
 using System.Runtime.Serialization.Json;
 using System.Security.Cryptography;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Windows.Forms;
 
 // Windows 10/11 include .NET Framework 4.x. No SDK or global installation.
@@ -95,21 +96,7 @@ internal static class PortableLauncher
                 catch { /* Fall through to this launcher's embedded version. */ }
                 Quarantine(appRoot, Path.GetFileName(Path.GetDirectoryName(updatedLauncher)));
             }
-            var root = Path.Combine(appRoot, "builds");
-            var destination = Path.Combine(root, BuildId);
-            if (!File.Exists(Path.Combine(destination, ".complete")))
-            {
-                Directory.CreateDirectory(root);
-                var staging = Path.Combine(root, BuildId + "-" + Guid.NewGuid().ToString("N"));
-                Extract(staging);
-                File.WriteAllText(Path.Combine(staging, ".complete"), BuildId);
-                try { Directory.Move(staging, destination); }
-                catch (IOException)
-                {
-                    // A simultaneous launch may have completed the same extraction.
-                    if (!File.Exists(Path.Combine(destination, ".complete"))) throw;
-                }
-            }
+            var destination = PrepareInstallation(appRoot);
             // Relative DLLs and Flutter data resolve from the extracted app folder.
             var startupMarker = Path.Combine(destination, ".startup-" + Guid.NewGuid().ToString("N"));
             var start = new ProcessStartInfo
@@ -288,6 +275,67 @@ internal static class PortableLauncher
             if (payload == null) throw new IOException("Application payload is missing.");
             using (var archive = new ZipArchive(payload, ZipArchiveMode.Read))
                 archive.ExtractToDirectory(destination);
+        }
+    }
+
+    private static bool InstallationValid(string destination)
+    {
+        try
+        {
+            if (!File.Exists(Path.Combine(destination, ".complete"))) return false;
+            var prefix = Path.GetFullPath(destination) + Path.DirectorySeparatorChar;
+            using (var payload = Assembly.GetExecutingAssembly().GetManifestResourceStream("Ieum.Payload.zip"))
+            using (var archive = new ZipArchive(payload, ZipArchiveMode.Read))
+            {
+                foreach (var entry in archive.Entries)
+                {
+                    if (entry.Name.Length == 0) continue;
+                    var target = Path.GetFullPath(Path.Combine(destination, entry.FullName));
+                    if (!target.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) ||
+                        !File.Exists(target) || new FileInfo(target).Length != entry.Length) return false;
+                    using (var expected = entry.Open())
+                    using (var actual = File.OpenRead(target))
+                    using (var hash = SHA256.Create())
+                        if (BitConverter.ToString(hash.ComputeHash(expected)) !=
+                            BitConverter.ToString(hash.ComputeHash(actual))) return false;
+                }
+            }
+            return true;
+        }
+        catch { return false; }
+    }
+
+    private static string PrepareInstallation(string appRoot)
+    {
+        var root = Path.GetFullPath(Path.Combine(appRoot, "builds"));
+        var destination = Path.GetFullPath(Path.Combine(root, BuildId));
+        if (!destination.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+            throw new IOException("Invalid application destination.");
+        string lockName;
+        using (var hash = SHA256.Create())
+            lockName = "Local\\Ieum-Install-" + BitConverter.ToString(hash.ComputeHash(
+                System.Text.Encoding.UTF8.GetBytes(destination.ToLowerInvariant()))).Replace("-", "");
+        using (var gate = new Mutex(false, lockName))
+        {
+            bool locked;
+            try { locked = gate.WaitOne(30000); }
+            catch (AbandonedMutexException) { locked = true; }
+            if (!locked) throw new IOException("Another IEUM installation is still being prepared. Try again.");
+            try
+            {
+                if (InstallationValid(destination)) return destination;
+                Directory.CreateDirectory(root);
+                // Preserve damaged files for diagnosis, including user-added files.
+                if (Directory.Exists(destination))
+                    Directory.Move(destination, destination + "-damaged-" + Guid.NewGuid().ToString("N"));
+                var staging = Path.Combine(root, BuildId + "-staging-" + Guid.NewGuid().ToString("N"));
+                Extract(staging);
+                File.WriteAllText(Path.Combine(staging, ".complete"), BuildId);
+                if (!InstallationValid(staging)) throw new IOException("Application extraction verification failed.");
+                Directory.Move(staging, destination);
+                return destination;
+            }
+            finally { gate.ReleaseMutex(); }
         }
     }
 }

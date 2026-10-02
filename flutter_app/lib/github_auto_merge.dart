@@ -5,7 +5,7 @@ extension AutoTaskIntegration on GitHubPublisher {
     GitHubConfig config,
     String url, {
     required String projectId,
-    required String ownerId,
+    required String founderId,
     String? expectedHead,
   }) async {
     final reviewed = await review(config, url);
@@ -19,7 +19,7 @@ extension AutoTaskIntegration on GitHubPublisher {
     final snapshot = (await pull(config, ''))!;
     final revision = snapshot['revision'] as String;
     final manifest = await project(config, ref: revision);
-    if (manifest.id != projectId || manifest.ownerId != ownerId) {
+    if (manifest.id != projectId || manifest.founderId != founderId) {
       throw const GitHubFailure('연결된 프로젝트와 원격 프로젝트가 다릅니다.');
     }
     final executor = await projectActor(config, manifest);

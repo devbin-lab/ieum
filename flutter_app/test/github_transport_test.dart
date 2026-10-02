@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ieum_flutter/github_sync.dart';
+import 'package:ieum_flutter/project_service.dart';
 
 // Keep the actual Dart connection pool, redirecting only the destination to a
 // local HTTP server so these tests need neither GitHub access nor credentials.
@@ -10,6 +11,8 @@ class LocalGitHubClient implements HttpClient {
   LocalGitHubClient(this.port);
   final int port;
   final HttpClient inner = HttpClient();
+  @override
+  Future<HttpClientRequest> getUrl(Uri url) => openUrl('GET', url);
   @override
   Future<HttpClientRequest> openUrl(String method, Uri url) => inner.openUrl(
     method,
@@ -26,6 +29,41 @@ class LocalGitHubClient implements HttpClient {
 }
 
 void main() {
+  test('403 rate limits allow cached recovery while permission denials remain blocked', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    var mode = 0;
+    server.listen((request) async {
+      await request.drain<void>();
+      request.response.statusCode = 403;
+      if (mode == 1) request.response.headers.set('retry-after', '45');
+      request.response.write(
+        jsonEncode({
+          'message': mode == 2
+              ? 'You have exceeded a secondary rate limit.'
+              : 'Resource not accessible by integration',
+        }),
+      );
+      await request.response.close();
+    });
+    final api = HttpGitHubApi(
+      () async => 'test-token',
+      createClient: () => LocalGitHubClient(server.port),
+    );
+    try {
+      for (mode = 0; mode < 3; mode++) {
+        try {
+          await api.call('GET', '/user');
+          fail('Expected GitHub rejection');
+        } on GitHubFailure catch (error) {
+          expect(GitHubSession.transient(error), mode != 0);
+          expect(error.retryAfter, mode == 0 ? isNull : isNotNull);
+        }
+      }
+    } finally {
+      api.close();
+      await server.close(force: true);
+    }
+  });
   test(
     'sequential requests reuse TCP connection but refresh credentials',
     () async {

@@ -28,6 +28,20 @@ internal static class LauncherTests
     public static int Main(string[] args)
     {
         var root = args[0];
+        var installed = (string)Call("PrepareInstallation", root);
+        Check((bool)Call("InstallationValid", installed), "new installation verified against payload");
+        File.Delete(Path.Combine(installed, "ieum_flutter.exe"));
+        Call("PrepareInstallation", root);
+        Check((bool)Call("InstallationValid", installed), "missing executable recovered despite complete marker");
+        var executable = Path.Combine(installed, "ieum_flutter.exe");
+        var damaged = File.ReadAllBytes(executable);
+        damaged[damaged.Length - 1] ^= 1;
+        File.WriteAllBytes(executable, damaged);
+        Check(!(bool)Call("InstallationValid", installed), "same-size corrupt payload detected");
+        Call("PrepareInstallation", root);
+        Check((bool)Call("InstallationValid", installed), "corrupt payload re-extracted and verified");
+        Check(Directory.GetDirectories(Path.Combine(root, "builds"), "*-damaged-*").Length == 2,
+            "damaged builds preserved without deleting data");
         Check(((Version)Call("ParseVersion", "0.2.1")).CompareTo((Version)Call("ParseVersion", "0.2.1+7")) == 0, "build metadata cannot change release order");
         Check(((Version)Call("ParseVersion", "0.2.2")).CompareTo((Version)Call("ParseVersion", "0.2.1+99")) > 0, "three-part patch release follows legacy build");
         var fallback = Path.Combine(root, "builds", "previous", "ieum_flutter.exe");

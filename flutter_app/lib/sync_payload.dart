@@ -13,6 +13,7 @@ Duration? githubRetryDelay(
   String? remaining,
   String? reset, {
   DateTime? now,
+  bool rateLimited = false,
 }) {
   final clock = now ?? DateTime.now().toUtc();
   if (retryAfter != null) {
@@ -35,7 +36,9 @@ Duration? githubRetryDelay(
       return duration.isNegative ? const Duration(seconds: 1) : duration;
     }
   }
-  return status == 429 || status == 403 ? const Duration(minutes: 1) : null;
+  return status == 429 || status == 403 && rateLimited
+      ? const Duration(minutes: 1)
+      : null;
 }
 
 Map<String, dynamic> _decodeTaskProposal(dynamic blob, {String? path}) {
@@ -90,8 +93,14 @@ String? _taskIdAtPath(String path) {
   return match?.group(1);
 }
 
-/// Corrupt files are quarantined by their task ID. Unknown paths cannot safely
-/// identify an affected task, so they block admission until repaired.
+String? _quarantineTaskId(String path) {
+  final name = path.split('/').last;
+  final match = RegExp(r'^([A-Za-z0-9_-]{1,80})\.json$').firstMatch(name);
+  return match?.group(1);
+}
+
+/// Only valid task IDs can affect admission. Non-task filenames remain visible
+/// in recovery warnings without preventing unrelated work from progressing.
 class _RemoteTasks {
   final tasks = <String, WorkTask>{};
   final blocked = <String>{};
@@ -102,9 +111,7 @@ class _RemoteTasks {
     for (final raw in snapshot['quarantined'] as List? ?? []) {
       final issue = raw as Map;
       final id = issue['taskId'] as String?;
-      if (id == null) {
-        uncertain = true;
-      } else {
+      if (id != null) {
         blocked.add(id);
       }
       warnings.add('${issue['path']}: ${issue['error']}');

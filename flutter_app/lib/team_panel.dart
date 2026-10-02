@@ -101,6 +101,74 @@ class _TeamPanelState extends State<TeamPanel> {
     }
   }
 
+  Future<void> transfer() async {
+    final candidates = widget.store.people
+        .where(
+          (p) =>
+              p.id != widget.store.project!.ownerId &&
+              p.active &&
+              p.role != 'viewer',
+        )
+        .toList();
+    if (candidates.isEmpty) {
+      setState(() => error = '소유권을 받을 작업자 또는 관리자를 먼저 승인하세요.');
+      return;
+    }
+    var target = candidates.first.id;
+    final selected = await showDialog<String>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, update) => IeumDialog(
+          title: const Text('프로젝트 소유권 이전'),
+          icon: Icons.manage_accounts_outlined,
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              IeumSelect(
+                value: target,
+                values: {
+                  for (final p in candidates) p.id: '${p.name} · @${p.login}',
+                },
+                onChanged: (value) => update(() => target = value),
+              ),
+              const SizedBox(height: 16),
+              const Text(
+                '선택한 참여자가 이음 프로젝트의 개설자가 됩니다. 내 역할은 PD / PM으로 변경됩니다. GitHub 저장소의 소유자와 초대 권한은 별도로 관리됩니다.',
+                style: TextStyle(fontSize: 12, height: 1.6),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('취소'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, target),
+              child: const Text('소유권 이전'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (selected == null || !mounted) return;
+    setState(() {
+      busy = true;
+      error = '';
+    });
+    try {
+      final project = await widget.session.transferOwnership(
+        widget.sync.config,
+        selected,
+      );
+      if (mounted) widget.store.updateProject(project);
+    } catch (e) {
+      if (mounted) error = '$e';
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
   Future<void> refresh() async {
     setState(() {
       busy = true;
@@ -110,7 +178,7 @@ class _TeamPanelState extends State<TeamPanel> {
       final project = await widget.session.loadProject(widget.sync.config);
       if (!mounted) return;
       widget.store.updateProject(project);
-      if (widget.store.owns) {
+      if (widget.store.manages) {
         requests = await widget.session.requests(widget.sync.config);
       }
     } catch (e) {
@@ -142,7 +210,12 @@ class _TeamPanelState extends State<TeamPanel> {
                 key: const Key('member-role'),
                 value: role,
                 values: {
-                  for (final id in ['manager', 'worker', 'viewer', 'disabled'])
+                  for (final id in [
+                    if (widget.store.owns) 'manager',
+                    'worker',
+                    'viewer',
+                    'disabled',
+                  ])
                     id: roleLabels[id]!,
                 },
                 onChanged: (value) => update(() => role = value),
@@ -244,9 +317,18 @@ class _TeamPanelState extends State<TeamPanel> {
         if (widget.store.owns)
           Padding(
             padding: const EdgeInsets.only(bottom: 12),
-            child: OutlinedButton(
-              onPressed: busy ? null : invite,
-              child: const Text('GitHub 협업자 초대'),
+            child: Wrap(
+              spacing: 10,
+              children: [
+                OutlinedButton(
+                  onPressed: busy ? null : invite,
+                  child: const Text('GitHub 협업자 초대'),
+                ),
+                OutlinedButton(
+                  onPressed: busy ? null : transfer,
+                  child: const Text('프로젝트 소유권 이전'),
+                ),
+              ],
             ),
           ),
         Text(
@@ -265,7 +347,8 @@ class _TeamPanelState extends State<TeamPanel> {
                     style: const TextStyle(fontSize: 12, height: 1.6),
                   ),
                 ),
-                if (widget.store.owns &&
+                if (widget.store.manages &&
+                    (widget.store.owns || member.role != 'manager') &&
                     member.role != 'owner' &&
                     member.role != 'pending')
                   TextButton(
@@ -275,7 +358,7 @@ class _TeamPanelState extends State<TeamPanel> {
               ],
             ),
           ),
-        if (widget.store.owns) ...[
+        if (widget.store.manages) ...[
           const Divider(height: 24),
           const Text(
             '가입 승인 대기 · 요청을 자동으로 확인합니다.',

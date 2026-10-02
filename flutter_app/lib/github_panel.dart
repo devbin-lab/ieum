@@ -239,10 +239,21 @@ class GitHubPanel extends StatelessWidget {
             const Padding(
               padding: EdgeInsets.only(top: 10),
               child: Text(
-                '저장 직후 자동 전송 · 변경 확인 약 5초',
+                '저장 직후 자동 전송 · 변경 확인 약 10초',
                 style: TextStyle(fontSize: 11, color: _muted),
               ),
             ),
+            if (sync.store.meta('github.recoveryNotice').isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text(
+                  sync.store.meta('github.recoveryNotice'),
+                  style: const TextStyle(
+                    fontSize: 11,
+                    color: Color(0xffbd9655),
+                  ),
+                ),
+              ),
             if (sync.retryAt?.isAfter(DateTime.now()) == true)
               Padding(
                 padding: const EdgeInsets.only(top: 8),

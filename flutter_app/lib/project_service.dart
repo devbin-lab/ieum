@@ -249,6 +249,7 @@ class GitHubSession {
   static bool transient(Object error) =>
       error is GitHubFailure &&
       (error.status == 0 ||
+          error.status == 403 && error.retryAfter != null ||
           error.status == 408 ||
           error.status == 429 ||
           error.status >= 500);
@@ -619,10 +620,18 @@ class GitHubSession {
     final file = await readJson(config, '.ieum/project.json');
     if (file == null) throw const GitHubFailure('프로젝트를 찾지 못했습니다.');
     final current = ProjectManifest.fromJson(file['data']);
-    if (current.ownerId != user!.id ||
+    final actors = current.people.where((p) => p.id == user!.id);
+    final executor = actors.isEmpty ? null : actors.single;
+    final target = current.people.where((p) => p.id == member.id);
+    if (executor?.manages != true ||
         member.id == current.ownerId ||
+        executor!.role != 'owner' &&
+            (member.role == 'manager' ||
+                target.any((p) => p.role == 'manager')) ||
         !['manager', 'worker', 'viewer', 'disabled'].contains(member.role)) {
-      throw const GitHubFailure('역할 변경은 개설자만 할 수 있으며 개설자 역할은 변경할 수 없습니다.');
+      throw const GitHubFailure(
+        '참여자 관리는 개설자와 PD / PM에게 허용됩니다. 관리자 권한 변경은 개설자가 처리하세요.',
+      );
     }
     if (request != null) {
       if (request['projectId'] != current.id) {
@@ -647,6 +656,16 @@ class GitHubSession {
     )) {
       throw const GitHubFailure('승인된 참여자를 선택하세요.');
     }
+    if (['viewer', 'disabled'].contains(member.role) &&
+        target.any((p) => p.active && p.role != 'viewer')) {
+      final blockers = await GitHubPublisher(api)
+          .memberBlockers(config, current, member.id);
+      if (blockers.isNotEmpty) {
+        throw GitHubFailure(
+          '진행 중인 작업과 PR을 먼저 인수인계하세요: ${blockers.take(5).join(', ')}',
+        );
+      }
+    }
     final next = ProjectManifest.fromJson({
       ...current.json,
       'members': [
@@ -669,6 +688,47 @@ class GitHubSession {
         body: {'state': 'closed'},
       );
     }
+    return next;
+  }
+
+  Future<ProjectManifest> transferOwnership(
+    GitHubConfig config,
+    String targetId,
+  ) async {
+    if (user == null) throw const GitHubFailure('로그인이 필요합니다.');
+    final file = await readJson(config, '.ieum/project.json');
+    if (file == null) throw const GitHubFailure('프로젝트를 찾지 못했습니다.');
+    final current = ProjectManifest.fromJson(file['data']);
+    final target = current.people.where((p) => p.id == targetId);
+    if (current.ownerId != user!.id ||
+        targetId == current.ownerId ||
+        target.isEmpty ||
+        !target.single.active ||
+        target.single.role == 'viewer') {
+      throw const GitHubFailure('현재 개설자가 승인된 작업자 또는 관리자에게 소유권을 이전할 수 있습니다.');
+    }
+    final next = ProjectManifest.fromJson({
+      ...current.json,
+      'ownerId': targetId,
+      'members': [
+        for (final person in current.people)
+          {
+            ...person.json,
+            'role': person.id == targetId
+                ? 'owner'
+                : person.id == current.ownerId
+                ? 'manager'
+                : person.role,
+          },
+      ],
+    });
+    await writeJson(
+      config,
+      '.ieum/project.json',
+      next.json,
+      sha: file['sha'],
+      message: 'Transfer IEUM project ownership',
+    );
     return next;
   }
 

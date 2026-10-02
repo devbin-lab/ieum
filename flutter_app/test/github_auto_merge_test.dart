@@ -300,7 +300,8 @@ void main() {
     expect(api.prs, hasLength(2));
     expect(api.prs.every((p) => p['merged'] == true), isTrue);
     expect(store.baseline[value.id]!.description, '통합 중 추가한 내용');
-    expect(store.db.select('SELECT body FROM github_sent'), hasLength(2));
+    // Older acknowledged submissions are compacted after the later PR merges.
+    expect(store.db.select('SELECT body FROM github_sent'), hasLength(1));
     expect(sync.jobs.single['state'], 'merged');
   });
   test('worker handoff and reviewer completion integrate with their own identities', () async {

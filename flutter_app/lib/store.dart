@@ -39,6 +39,7 @@ class TaskStore extends ChangeNotifier {
       'github_queue',
       'github_sent',
       'conflict_backups',
+      'sync_recovery',
     ]) {
       db.execute(
         'CREATE TABLE IF NOT EXISTS $name(id TEXT PRIMARY KEY,body TEXT NOT NULL)',
@@ -141,7 +142,7 @@ class TaskStore extends ChangeNotifier {
   void updateProject(ProjectManifest value) {
     if (!isProject ||
         value.id != project!.id ||
-        value.ownerId != project!.ownerId) {
+        value.founderId != project!.founderId) {
       throw StateError('연결된 프로젝트 정보가 다릅니다.');
     }
     setMeta('project', jsonEncode(value.json));

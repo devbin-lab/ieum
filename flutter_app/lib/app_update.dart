@@ -71,9 +71,14 @@ abstract interface class UpdateSource {
 }
 
 class GitHubUpdateSource implements UpdateSource {
-  GitHubUpdateSource(this.repository, {this.credential});
+  GitHubUpdateSource(
+    this.repository, {
+    this.credential,
+    HttpClient Function()? createClient,
+  }) : _createClient = createClient ?? HttpClient.new;
   final String repository;
   final FutureOr<String> Function()? credential;
+  final HttpClient Function() _createClient;
   static bool trusted(Uri uri) =>
       uri.scheme == 'https' &&
       uri.userInfo.isEmpty &&
@@ -87,6 +92,7 @@ class GitHubUpdateSource implements UpdateSource {
     Uri uri,
     String accept,
   ) async {
+    var anonymous = false;
     for (var redirects = 0; redirects < 6; redirects++) {
       if (!trusted(uri)) throw const FormatException('허용되지 않은 업데이트 주소입니다.');
       final request = await client
@@ -95,16 +101,31 @@ class GitHubUpdateSource implements UpdateSource {
       request.followRedirects = false;
       request.headers.set('User-Agent', 'IEUM-Desktop-Updater');
       request.headers.set('Accept', accept);
+      var authenticated = false;
       if (uri.host == 'api.github.com') {
         request.headers.set('X-GitHub-Api-Version', '2022-11-28');
-        final token = await credential?.call() ?? '';
+        var token = '';
+        if (!anonymous) {
+          try {
+            token = await Future<String>.value(credential?.call() ?? '')
+                .timeout(const Duration(seconds: 10));
+          } catch (_) {
+            // Public releases remain available if project authentication fails.
+          }
+        }
         if (token.isNotEmpty) {
           request.headers.set('Authorization', 'Bearer $token');
+          authenticated = true;
         }
       }
       final response = await request.close().timeout(
         const Duration(seconds: 30),
       );
+      if (authenticated && [401, 403, 404].contains(response.statusCode)) {
+        await response.drain<void>().timeout(const Duration(seconds: 30));
+        anonymous = true;
+        continue;
+      }
       if ([301, 302, 303, 307, 308].contains(response.statusCode)) {
         final location = response.headers.value('location');
         await response.drain<void>().timeout(const Duration(seconds: 30));
@@ -122,7 +143,7 @@ class GitHubUpdateSource implements UpdateSource {
     if (!RegExp(r'^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$').hasMatch(repository)) {
       throw const FormatException('업데이트 저장소 설정이 올바르지 않습니다.');
     }
-    final client = HttpClient()
+    final client = _createClient()
       ..connectionTimeout = const Duration(seconds: 15);
     try {
       final response = await _get(
@@ -158,7 +179,7 @@ class GitHubUpdateSource implements UpdateSource {
     File target,
     void Function(int) progress,
   ) async {
-    final client = HttpClient()
+    final client = _createClient()
       ..connectionTimeout = const Duration(seconds: 15);
     IOSink? sink;
     try {

@@ -313,7 +313,7 @@ class _ProjectGateState extends State<ProjectGate> {
         try {
           final project = await session.loadProject(config);
           if (project.id != next.project!.id ||
-              project.ownerId != next.project!.ownerId) {
+              project.founderId != next.project!.founderId) {
             throw const GitHubFailure('이 DB와 연결된 프로젝트 저장소가 아닙니다.');
           }
           next.updateProject(project);

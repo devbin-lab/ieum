@@ -119,14 +119,21 @@ const roleLabels = {
 };
 
 class ProjectManifest {
-  final String id, name, ownerId;
+  final String id, name, ownerId, founderId;
   final List<Person> people;
-  const ProjectManifest(this.id, this.name, this.ownerId, this.people);
+  const ProjectManifest(
+    this.id,
+    this.name,
+    this.ownerId,
+    this.people, {
+    String? founderId,
+  }) : founderId = founderId ?? ownerId;
   Map<String, dynamic> get json => {
     'schemaVersion': 1,
     'projectId': id,
     'name': name,
     'ownerId': ownerId,
+    'founderId': founderId,
     'members': people.map((p) => p.json).toList(),
   };
   factory ProjectManifest.fromJson(Map<String, dynamic> raw) {
@@ -144,6 +151,8 @@ class ProjectManifest {
         .map((p) => Person.fromJson(Map<String, dynamic>.from(p)))
         .toList();
     if (people.map((p) => p.id).toSet().length != people.length ||
+        !RegExp(r'^gh-[0-9]+$')
+            .hasMatch('${raw['founderId'] ?? raw['ownerId']}') ||
         people.where((p) => p.role == 'owner').length != 1 ||
         !people.any((p) => p.id == raw['ownerId'] && p.role == 'owner')) {
       throw StateError('프로젝트 개설자와 참여자 정보를 확인하세요.');
@@ -153,6 +162,7 @@ class ProjectManifest {
       (raw['name'] as String).trim(),
       raw['ownerId'],
       List.unmodifiable(people),
+      founderId: raw['founderId'] ?? raw['ownerId'],
     );
   }
 }

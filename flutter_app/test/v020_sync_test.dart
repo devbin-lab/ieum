@@ -296,7 +296,7 @@ void main() {
         config,
         sync.jobs.single['prUrl'],
         projectId: store.project!.id,
-        ownerId: store.project!.ownerId,
+        founderId: store.project!.founderId,
       ),
       throwsA(isA<GitHubFailure>()),
     );
@@ -429,7 +429,7 @@ void main() {
           config,
           sync.jobs.single['prUrl'],
           projectId: store.project!.id,
-          ownerId: store.project!.ownerId,
+          founderId: store.project!.founderId,
         ),
         throwsA(isA<GitHubFailure>()),
       );
@@ -511,7 +511,7 @@ void main() {
         config,
         sync.jobs.single['prUrl'],
         projectId: store.project!.id,
-        ownerId: store.project!.ownerId,
+        founderId: store.project!.founderId,
       );
       final rejected = expectLater(inFlight, throwsA(isA<GitHubFailure>()));
       await api.integrationReady!.future;
