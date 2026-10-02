@@ -1,6 +1,8 @@
-# 이음 · Flutter 데스크톱 0.3.1
+# 이음 · Flutter 데스크톱 0.3.2
 
-GitHub와 개인 SQLite로 팀 작업을 공유하는 Windows 앱입니다. 개발 브랜치는 `codex/flutter-desktop`, 앱 버전은 `0.3.1`입니다. 이전 Electron 구현은 `codex/electron-prototype`에 보존합니다.
+GitHub와 개인 SQLite로 팀 작업을 공유하는 Windows 앱입니다. 개발 브랜치는 `codex/flutter-desktop`, 앱 버전은 `0.3.2`입니다. 이전 Electron 구현은 `codex/electron-prototype`에 보존합니다.
+
+0.3.2는 제목줄과 사이드바의 중복 로고·앱 이름, 본문 위의 중복 상단 바를 정리합니다. 프로젝트 선택과 알림함은 사이드바 맨 위, 계정은 맨 아래에 모았습니다. 일정·작업 카드, 목록·칸반과 검색·필터의 기존 UI는 유지합니다.
 
 0.3.1은 저장소 이름의 대소문자 차이로 PR 통합·참여 신청이 막히는 문제를 수정합니다. 기존 대기열도 처리하며 빈 저장소 초기화와 기본 브랜치 감지를 지원합니다. 같은 GitHub 계정의 사용자명 변경 뒤 미전송 작업, 기존 열린 PR과 가입 요청을 이어서 처리합니다. 계정 식별과 역할 검증은 숫자 GitHub ID를 기준으로 유지합니다.
 

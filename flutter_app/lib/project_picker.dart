@@ -101,52 +101,37 @@ class ProjectPicker extends StatelessWidget {
           child: const Text('프로젝트 참여하기'),
         ),
       ],
-      builder: (context, controller, child) => InkWell(
-        key: const Key('project-picker'),
-        borderRadius: BorderRadius.circular(10),
-        onTap: busy
-            ? null
-            : () => controller.isOpen ? controller.close() : controller.open(),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 11),
-          child: Row(
-            children: [
-              const Icon(
-                Icons.workspaces_outline,
-                size: 20,
-                color: Color(0xff7963d5),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      active?.name ?? '프로젝트',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w700,
-                      ),
+      builder: (context, controller, child) => Tooltip(
+        message: '${active?.name ?? '프로젝트 선택'} · ${projects.length}개 프로젝트',
+        child: InkWell(
+          key: const Key('project-picker'),
+          borderRadius: BorderRadius.circular(10),
+          onTap: busy
+              ? null
+              : () =>
+                    controller.isOpen ? controller.close() : controller.open(),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    busy ? '프로젝트 준비 중…' : active?.name ?? '프로젝트',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
                     ),
-                    const SizedBox(height: 3),
-                    Text(
-                      busy ? '프로젝트 준비 중…' : '${projects.length}개 프로젝트',
-                      style: const TextStyle(
-                        fontSize: 10,
-                        color: Color(0xff9990a5),
-                      ),
-                    ),
-                  ],
+                  ),
                 ),
-              ),
-              const Icon(
-                Icons.unfold_more_rounded,
-                size: 18,
-                color: Color(0xff9990a5),
-              ),
-            ],
+                const Icon(
+                  Icons.expand_more_rounded,
+                  size: 16,
+                  color: Color(0xff9990a5),
+                ),
+              ],
+            ),
           ),
         ),
       ),

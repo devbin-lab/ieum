@@ -34,15 +34,28 @@ void main() {
             (call) async => call.method == 'isMaximized' ? false : null,
           );
       if (Platform.environment['IEUM_CAPTURE_UI'] == '1') {
-        final font = FontLoader('Malgun Gothic')
+        for (final family in ['Malgun Gothic', 'Roboto']) {
+          final font = FontLoader(family)
+            ..addFont(
+              Future.value(
+                ByteData.sublistView(
+                  File('C:/Windows/Fonts/malgun.ttf').readAsBytesSync(),
+                ),
+              ),
+            );
+          await tester.runAsync(font.load);
+        }
+        final icons = FontLoader('MaterialIcons')
           ..addFont(
             Future.value(
               ByteData.sublistView(
-                File('C:/Windows/Fonts/malgun.ttf').readAsBytesSync(),
+                File(
+                  'build/windows/x64/runner/Release/data/flutter_assets/fonts/MaterialIcons-Regular.otf',
+                ).readAsBytesSync(),
               ),
             ),
           );
-        await tester.runAsync(font.load);
+        await tester.runAsync(icons.load);
       }
       final projects = [
         SavedProject(
@@ -60,14 +73,30 @@ void main() {
       ];
       var selected = '', created = false;
       final boundary = GlobalKey();
-      Widget app() => RepaintBoundary(
+      Future<void> capture(String name) async {
+        if (Platform.environment['IEUM_CAPTURE_UI'] != '1') return;
+        await tester.runAsync(() async {
+          final image =
+              await (boundary.currentContext!.findRenderObject()
+                      as RenderRepaintBoundary)
+                  .toImage();
+          final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
+          final file = File('../.local/qa/$name.png');
+          await file.parent.create(recursive: true);
+          await file.writeAsBytes(bytes!.buffer.asUint8List());
+          image.dispose();
+        });
+      }
+
+      Widget app({bool offline = true}) => RepaintBoundary(
         key: boundary,
         child: IeumApp(
           store: store,
           home: Workspace(
             store: store,
-            sessionNotice:
-                '오프라인 · 저장된 프로젝트를 열었습니다. 연결되면 계정을 다시 확인하고 변경을 전송합니다.',
+            sessionNotice: offline
+                ? '오프라인 · 저장된 프로젝트를 열었습니다. 연결되면 계정을 다시 확인하고 변경을 전송합니다.'
+                : null,
             projectSwitcher: ProjectPicker(
               projects: projects,
               activePath: 'a.sqlite',
@@ -80,6 +109,34 @@ void main() {
       );
       await tester.pumpWidget(app());
       await tester.pumpAndSettle();
+      expect(find.text('이음'), findsNothing);
+      expect(find.text('IEUM'), findsNothing);
+      expect(find.text('팀의 작업을 잇다'), findsNothing);
+      final picker = tester.getRect(find.byKey(const Key('project-picker')));
+      final bell = tester.getRect(
+        find.byKey(const Key('sidebar-notifications')),
+      );
+      final titlebar = tester.getRect(find.byKey(const Key('window-titlebar')));
+      expect(bell.left, greaterThanOrEqualTo(picker.right));
+      expect(bell.center.dy, closeTo(picker.center.dy, 1));
+      expect(picker.top - titlebar.bottom, lessThan(20));
+      expect(
+        tester.getRect(find.byKey(const Key('nav-0'))).top - picker.bottom,
+        lessThan(20),
+      );
+      await capture('sidebar-cleanup-offline-list');
+      if (Platform.environment['IEUM_CAPTURE_UI'] == '1') {
+        await tester.pumpWidget(app(offline: false));
+        await tester.pumpAndSettle();
+        await capture('sidebar-cleanup-list');
+        await tester.pumpWidget(app());
+        await tester.pumpAndSettle();
+      }
+      await tester.tap(find.byKey(const Key('sidebar-notifications')));
+      await tester.pumpAndSettle();
+      expect(find.text('알림 미리보기'), findsOneWidget);
+      await tester.tap(find.text('닫기'));
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('view-kanban')));
       await tester.pumpAndSettle();
       await tester.pumpWidget(const SizedBox());
@@ -87,23 +144,12 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('card-IE-101')), findsOneWidget);
       expect(tester.takeException(), isNull);
+      await capture('sidebar-cleanup-kanban');
       await tester.tap(find.byKey(const Key('project-picker')));
       await tester.pumpAndSettle();
       expect(find.text('새 프로젝트 만들기'), findsOneWidget);
       expect(find.text('프로젝트 참여하기'), findsOneWidget);
-      if (Platform.environment['IEUM_CAPTURE_UI'] == '1') {
-        await tester.runAsync(() async {
-          final image =
-              await (boundary.currentContext!.findRenderObject()
-                      as RenderRepaintBoundary)
-                  .toImage();
-          final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
-          final file = File('../.local/qa/v020-workspace.png');
-          await file.parent.create(recursive: true);
-          await file.writeAsBytes(bytes!.buffer.asUint8List());
-          image.dispose();
-        });
-      }
+      await capture('sidebar-cleanup-project-menu');
       await tester.tap(find.byKey(const ValueKey('project-option-b.sqlite')));
       await tester.pumpAndSettle();
       expect(selected, 'b');

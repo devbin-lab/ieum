@@ -65,56 +65,20 @@ class _IeumTitleBarState extends State<IeumTitleBar> with WindowListener {
 
   @override
   Widget build(BuildContext context) => Material(
-    color: const Color(0xfff4f1fa),
+    color: const Color(0xfff1f3f2),
     child: Container(
       key: const Key('window-titlebar'),
-      height: 44,
+      height: 36,
       decoration: const BoxDecoration(
-        border: Border(bottom: BorderSide(color: Color(0xffe9e5ef))),
+        border: Border(bottom: BorderSide(color: Color(0xffe1e4e3))),
       ),
       child: Row(
         children: [
           Expanded(
             child: DragToMoveArea(
               key: const Key('window-drag-area'),
-              child: SizedBox.expand(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 18),
-                  child: Row(
-                    children: [
-                      Container(
-                        width: 24,
-                        height: 24,
-                        decoration: BoxDecoration(
-                          color: const Color(0xff7963d5),
-                          borderRadius: BorderRadius.circular(7),
-                        ),
-                        child: const Icon(
-                          Icons.link_rounded,
-                          size: 17,
-                          color: Colors.white,
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      const Text(
-                        '이음',
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w700,
-                          color: Color(0xff302b3c),
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      const Text(
-                        '팀의 작업을 잇다',
-                        style: TextStyle(
-                          fontSize: 10,
-                          color: Color(0xff9990a5),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
+              child: const SizedBox.expand(
+                child: ColoredBox(color: Colors.transparent),
               ),
             ),
           ),
@@ -177,7 +141,7 @@ class _WindowButtonState extends State<_WindowButton> {
         button: true,
         child: SizedBox(
           width: 48,
-          height: 44,
+          height: 36,
           child: InkWell(
             onTap: widget.onPressed,
             hoverColor: widget.close

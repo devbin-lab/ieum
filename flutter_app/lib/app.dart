@@ -525,7 +525,6 @@ class _WorkspaceState extends State<Workspace> {
             Expanded(
               child: Column(
                 children: [
-                  topbar(),
                   if (widget.sessionNotice?.isNotEmpty == true)
                     Container(
                       width: double.infinity,
@@ -665,7 +664,7 @@ class _WorkspaceState extends State<Workspace> {
                         ),
                         Spacer(),
                         Text(
-                          '이음 $appVersion',
+                          'v$appVersion',
                           style: TextStyle(fontSize: 9, color: muted),
                         ),
                       ],
@@ -680,113 +679,65 @@ class _WorkspaceState extends State<Workspace> {
     },
   );
   Widget sidebar() => Container(
-    width: 228,
+    key: const Key('workspace-sidebar'),
+    width: 244,
     decoration: const BoxDecoration(
-      color: Colors.white,
-      border: Border(right: BorderSide(color: border)),
+      color: Color(0xfff1f3f2),
+      border: Border(right: BorderSide(color: Color(0xffe1e4e3))),
     ),
-    padding: const EdgeInsets.fromLTRB(18, 20, 18, 20),
+    padding: const EdgeInsets.fromLTRB(12, 12, 12, 16),
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          child: Row(
-            children: [
-              Container(
-                width: 39,
-                height: 39,
-                decoration: BoxDecoration(
-                  color: purple,
-                  borderRadius: BorderRadius.circular(12),
+        Row(
+          key: const Key('sidebar-project-row'),
+          children: [
+            Expanded(
+              child:
+                  widget.projectSwitcher ??
+                  Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 12,
+                    ),
+                    child: Text(
+                      s.project?.name ?? '졸업작품 팀',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+            ),
+            const SizedBox(width: 4),
+            IconButton(
+              key: const Key('sidebar-notifications'),
+              tooltip: s.isProject ? '내 알림' : '알림 미리보기',
+              onPressed: notifications,
+              constraints: const BoxConstraints.tightFor(width: 36, height: 36),
+              padding: EdgeInsets.zero,
+              icon: Badge(
+                isLabelVisible: s.unreadNotificationCount > 0,
+                smallSize: 5,
+                backgroundColor: purple,
+                child: const Icon(
+                  Icons.notifications_none_outlined,
+                  size: 18,
+                  color: muted,
                 ),
-                child: const Center(
-                  child: Icon(
-                    Icons.all_inclusive,
-                    color: Colors.white,
-                    size: 30,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 11),
-              const Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    '이음',
-                    style: TextStyle(fontSize: 23, fontWeight: FontWeight.w700),
-                  ),
-                  Text(
-                    'IEUM',
-                    style: TextStyle(
-                      fontSize: 9,
-                      letterSpacing: 3,
-                      color: muted,
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 25),
-        widget.projectSwitcher ??
-            Container(
-              padding: const EdgeInsets.all(13),
-              decoration: BoxDecoration(
-                border: Border.all(color: border),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Row(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: const Color(0xfff0edf9),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: const Icon(
-                      Icons.folder_copy_outlined,
-                      size: 19,
-                      color: purple,
-                    ),
-                  ),
-                  const SizedBox(width: 9),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          s.project?.name ?? '졸업작품 팀',
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          s.isProject ? 'GitHub 연결 프로젝트' : '예시 프로젝트',
-                          style: const TextStyle(fontSize: 10, color: muted),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
               ),
             ),
-        const SizedBox(height: 28),
-        const Padding(
-          padding: EdgeInsets.only(left: 13),
-          child: Text('작업 공간', style: TextStyle(fontSize: 10, color: muted)),
+          ],
         ),
-        const SizedBox(height: 10),
+        const SizedBox(height: 12),
         ...List.generate(
           titles.length,
           (i) => Padding(
             padding: const EdgeInsets.only(bottom: 5),
             child: Material(
-              color: page == i ? const Color(0xffefebfc) : Colors.transparent,
+              color: page == i ? const Color(0xffe6eae8) : Colors.transparent,
               borderRadius: BorderRadius.circular(8),
               child: InkWell(
                 key: Key('nav-$i'),
@@ -794,8 +745,8 @@ class _WorkspaceState extends State<Workspace> {
                 onTap: () => rememberView(() => page = i),
                 child: Padding(
                   padding: const EdgeInsets.symmetric(
-                    horizontal: 14,
-                    vertical: 14,
+                    horizontal: 12,
+                    vertical: 12,
                   ),
                   child: Row(
                     children: [
@@ -806,14 +757,14 @@ class _WorkspaceState extends State<Workspace> {
                           Icons.link,
                         ][i],
                         size: 19,
-                        color: page == i ? purple : muted,
+                        color: page == i ? ink : muted,
                       ),
                       const SizedBox(width: 12),
                       Text(
                         titles[i],
                         style: TextStyle(
                           fontSize: 12,
-                          color: page == i ? purple : muted,
+                          color: page == i ? ink : muted,
                           fontWeight: page == i
                               ? FontWeight.w600
                               : FontWeight.normal,
@@ -831,153 +782,52 @@ class _WorkspaceState extends State<Workspace> {
           ),
         ),
         const Spacer(),
-        const Padding(
-          padding: EdgeInsets.all(12),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Icon(Icons.circle, size: 6, color: Color(0xff68aa8d)),
-                  SizedBox(width: 7),
-                  Text(
-                    '개인 작업 공간',
-                    style: TextStyle(fontSize: 10, color: muted),
-                  ),
-                ],
-              ),
-              SizedBox(height: 10),
-              Text(
-                '저장한 작업은 자동으로 전송돼요.\n통합된 변경을 팀원과 공유합니다.',
-                style: TextStyle(fontSize: 10, color: muted, height: 1.8),
-              ),
-            ],
-          ),
-        ),
-        const Divider(color: border, height: 35),
+        const Divider(color: Color(0xffe1e4e3), height: 25),
         Row(
+          key: const Key('sidebar-account'),
           children: [
-            Text(
-              s.isProject ? '로그인한 사용자' : '테스트 사용자',
-              style: const TextStyle(fontSize: 10, color: muted),
+            Tooltip(
+              message: s.isProject ? '@${s.actor.login}' : '테스트 사용자',
+              child: avatar(s.actor),
             ),
-            const Spacer(),
-            Text(
-              s.isProject ? roleLabels[s.actor.role]! : 'DEMO',
-              style: const TextStyle(
-                fontSize: 9,
-                color: muted,
-                letterSpacing: 1,
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 8),
-        Row(
-          children: [
-            avatar(s.actor),
             const SizedBox(width: 9),
             Expanded(
-              child: s.isProject
-                  ? Text(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (s.isProject)
+                    Text(
                       s.actor.name,
+                      maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontSize: 12),
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
                     )
-                  : IeumSelect(
+                  else
+                    IeumSelect(
                       key: const Key('profile'),
                       value: s.profileId,
                       values: {for (final m in s.people) m.id: m.name},
                       colors: {for (final m in s.people) m.id: Color(m.color)},
                       onChanged: s.setProfile,
                     ),
+                  const SizedBox(height: 3),
+                  Text(
+                    s.isProject ? roleLabels[s.actor.role]! : '테스트 사용자',
+                    style: const TextStyle(fontSize: 10, color: muted),
+                  ),
+                ],
+              ),
             ),
+            if (widget.onSignOut != null)
+              TextButton(
+                onPressed: widget.onSignOut,
+                child: const Text('로그아웃', style: TextStyle(fontSize: 10)),
+              ),
           ],
         ),
-        Text(
-          s.isProject ? '@${s.actor.login}' : '역할을 바꿔 검토 과정을 테스트하세요.',
-          style: const TextStyle(fontSize: 9, color: muted),
-        ),
-        if (widget.onSignOut != null)
-          TextButton(onPressed: widget.onSignOut, child: const Text('로그아웃')),
-      ],
-    ),
-  );
-  Widget syncIndicator() {
-    final sync = widget.sync;
-    if (sync == null) return badge('이 컴퓨터에 저장', color: purple);
-    return AnimatedBuilder(
-      animation: sync,
-      builder: (_, _) {
-        final waiting = sync.retryAt?.isAfter(DateTime.now()) == true;
-        final failed = sync.jobs.where((j) => j['state'] == 'failed').length;
-        final pending = sync.jobs
-            .where((j) => ['pending', 'sending', 'sent'].contains(j['state']))
-            .length;
-        final label = !sync.config.enabled
-            ? '동기화 일시 중지'
-            : waiting
-            ? '연결 재시도 대기'
-            : failed > 0
-            ? '전송 재시도 $failed건'
-            : pending > 0
-            ? '공유 중 $pending건'
-            : '자동 동기화';
-        return Tooltip(
-          message: '저장 직후 전송 · 변경 확인 약 5초\n누르면 연결 상태를 확인합니다.',
-          child: InkWell(
-            borderRadius: BorderRadius.circular(6),
-            onTap: () => rememberView(() => page = 2),
-            child: badge(
-              label,
-              color: waiting || failed > 0 ? const Color(0xffbd9655) : purple,
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  Widget topbar() => Container(
-    height: 76,
-    padding: const EdgeInsets.symmetric(horizontal: 34),
-    decoration: const BoxDecoration(
-      color: Colors.white,
-      border: Border(bottom: BorderSide(color: border)),
-    ),
-    child: Row(
-      children: [
-        Flexible(
-          child: Text(
-            s.project?.name ?? '졸업작품 팀',
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(fontSize: 11, color: muted),
-          ),
-        ),
-        const Padding(
-          padding: EdgeInsets.symmetric(horizontal: 13),
-          child: Text('/', style: TextStyle(color: border)),
-        ),
-        Text(titles[page], style: const TextStyle(fontSize: 11, color: muted)),
-        const Spacer(),
-        syncIndicator(),
-        const SizedBox(width: 13),
-        IconButton(
-          tooltip: s.isProject ? '내 알림' : '알림 미리보기',
-          onPressed: notifications,
-          icon: Badge(
-            isLabelVisible: s.unreadNotificationCount > 0,
-            smallSize: 5,
-            backgroundColor: purple,
-            child: const Icon(
-              Icons.notifications_none_outlined,
-              size: 20,
-              color: muted,
-            ),
-          ),
-        ),
-        const SizedBox(width: 10),
-        avatar(s.actor),
       ],
     ),
   );
