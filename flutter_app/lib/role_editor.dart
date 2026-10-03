@@ -3,6 +3,7 @@ import 'package:uuid/uuid.dart';
 
 import 'models.dart';
 import 'popup_ui.dart';
+import 'permission_ui.dart';
 
 Future<ProjectRole?> showProjectRoleDialog(
   BuildContext context,
@@ -35,26 +36,18 @@ Future<ProjectRole?> showProjectRoleDialog(
                 '보유한 권한 안에서 부여할 수 있습니다. 역할 관리 권한을 부여하면 다른 역할도 만들 수 있습니다.',
                 style: TextStyle(fontSize: 12),
               ),
-              for (final entry in permissionLabels.entries)
-                CheckboxListTile(
-                  dense: true,
-                  contentPadding: EdgeInsets.zero,
-                  key: Key('permission-${entry.key}'),
-                  title: Text(
-                    entry.value,
-                    style: const TextStyle(fontSize: 12),
-                  ),
-                  value: permissions.contains(entry.key),
-                  onChanged: actor.has(entry.key)
-                      ? (value) => update(() {
-                          if (value == true) {
-                            permissions.add(entry.key);
-                          } else {
-                            permissions.remove(entry.key);
-                          }
-                        })
-                      : null,
-                ),
+              const SizedBox(height: 18),
+              RolePermissionGroups(
+                permissions: permissions,
+                actor: actor,
+                onChanged: (id, value) => update(() {
+                  if (value) {
+                    permissions.add(id);
+                  } else {
+                    permissions.remove(id);
+                  }
+                }),
+              ),
             ],
           ),
         ),

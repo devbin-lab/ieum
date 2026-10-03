@@ -207,7 +207,7 @@ bool canManageMemberStatus(Person actor, Person target, String ownerId) =>
 
 const roleLabels = {
   'owner': '개설자',
-  'manager': 'PD / PM',
+  'manager': '관리자',
   'worker': '작업자',
   'viewer': '열람자',
   'pending': '가입 승인 대기',
@@ -255,8 +255,7 @@ class ProjectManifest {
         .map((r) => ProjectRole.fromJson(Map<String, dynamic>.from(r)))
         .toList();
     if (roles.map((r) => r.id).toSet().length != roles.length ||
-        roles.map((r) => r.name.toLowerCase()).toSet().length != roles.length ||
-        roles.any((r) => roleLabels.values.contains(r.name))) {
+        roles.map((r) => r.name.toLowerCase()).toSet().length != roles.length) {
       throw StateError('역할 이름과 ID는 중복될 수 없습니다.');
     }
     final people = (raw['members'] as List)
@@ -291,7 +290,7 @@ const members = [
   Person('planner', '기획 담당자', '기', 'worker', 0xff8263eb),
   Person('dev', '개발 담당자', '개', 'worker', 0xff4486c6),
   Person('artist', '아트 담당자', '아', 'worker', 0xffc56b86),
-  Person('pm', 'PD / PM', 'P', 'manager', 0xff557d6d),
+  Person('pm', '관리자', 'P', 'manager', 0xff557d6d),
 ];
 Person person(String id) => members.firstWhere(
   (p) => p.id == id,

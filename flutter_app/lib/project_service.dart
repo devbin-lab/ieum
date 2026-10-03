@@ -497,6 +497,10 @@ class GitHubSession {
       throw const GitHubFailure('역할 관리 권한이 필요하며 본인 권한을 초과해 부여할 수 없습니다.');
     }
     final previous = current.roles.where((r) => r.id == role.id).firstOrNull;
+    if (roleLabels.values.contains(validated.name) &&
+        previous?.name != validated.name) {
+      throw const GitHubFailure('시스템 권한과 구분되는 역할 이름을 입력하세요.');
+    }
     if (previous != null &&
         !actor.permissions.containsAll(previous.permissions)) {
       throw const GitHubFailure('본인보다 권한이 높은 역할은 변경할 수 없습니다.');
@@ -522,27 +526,73 @@ class GitHubSession {
     });
   });
 
-  Future<ProjectManifest> deleteRole(GitHubConfig config, String roleId) =>
-      changeManifest(config, 'Delete IEUM project role', (
-        current,
-        actor,
-      ) async {
-        final role = current.roles.where((r) => r.id == roleId).firstOrNull;
-        if (!actor.has('role.manage') ||
-            role == null ||
-            !actor.permissions.containsAll(role.permissions)) {
-          throw const GitHubFailure('삭제할 역할과 역할 관리 권한을 확인하세요.');
+  Future<ProjectManifest> deleteRole(
+    GitHubConfig config,
+    String roleId, {
+    String? replacementRoleId,
+  }) => changeManifest(config, 'Delete IEUM project role', (
+    current,
+    actor,
+  ) async {
+    final role = current.roles.where((r) => r.id == roleId).firstOrNull;
+    if (!actor.has('role.manage') ||
+        role == null ||
+        !actor.permissions.containsAll(role.permissions)) {
+      throw const GitHubFailure('삭제할 역할과 역할 관리 권한을 확인하세요.');
+    }
+    final members = current.people.where((p) => p.role == roleId).toList();
+    if (members.isNotEmpty) {
+      final replacement = Person(
+        '',
+        '',
+        '',
+        replacementRoleId ?? '',
+        0,
+      ).resolved(current.roles);
+      if (replacementRoleId == roleId ||
+          !replacement.active ||
+          replacement.role == 'owner' ||
+          !actor.has('member.manage') ||
+          !actor.permissions.containsAll(replacement.permissions) ||
+          (replacement.role == 'manager' && actor.role != 'owner')) {
+        throw const GitHubFailure('사용 중인 역할입니다. 참여자 관리 권한과 이동할 다른 역할을 확인하세요.');
+      }
+      if (!replacement.permissions.containsAll(role.permissions)) {
+        for (final member in members.where((p) => p.active)) {
+          final blockers = await GitHubPublisher(api)
+              .memberBlockers(config, current, member.id);
+          if (blockers.isNotEmpty) {
+            throw GitHubFailure(
+              '${member.name}의 작업과 PR을 먼저 인수인계하세요: ${blockers.take(5).join(', ')}',
+            );
+          }
         }
-        if (current.people.any((p) => p.role == roleId)) {
-          throw const GitHubFailure('사용 중인 역할입니다. 참여자에게 다른 역할을 먼저 지정하세요.');
-        }
-        return ProjectManifest.fromJson({
-          ...current.json,
-          'roles': [
-            for (final r in current.roles.where((r) => r.id != roleId)) r.json,
-          ],
-        });
-      });
+      }
+    }
+    // Role reassignment and deletion share one revision: no dangling member roles.
+    return ProjectManifest.fromJson({
+      ...current.json,
+      'roles': [
+        for (final r in current.roles.where((r) => r.id != roleId)) r.json,
+      ],
+      'members': [
+        for (final person in current.people)
+          if (person.role == roleId)
+            Person(
+              person.id,
+              person.name,
+              person.initials,
+              replacementRoleId!,
+              person.color,
+              login: person.login,
+              parts: person.parts,
+              enabled: person.enabled,
+            ).json
+          else
+            person.json,
+      ],
+    });
+  });
 
   Future<ProjectManifest> createProject(
     GitHubConfig config,

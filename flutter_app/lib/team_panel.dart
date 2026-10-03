@@ -131,7 +131,7 @@ class _TeamPanelState extends State<TeamPanel> {
               ),
               const SizedBox(height: 16),
               const Text(
-                '선택한 참여자가 이음 프로젝트의 개설자가 됩니다. 내 역할은 PD / PM으로 변경됩니다. GitHub 저장소의 소유자와 초대 권한은 별도로 관리됩니다.',
+                '선택한 참여자가 이음 프로젝트의 개설자가 됩니다. 내 역할은 관리자으로 변경됩니다. GitHub 저장소의 소유자와 초대 권한은 별도로 관리됩니다.',
                 style: TextStyle(fontSize: 12, height: 1.6),
               ),
             ],
@@ -451,9 +451,9 @@ class _TeamPanelState extends State<TeamPanel> {
       children: [
         Row(
           children: [
-            const Expanded(
+            Expanded(
               child: Text(
-                '참여자 · 역할과 권한',
+                '참여자 ${widget.store.people.length}명',
                 style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
               ),
             ),
@@ -493,7 +493,7 @@ class _TeamPanelState extends State<TeamPanel> {
             ),
           ),
         Text(
-          '내 역할: ${widget.store.actor.roleLabel} · ${widget.store.people.length}명 참여',
+          '내 역할: ${widget.store.actor.roleLabel}',
           style: const TextStyle(fontSize: 11),
         ),
         const SizedBox(height: 12),

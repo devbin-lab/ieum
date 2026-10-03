@@ -330,7 +330,7 @@ class TaskStore extends ChangeNotifier {
     final old = input['id'] == null ? null : find(input['id']);
     final actor = member(profileId);
     if (isProject && !actor.active || old == null && !canCreate) {
-      throw StateError('작업 등록은 개설자 또는 PD / PM에게 허용됩니다.');
+      throw StateError('작업 등록 권한이 필요합니다.');
     }
     if (old != null && old.version != expectedVersion) {
       throw StateError('작업이 변경되었습니다. 다시 열어 확인하세요.');

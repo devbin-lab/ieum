@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 enum SettingsSection {
   general('일반', '개인', Icons.tune_rounded, '프로젝트 설정 저장 폴더 버전 계정'),
   notifications('알림', '개인', Icons.notifications_none_rounded, 'Discord 디스코드'),
-  team('참여자 · 권한', '프로젝트', Icons.people_outline_rounded, '팀원 역할 가입 승인'),
+  team('참여자 관리', '프로젝트', Icons.people_outline_rounded, '팀원 역할 가입 승인'),
   roles('역할 · 권한', '프로젝트', Icons.admin_panel_settings_outlined, '역할 추가 생성 권한'),
   assignments('파트별 배정', '프로젝트', Icons.account_tree_outlined, '담당자 검토자 작업'),
   github('GitHub 동기화', '통합', Icons.sync_rounded, '저장소 브랜치 PR 전송'),
