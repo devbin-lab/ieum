@@ -1,6 +1,7 @@
 name: Linux release build
 on:
   push:
+    branches: [main, codex/flutter-desktop]
     tags: ['v*']
   workflow_dispatch:
 permissions:

@@ -39,7 +39,7 @@ void request_free(Request* request) {
 void vault_failure(FlMethodCall* call) {
   // A service error can include sensitive details; return a fixed message.
   fl_method_call_respond_error(call, "vault_unavailable",
-      "Linux 키링에 접근할 수 없습니다. 키링을 잠금 해제하거나 로그인 유지를 꺼주세요.",
+      "Linux 키링에 접근할 수 없습니다. Secret Service 키링을 준비하고 잠금 해제해주세요.",
       nullptr, nullptr);
 }
 void read_finished(GObject*, GAsyncResult* result, gpointer data) {

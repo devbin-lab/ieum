@@ -26,7 +26,7 @@ class _DraftGuardState extends State<DraftGuard> with WindowListener {
   @override
   void initState() {
     super.initState();
-    if (Platform.isWindows) {
+    if (Platform.isWindows || Platform.isLinux) {
       open.add(this);
       windowManager.addListener(this);
       unawaited(windowManager.setPreventClose(true).catchError((_) {}));
@@ -35,7 +35,7 @@ class _DraftGuardState extends State<DraftGuard> with WindowListener {
 
   @override
   void dispose() {
-    if (Platform.isWindows) {
+    if (Platform.isWindows || Platform.isLinux) {
       open.remove(this);
       windowManager.removeListener(this);
       unawaited(

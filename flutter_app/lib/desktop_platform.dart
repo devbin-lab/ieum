@@ -21,5 +21,5 @@ Future<void> openDesktopUrl(String url) async {
 
 String credentialStorageDescription({String? operatingSystem}) =>
     (operatingSystem ?? Platform.operatingSystem) == 'linux'
-    ? 'Linux 키링에 안전하게 보관합니다. 키링이 없으면 로그인 유지를 꺼주세요.'
+    ? 'Linux 키링에 안전하게 보관합니다. 키링을 준비하고 잠금 해제해주세요.'
     : 'Windows 자격 증명 관리자에 안전하게 보관합니다.';
