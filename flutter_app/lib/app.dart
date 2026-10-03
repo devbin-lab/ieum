@@ -629,7 +629,7 @@ class _WorkspaceState extends State<Workspace> {
                                     if (s.isProject &&
                                         s.actor.role == 'pending')
                                       info(
-                                        '가입 승인 대기 중입니다. 개설자가 역할을 부여하면 자동 동기화 후 작업을 진행할 수 있습니다.',
+                                        '가입 승인 대기 중입니다. 관리자가 역할을 부여하면 자동 동기화 후 작업을 진행할 수 있습니다.',
                                       ),
                                     if (s.isProject &&
                                         s.actor.role != 'pending' &&

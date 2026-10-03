@@ -718,7 +718,7 @@ class _ProjectGateState extends State<ProjectGate> {
                     ),
                     const SizedBox(height: 16),
                     Text(
-                      creating ? '새 프로젝트와 빈 DB를 만듭니다. 개설자는 관리자 권한을 갖습니다.' : '닉네임과 GitHub 계정 ID로 개인 브랜치를 만듭니다. 가입 요청 후 개설자가 역할을 부여하면 작업할 수 있습니다.',
+                      creating ? '새 프로젝트와 빈 DB를 만들고 관리자 권한을 받습니다.' : '닉네임과 GitHub 계정 ID로 개인 브랜치를 만듭니다. 가입 요청 후 관리자가 역할을 부여하면 작업할 수 있습니다.',
                       style: const TextStyle(
                         fontSize: 11,
                         color: muted,

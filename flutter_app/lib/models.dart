@@ -206,8 +206,8 @@ bool canManageMemberStatus(Person actor, Person target, String ownerId) =>
     (!target.permissions.contains('role.manage') || actor.has('role.manage'));
 
 const roleLabels = {
-  'owner': '개설자',
-  'manager': '관리자',
+  'owner': '관리자',
+  'manager': '운영자',
   'worker': '작업자',
   'viewer': '열람자',
   'pending': '가입 승인 대기',
@@ -273,7 +273,7 @@ class ProjectManifest {
         !people.any(
           (p) => p.id == raw['ownerId'] && p.role == 'owner' && p.enabled,
         )) {
-      throw StateError('프로젝트 개설자와 참여자 정보를 확인하세요.');
+      throw StateError('프로젝트 관리자와 참여자 정보를 확인하세요.');
     }
     return ProjectManifest(
       raw['projectId'],
@@ -290,7 +290,7 @@ const members = [
   Person('planner', '기획 담당자', '기', 'worker', 0xff8263eb),
   Person('dev', '개발 담당자', '개', 'worker', 0xff4486c6),
   Person('artist', '아트 담당자', '아', 'worker', 0xffc56b86),
-  Person('pm', '관리자', 'P', 'manager', 0xff557d6d),
+  Person('pm', '운영자', 'P', 'manager', 0xff557d6d),
 ];
 Person person(String id) => members.firstWhere(
   (p) => p.id == id,

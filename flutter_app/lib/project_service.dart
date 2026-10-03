@@ -343,7 +343,7 @@ class GitHubSession {
     final repo = await api.call('GET', '/repos/${config.slug}');
     if (repo['permissions']?['push'] != true) {
       throw const GitHubFailure(
-        '저장소 초대와 쓰기 권한이 필요합니다. 개설자에게 GitHub 협업자 초대를 요청하세요.',
+        '저장소 초대와 쓰기 권한이 필요합니다. 관리자에게 GitHub 협업자 초대를 요청하세요.',
       );
     }
     return Map<String, dynamic>.from(repo);
@@ -418,7 +418,7 @@ class GitHubSession {
   Future<ProjectManifest> loadProject(GitHubConfig config) async {
     final file = await readJson(config, '.ieum/project.json');
     if (file == null) {
-      throw const GitHubFailure('이음 프로젝트가 없는 저장소입니다. 개설자가 먼저 프로젝트를 생성하세요.');
+      throw const GitHubFailure('이음 프로젝트가 없는 저장소입니다. 관리자가 먼저 프로젝트를 생성하세요.');
     }
     return ProjectManifest.fromJson(file['data']);
   }
@@ -926,7 +926,7 @@ class GitHubSession {
       if (target == null ||
           !canManageMemberStatus(actor, target, current.ownerId)) {
         throw const GitHubFailure(
-          '참여자 상태 관리 권한이 있는 관리자만 변경할 수 있습니다. 개설자의 상태는 변경할 수 없습니다.',
+          '참여자 상태 관리 권한이 있는 관리자만 변경할 수 있습니다. 관리자의 상태는 변경할 수 없습니다.',
         );
       }
       return ProjectManifest.fromJson({
@@ -962,7 +962,7 @@ class GitHubSession {
         target.isEmpty ||
         !target.single.active ||
         !target.single.canWork) {
-      throw const GitHubFailure('현재 개설자가 승인된 작업자 또는 관리자에게 소유권을 이전할 수 있습니다.');
+      throw const GitHubFailure('현재 관리자가 승인된 참여자에게 관리자 권한을 이전할 수 있습니다.');
     }
     final next = ProjectManifest.fromJson({
       ...current.json,
@@ -996,7 +996,7 @@ class GitHubSession {
     }
     final project = await loadProject(config);
     if (project.ownerId != user!.id) {
-      throw const GitHubFailure('저장소 초대는 프로젝트 개설자에게 허용됩니다.');
+      throw const GitHubFailure('저장소 초대는 프로젝트 관리자에게 허용됩니다.');
     }
     await api.call(
       'PUT',

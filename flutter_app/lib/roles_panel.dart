@@ -112,7 +112,7 @@ class _RolesPanelState extends State<RolesPanel> {
         [
               'worker',
               'viewer',
-              if (widget.store.owns) 'manager',
+              if (widget.store.owns && members('manager').isNotEmpty) 'manager',
               ...latest.roles.where((r) => r.id != role.id).map((r) => r.id),
             ]
             .where(
@@ -345,7 +345,12 @@ class _RolesPanelState extends State<RolesPanel> {
               style: TextStyle(fontSize: 10),
             ),
             children: [
-              for (final system in ['owner', 'manager', 'worker', 'viewer'])
+              for (final system in [
+                'owner',
+                if (members('manager').isNotEmpty) 'manager',
+                'worker',
+                'viewer',
+              ])
                 roleRow(system, id),
             ],
           ),

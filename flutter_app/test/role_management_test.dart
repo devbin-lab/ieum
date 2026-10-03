@@ -61,7 +61,9 @@ void main() {
 
   test('project starts without automatically created job roles; manual PD and PM differ', () async {
     expect(project.roles, isEmpty);
-    expect(roleLabels['manager'], '관리자');
+    expect(roleLabels['owner'], '관리자');
+    expect(roleLabels['manager'], '운영자');
+    expect(project.people.first.permissions, permissionLabels.keys.toSet());
     project = await session.saveRole(
       config,
       const ProjectRole('role-pd', 'PD', {'task.reviewAll'}),

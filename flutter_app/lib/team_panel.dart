@@ -109,7 +109,7 @@ class _TeamPanelState extends State<TeamPanel> {
         )
         .toList();
     if (candidates.isEmpty) {
-      setState(() => error = '소유권을 받을 작업자 또는 관리자를 먼저 승인하세요.');
+      setState(() => error = '관리자 권한을 받을 작업 가능한 참여자를 먼저 승인하세요.');
       return;
     }
     var target = candidates.first.id;
@@ -117,7 +117,7 @@ class _TeamPanelState extends State<TeamPanel> {
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, update) => IeumDialog(
-          title: const Text('프로젝트 소유권 이전'),
+          title: const Text('관리자 권한 이전'),
           icon: Icons.manage_accounts_outlined,
           content: Column(
             mainAxisSize: MainAxisSize.min,
@@ -131,7 +131,7 @@ class _TeamPanelState extends State<TeamPanel> {
               ),
               const SizedBox(height: 16),
               const Text(
-                '선택한 참여자가 이음 프로젝트의 개설자가 됩니다. 내 역할은 관리자으로 변경됩니다. GitHub 저장소의 소유자와 초대 권한은 별도로 관리됩니다.',
+                '선택한 참여자가 프로젝트의 관리자가 됩니다. 내 역할은 운영자로 변경됩니다. GitHub 저장소의 소유자와 초대 권한은 별도로 관리됩니다.',
                 style: TextStyle(fontSize: 12, height: 1.6),
               ),
             ],
@@ -143,7 +143,7 @@ class _TeamPanelState extends State<TeamPanel> {
             ),
             FilledButton(
               onPressed: () => Navigator.pop(ctx, target),
-              child: const Text('소유권 이전'),
+              child: const Text('관리자 권한 이전'),
             ),
           ],
         ),
@@ -188,7 +188,7 @@ class _TeamPanelState extends State<TeamPanel> {
 
   List<String> get assignableRoles =>
       [
-            'manager',
+            if (widget.store.people.any((p) => p.role == 'manager')) 'manager',
             'worker',
             'viewer',
             ...widget.store.project!.roles.map((r) => r.id),
@@ -487,7 +487,7 @@ class _TeamPanelState extends State<TeamPanel> {
                 ),
                 OutlinedButton(
                   onPressed: busy ? null : transfer,
-                  child: const Text('프로젝트 소유권 이전'),
+                  child: const Text('관리자 권한 이전'),
                 ),
               ],
             ),
