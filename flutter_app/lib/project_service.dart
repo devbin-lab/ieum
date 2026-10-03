@@ -6,6 +6,7 @@ import 'package:uuid/uuid.dart';
 
 import 'github_sync.dart';
 import 'models.dart';
+import 'member_policy.dart';
 import 'github_oauth.dart';
 
 /// Authentication belongs to GitHub. IEUM stores a nickname, never a password.
@@ -486,12 +487,25 @@ class GitHubSession {
 
   Future<ProjectManifest> saveRole(
     GitHubConfig config,
-    ProjectRole role,
-  ) => changeManifest(config, 'Update IEUM project role', (
+    ProjectRole role, {
+    String? expectedProjectId,
+    ProjectRole? expectedRole,
+  }) => changeManifest(config, 'Update IEUM project role', (
     current,
     actor,
   ) async {
     final validated = ProjectRole.fromJson(role.json);
+    if (expectedRole != null) {
+      final latest = current.roles
+          .where((r) => r.id == expectedRole.id)
+          .firstOrNull;
+      if (latest == null ||
+          latest.name != expectedRole.name ||
+          latest.permissions.length != expectedRole.permissions.length ||
+          !latest.permissions.containsAll(expectedRole.permissions)) {
+        throw const GitHubFailure('역할이 원격에서 변경되었습니다. 초안을 유지하고 최신 값을 다시 확인하세요.');
+      }
+    }
     if (!actor.has('role.manage') ||
         !actor.permissions.containsAll(validated.permissions)) {
       throw const GitHubFailure('역할 관리 권한이 필요하며 본인 권한을 초과해 부여할 수 없습니다.');
@@ -524,12 +538,15 @@ class GitHubSession {
         validated.json,
       ],
     });
-  });
+  }, expectedProjectId: expectedProjectId);
 
   Future<ProjectManifest> deleteRole(
     GitHubConfig config,
     String roleId, {
     String? replacementRoleId,
+    String? expectedProjectId,
+    ProjectRole? expectedRole,
+    List<Person>? expectedMembers,
   }) => changeManifest(config, 'Delete IEUM project role', (
     current,
     actor,
@@ -541,6 +558,22 @@ class GitHubSession {
       throw const GitHubFailure('삭제할 역할과 역할 관리 권한을 확인하세요.');
     }
     final members = current.people.where((p) => p.role == roleId).toList();
+    if (expectedRole != null &&
+        (role.name != expectedRole.name ||
+            role.permissions.length != expectedRole.permissions.length ||
+            !role.permissions.containsAll(expectedRole.permissions))) {
+      throw const GitHubFailure('역할이 변경되었습니다. 최신 값을 확인한 뒤 삭제하세요.');
+    }
+    if (expectedMembers != null &&
+        (members.length != expectedMembers.length ||
+            members.any(
+              (p) => !expectedMembers.any(
+                (before) => jsonEncode(before.json) == jsonEncode(p.json),
+              ),
+            ))) {
+      throw const GitHubFailure('역할에 배정된 참여자가 변경되었습니다. 최신 영향을 다시 확인하세요.');
+    }
+
     if (members.isNotEmpty) {
       final replacement = Person(
         '',
@@ -592,7 +625,7 @@ class GitHubSession {
             person.json,
       ],
     });
-  });
+  }, expectedProjectId: expectedProjectId);
 
   Future<ProjectManifest> createProject(
     GitHubConfig config,
@@ -827,89 +860,107 @@ class GitHubSession {
     GitHubConfig config,
     Person member, {
     Map<String, dynamic>? request,
+    String? expectedProjectId,
+    Person? expectedMember,
   }) async {
-    if (user == null) throw StateError('로그인이 필요합니다.');
-    final file = await readJson(config, '.ieum/project.json');
-    if (file == null) throw const GitHubFailure('프로젝트를 찾지 못했습니다.');
-    final current = ProjectManifest.fromJson(file['data']);
-    final actors = current.people.where((p) => p.id == user!.id);
-    final executor = actors.isEmpty ? null : actors.single;
-    final target = current.people.where((p) => p.id == member.id);
-    final resolved = member.resolved(current.roles);
-    if (executor == null ||
-        !executor.has('member.manage') ||
-        member.id == current.ownerId ||
-        (!roleLabels.containsKey(member.role) && resolved.customRole == null) ||
-        member.role == 'pending' ||
-        !executor.permissions.containsAll(resolved.permissions) ||
-        target.any((p) => !executor.permissions.containsAll(p.permissions)) ||
-        executor.role != 'owner' &&
-            (member.role == 'manager' ||
-                target.any((p) => p.role == 'manager'))) {
-      throw const GitHubFailure(
-        '참여자 관리 권한이 필요합니다. 본인보다 높은 권한을 부여하거나 변경할 수 없습니다.',
-      );
-    }
-    final wasEnabled = target.isEmpty ? true : target.single.enabled;
-    if ((member.enabled != wasEnabled || member.role == 'disabled') &&
-        !executor.has('member.status')) {
-      throw const GitHubFailure('활성화·비활성화는 참여자 상태 관리 권한이 있는 관리자만 변경할 수 있습니다.');
-    }
-    if (request != null) {
-      if (request['projectId'] != current.id) {
-        throw const GitHubFailure('다른 프로젝트의 가입 요청입니다.');
-      }
-      final latest = await requests(config);
-      if (!latest.any(
-        (r) =>
-            r['number'] == request['number'] &&
-            r['sha'] == request['sha'] &&
-            jsonEncode(r['member']) == jsonEncode(request['member']),
-      )) {
-        throw const GitHubFailure('가입 요청이 변경되었습니다. 목록을 새로고침하세요.');
-      }
-      if (request['member']['id'] != member.id ||
-          request['member']['name'] != member.name ||
-          request['member']['login'] != member.login) {
-        throw const GitHubFailure('가입 요청자 정보가 다릅니다.');
-      }
-    } else if (!current.people.any(
-      (p) => p.id == member.id && p.login == member.login,
-    )) {
-      throw const GitHubFailure('승인된 참여자를 선택하세요.');
-    }
-    if (target.any(
-      (p) => p.active && !resolved.permissions.containsAll(p.permissions),
-    )) {
-      final blockers = await GitHubPublisher(api)
-          .memberBlockers(config, current, member.id);
-      if (blockers.isNotEmpty) {
-        throw GitHubFailure(
-          '진행 중인 작업과 PR을 먼저 인수인계하세요: ${blockers.take(5).join(', ')}',
+    final next = await changeManifest(config, 'Update IEUM member role', (
+      current,
+      executor,
+    ) async {
+      final target = current.people.where((p) => p.id == member.id);
+      final resolved = member.resolved(current.roles);
+      if (expectedMember != null &&
+          (target.isEmpty ||
+              jsonEncode(target.single.json) !=
+                  jsonEncode(expectedMember.json))) {
+        throw const GitHubFailure(
+          '참여자 정보가 원격에서 변경되었습니다. 초안을 유지하고 최신 값을 다시 확인하세요.',
         );
       }
-    }
-    final next = ProjectManifest.fromJson({
-      ...current.json,
-      'members': [
-        ...current.people.where((p) => p.id != member.id).map((p) => p.json),
-        {...member.json, if (target.isNotEmpty) 'name': target.single.name},
-      ],
-    });
-    await writeJson(
-      config,
-      '.ieum/project.json',
-      next.json,
-      sha: file['sha'],
-      message: 'Update IEUM member role',
-    );
+      if (target.isNotEmpty &&
+          !canAssignMember(executor, target.single, current.ownerId)) {
+        throw const GitHubFailure('이 참여자의 역할을 변경할 권한이 없습니다.');
+      }
+      if (!executor.has('member.manage') ||
+          member.id == current.ownerId ||
+          (!roleLabels.containsKey(member.role) &&
+              resolved.customRole == null) ||
+          member.role == 'pending' ||
+          !executor.permissions.containsAll(resolved.permissions) ||
+          target.any((p) => !executor.permissions.containsAll(p.permissions)) ||
+          executor.role != 'owner' &&
+              (member.role == 'manager' ||
+                  target.any((p) => p.role == 'manager'))) {
+        throw const GitHubFailure(
+          '참여자 관리 권한이 필요합니다. 본인보다 높은 권한을 부여하거나 변경할 수 없습니다.',
+        );
+      }
+      final wasEnabled = target.isEmpty ? true : target.single.enabled;
+      if ((member.enabled != wasEnabled || member.role == 'disabled') &&
+          !executor.has('member.status')) {
+        throw const GitHubFailure(
+          '활성화·비활성화는 참여자 상태 관리 권한이 있는 관리자만 변경할 수 있습니다.',
+        );
+      }
+      if (request != null) {
+        if (request['projectId'] != current.id) {
+          throw const GitHubFailure('다른 프로젝트의 가입 요청입니다.');
+        }
+        final latest = await requests(config);
+        if (!latest.any(
+          (r) =>
+              r['number'] == request['number'] &&
+              r['sha'] == request['sha'] &&
+              jsonEncode(r['member']) == jsonEncode(request['member']),
+        )) {
+          throw const GitHubFailure('가입 요청이 변경되었습니다. 목록을 새로고침하세요.');
+        }
+        if (request['member']['id'] != member.id ||
+            request['member']['name'] != member.name ||
+            request['member']['login'] != member.login) {
+          throw const GitHubFailure('가입 요청자 정보가 다릅니다.');
+        }
+      } else if (!current.people.any(
+        (p) => p.id == member.id && p.login == member.login,
+      )) {
+        throw const GitHubFailure('승인된 참여자를 선택하세요.');
+      }
+      if (target.any(
+        (p) =>
+            p.active &&
+            (!member.enabled ||
+                !resolved.permissions.containsAll(p.permissions)),
+      )) {
+        final blockers = await GitHubPublisher(api)
+            .memberBlockers(config, current, member.id);
+        if (blockers.isNotEmpty) {
+          throw GitHubFailure(
+            '진행 중인 작업과 PR을 먼저 인수인계하세요: ${blockers.take(5).join(', ')}',
+          );
+        }
+      }
+      final next = ProjectManifest.fromJson({
+        ...current.json,
+        'members': [
+          ...current.people.where((p) => p.id != member.id).map((p) => p.json),
+          {...member.json, if (target.isNotEmpty) 'name': target.single.name},
+        ],
+      });
+      return next;
+    }, expectedProjectId: expectedProjectId);
     // The request PR is a registration envelope, not task data. Close it after approval.
     if (request != null) {
-      await api.call(
-        'PATCH',
-        '/repos/${config.slug}/pulls/${request['number']}',
-        body: {'state': 'closed'},
-      );
+      try {
+        await api.call(
+          'PATCH',
+          '/repos/${config.slug}/pulls/${request['number']}',
+          body: {'state': 'closed'},
+        );
+      } catch (e) {
+        requestWarnings.add(
+          '가입 승인은 저장됐지만 요청 PR #${request['number']} 닫기에 실패했습니다: $e',
+        );
+      }
     }
     return next;
   }
@@ -917,8 +968,10 @@ class GitHubSession {
   Future<ProjectManifest> setMemberEnabled(
     GitHubConfig config,
     String memberId,
-    bool enabled,
-  ) => changeManifest(
+    bool enabled, {
+    String? expectedProjectId,
+    Person? expectedMember,
+  }) => changeManifest(
     config,
     enabled ? 'Activate IEUM member' : 'Deactivate IEUM member',
     (current, actor) async {
@@ -929,42 +982,92 @@ class GitHubSession {
           '참여자 상태 관리 권한이 있는 관리자만 변경할 수 있습니다. 관리자의 상태는 변경할 수 없습니다.',
         );
       }
+      if (expectedMember != null &&
+          jsonEncode(target.json) != jsonEncode(expectedMember.json)) {
+        throw const GitHubFailure('참여자 상태가 원격에서 변경되었습니다. 최신 값을 다시 확인하세요.');
+      }
+      if (target.enabled == enabled) return current;
+      if (enabled && target.role == 'disabled') {
+        throw const GitHubFailure('이전 역할 정보가 없습니다. 역할 변경에서 활성 역할을 직접 선택하세요.');
+      }
+      if (!enabled) {
+        final blockers = await GitHubPublisher(api)
+            .memberBlockers(config, current, memberId);
+        if (blockers.isNotEmpty) {
+          throw GitHubFailure(
+            '남은 업무와 PR을 먼저 인수인계하세요: ${blockers.take(5).join(', ')}',
+          );
+        }
+      }
       return ProjectManifest.fromJson({
         ...current.json,
         'members': [
           for (final person in current.people)
             if (person.id == memberId)
-              {
-                ...person.json,
-                'role': person.role == 'disabled' ? 'worker' : person.role,
-                'enabled': enabled,
-                // Restore a legacy disabled member as a worker when enabling.
-                if (person.role == 'disabled') 'assignedRole': 'worker',
-              }
+              {...person.json, 'role': person.role, 'enabled': enabled}
             else
               person.json,
         ],
       });
     },
+    expectedProjectId: expectedProjectId,
   );
+
+  Future<void> rejectRequest(
+    GitHubConfig config,
+    Map<String, dynamic> request, {
+    required String expectedProjectId,
+  }) async {
+    final current = await loadProject(config);
+    final actor = current.people.where((p) => p.id == user?.id).firstOrNull;
+    if (current.id != expectedProjectId ||
+        request['projectId'] != current.id ||
+        actor?.has('member.manage') != true) {
+      throw const GitHubFailure('이 프로젝트의 참여 요청 관리 권한이 필요합니다.');
+    }
+    final latest = await requests(config);
+    if (!latest.any(
+      (r) =>
+          r['number'] == request['number'] &&
+          r['sha'] == request['sha'] &&
+          jsonEncode(r['member']) == jsonEncode(request['member']),
+    )) {
+      throw const GitHubFailure('요청이 변경되거나 이미 처리되었습니다. 새로고침하세요.');
+    }
+    if (current.people.any(
+      (p) => p.id == request['member']['id'] && p.role != 'pending',
+    )) {
+      throw const GitHubFailure('이미 승인된 참여자는 가입 요청을 거절할 수 없습니다.');
+    }
+    await api.call(
+      'PATCH',
+      '/repos/${config.slug}/pulls/${request['number']}',
+      body: {'state': 'closed'},
+    );
+  }
 
   Future<ProjectManifest> transferOwnership(
     GitHubConfig config,
-    String targetId,
+    String targetId, {
+    String? expectedProjectId,
+    Person? expectedTarget,
+  }) => changeManifest(config, 'Transfer IEUM project ownership', (
+    current,
+    actor,
   ) async {
-    if (user == null) throw const GitHubFailure('로그인이 필요합니다.');
-    final file = await readJson(config, '.ieum/project.json');
-    if (file == null) throw const GitHubFailure('프로젝트를 찾지 못했습니다.');
-    final current = ProjectManifest.fromJson(file['data']);
-    final target = current.people.where((p) => p.id == targetId);
-    if (current.ownerId != user!.id ||
+    final target = current.people.where((p) => p.id == targetId).firstOrNull;
+    if (actor.id != current.ownerId ||
         targetId == current.ownerId ||
-        target.isEmpty ||
-        !target.single.active ||
-        !target.single.canWork) {
-      throw const GitHubFailure('현재 관리자가 승인된 참여자에게 관리자 권한을 이전할 수 있습니다.');
+        target == null ||
+        !target.active ||
+        !target.canWork) {
+      throw const GitHubFailure('현재 관리자가 승인된 작업 가능 참여자에게 관리자 권한을 이전할 수 있습니다.');
     }
-    final next = ProjectManifest.fromJson({
+    if (expectedTarget != null &&
+        jsonEncode(target.json) != jsonEncode(expectedTarget.json)) {
+      throw const GitHubFailure('이전 대상이 원격에서 변경되었습니다. 최신 값을 다시 확인하세요.');
+    }
+    return ProjectManifest.fromJson({
       ...current.json,
       'ownerId': targetId,
       'members': [
@@ -979,22 +1082,21 @@ class GitHubSession {
           },
       ],
     });
-    await writeJson(
-      config,
-      '.ieum/project.json',
-      next.json,
-      sha: file['sha'],
-      message: 'Transfer IEUM project ownership',
-    );
-    return next;
-  }
+  }, expectedProjectId: expectedProjectId);
 
-  Future<void> invite(GitHubConfig config, String login) async {
+  Future<void> invite(
+    GitHubConfig config,
+    String login, {
+    String? expectedProjectId,
+  }) async {
     if (user == null ||
         !RegExp(r'^[A-Za-z0-9][A-Za-z0-9-]{0,38}$').hasMatch(login)) {
       throw StateError('초대할 GitHub 계정 이름을 입력하세요.');
     }
     final project = await loadProject(config);
+    if (expectedProjectId != null && project.id != expectedProjectId) {
+      throw const GitHubFailure('프로젝트가 변경되었습니다. 다시 연결하세요.');
+    }
     if (project.ownerId != user!.id) {
       throw const GitHubFailure('저장소 초대는 프로젝트 관리자에게 허용됩니다.');
     }

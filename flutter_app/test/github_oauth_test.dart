@@ -280,14 +280,14 @@ void main() {
     final calls = <MethodCall>[];
     final messenger =
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
-    messenger.setMockMethodCallHandler(WindowsOAuthVault.channel, (call) async {
+    messenger.setMockMethodCallHandler(DesktopOAuthVault.channel, (call) async {
       calls.add(call);
       return call.method == 'read' ? 'vault-only' : null;
     });
     addTearDown(
-      () => messenger.setMockMethodCallHandler(WindowsOAuthVault.channel, null),
+      () => messenger.setMockMethodCallHandler(DesktopOAuthVault.channel, null),
     );
-    final native = WindowsOAuthVault();
+    final native = DesktopOAuthVault();
     expect(await native.read(), 'vault-only');
     await native.write('credential');
     await native.delete();

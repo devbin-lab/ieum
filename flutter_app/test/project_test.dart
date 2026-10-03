@@ -436,6 +436,10 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('account-settings')));
       await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('sidebar-account')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('project-settings')));
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('settings-team')));
       await tester.pumpAndSettle();
       expect(find.text('참여자 관리'), findsWidgets);

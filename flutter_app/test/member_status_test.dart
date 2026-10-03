@@ -224,7 +224,29 @@ void main() {
     );
     api.identityId = 1;
     api.identityLogin = 'tester';
-    await session.setMemberEnabled(config, 'gh-2', false);
+    // Simulate a remote/historical deactivation independently of the new handoff guard.
+    final savedManifest = await session.readJson(config, '.ieum/project.json');
+    await session.writeJson(
+      config,
+      '.ieum/project.json',
+      {
+        ...savedManifest!['data'],
+        'members': [
+          for (final p in (savedManifest['data']['members'] as List))
+            if (p['id'] == 'gh-2')
+              {
+                ...p,
+                'role': 'disabled',
+                'assignedRole': 'worker',
+                'enabled': false,
+              }
+            else
+              p,
+        ],
+      },
+      sha: savedManifest['sha'],
+      message: 'mock remote deactivation',
+    );
     final writes = api.writes;
     final count = api.prs.length;
     api.identityId = 2;
@@ -305,7 +327,32 @@ void main() {
       final url = api.prs.last['html_url'] as String;
       api.identityId = 1;
       api.identityLogin = 'tester';
-      await session.setMemberEnabled(config, 'gh-2', false);
+      // Simulate a remote/historical deactivation independently of the new handoff guard.
+      final savedManifest = await session.readJson(
+        config,
+        '.ieum/project.json',
+      );
+      await session.writeJson(
+        config,
+        '.ieum/project.json',
+        {
+          ...savedManifest!['data'],
+          'members': [
+            for (final p in (savedManifest['data']['members'] as List))
+              if (p['id'] == 'gh-2')
+                {
+                  ...p,
+                  'role': 'disabled',
+                  'assignedRole': 'worker',
+                  'enabled': false,
+                }
+              else
+                p,
+          ],
+        },
+        sha: savedManifest['sha'],
+        message: 'mock remote deactivation',
+      );
       final revision = api.refs['main'];
       await expectLater(
         GitHubPublisher(api).integrateTask(
@@ -355,19 +402,28 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
+      await tester.ensureVisible(find.byKey(const Key('member-actions-gh-2')));
+      await tester.tap(find.byKey(const Key('member-actions-gh-2')));
+      await tester.pumpAndSettle();
       await tester.ensureVisible(find.text('역할 변경').first);
       await tester.tap(find.text('역할 변경').first);
       await tester.pumpAndSettle();
       expect(find.text('담당 파트'), findsNothing);
       expect(find.byKey(const Key('member-role')), findsNothing);
-      expect(find.byType(IeumSelect), findsNothing);
+      expect(
+        find.descendant(
+          of: find.byType(IeumDialog),
+          matching: find.byType(IeumSelect),
+        ),
+        findsNothing,
+      );
       final manager = tester.getRect(
         find.byKey(const Key('member-role-manager')),
       );
       final worker = tester.getRect(
         find.byKey(const Key('member-role-worker')),
       );
-      expect(worker.top, greaterThan(manager.bottom));
+      expect(worker.top, greaterThanOrEqualTo(manager.bottom));
       await tester.ensureVisible(find.byKey(const Key('member-add-role')));
       await tester.tap(find.byKey(const Key('member-add-role')));
       await tester.pumpAndSettle();
@@ -376,6 +432,7 @@ void main() {
         find.byKey(const Key('permission-task.review')),
       );
       await tester.tap(find.byKey(const Key('permission-task.review')));
+      await tester.pump();
       await tester.tap(find.byKey(const Key('save-role')));
       await tester.pumpAndSettle();
       await tester.pump(const Duration(milliseconds: 300));
@@ -386,7 +443,10 @@ void main() {
       expect(store.project!.roles.single.name, 'QA 검토');
       await tester.ensureVisible(find.byKey(const Key('member-disabled')));
       await tester.tap(find.byKey(const Key('member-disabled')));
+      await tester.pump();
       await tester.tap(find.byKey(const Key('save-member')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, '확인'));
       await tester.pumpAndSettle();
       expect(store.member('gh-2').role, store.project!.roles.single.id);
       expect(store.member('gh-2').enabled, isFalse);

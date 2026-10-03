@@ -573,6 +573,13 @@ class TaskStore extends ChangeNotifier {
     notifyListeners();
   }
 
+  bool get canImportManually => actor.canMutate;
+  MergeResult importManualSnapshot(dynamic source, {required bool trusted}) {
+    if (!canImportManually) throw StateError('읽기 전용 참여자는 통합본을 가져올 수 없습니다.');
+    if (!trusted) throw StateError('통합본 출처 확인이 필요합니다.');
+    return importSnapshot(source);
+  }
+
   MergeResult importSnapshot(
     dynamic snapshot, {
     Map<String, WorkTask>? acknowledgedBases,

@@ -11,12 +11,14 @@ class ProjectPicker extends StatelessWidget {
     required this.onCreate,
     required this.onJoin,
     this.busy = false,
+    this.onSettings,
   });
   final List<SavedProject> projects;
   final String activePath;
   final ValueChanged<SavedProject> onSelected;
   final VoidCallback onCreate, onJoin;
   final bool busy;
+  final VoidCallback? onSettings;
 
   @override
   Widget build(BuildContext context) {
@@ -88,6 +90,13 @@ class ProjectPicker extends StatelessWidget {
             ),
           ),
         const Divider(height: 12),
+        if (onSettings != null)
+          MenuItemButton(
+            key: const Key('project-settings'),
+            onPressed: busy ? null : onSettings,
+            leadingIcon: const Icon(Icons.tune_rounded, size: 18),
+            child: const Text('프로젝트 설정'),
+          ),
         MenuItemButton(
           key: const Key('project-create-menu'),
           onPressed: busy ? null : onCreate,
@@ -103,25 +112,40 @@ class ProjectPicker extends StatelessWidget {
       ],
       builder: (context, controller, child) => Tooltip(
         message: '${active?.name ?? '프로젝트 선택'} · ${projects.length}개 프로젝트',
-        child: IconButton(
+        child: TextButton(
           key: const Key('project-picker'),
           onPressed: busy
               ? null
               : () =>
                     controller.isOpen ? controller.close() : controller.open(),
-          constraints: const BoxConstraints.tightFor(width: 44, height: 44),
-          padding: EdgeInsets.zero,
-          icon: busy
-              ? const SizedBox(
+          style: TextButton.styleFrom(
+            foregroundColor: const Color(0xff302b3c),
+            minimumSize: const Size(0, 44),
+            padding: const EdgeInsets.symmetric(horizontal: 10),
+            backgroundColor: const Color(0xffecefee),
+          ),
+          child: Row(
+            children: [
+              if (busy)
+                const SizedBox(
                   width: 18,
                   height: 18,
                   child: CircularProgressIndicator(strokeWidth: 2),
                 )
-              : const Icon(
-                  Icons.folder_outlined,
-                  size: 21,
-                  color: Color(0xff505753),
+              else
+                const Icon(Icons.folder_outlined, size: 18),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  active?.name ?? '프로젝트 선택',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                 ),
+              ),
+              const SizedBox(width: 4),
+              const Icon(Icons.unfold_more_rounded, size: 18),
+            ],
+          ),
         ),
       ),
     );

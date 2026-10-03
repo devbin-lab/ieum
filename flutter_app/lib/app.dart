@@ -17,6 +17,7 @@ import 'team_panel.dart';
 import 'app_release.dart';
 import 'account_menu.dart';
 import 'settings_shell.dart';
+import 'draft_guard.dart';
 import 'horizontal_viewport.dart';
 import 'update_ui.dart';
 import 'roles_panel.dart';
@@ -183,6 +184,7 @@ class Workspace extends StatefulWidget {
   final VoidCallback? onSignOut;
   final GitHubSession? session;
   final Widget? projectSwitcher;
+  final Widget Function(VoidCallback)? projectSwitcherBuilder;
   final String? sessionNotice;
   final Future<String> Function(String)? onRename;
   const Workspace({
@@ -192,6 +194,7 @@ class Workspace extends StatefulWidget {
     this.onSignOut,
     this.session,
     this.projectSwitcher,
+    this.projectSwitcherBuilder,
     this.sessionNotice,
     this.onRename,
   });
@@ -205,7 +208,7 @@ class _WorkspaceState extends State<Workspace> {
   int page = 0;
   SettingsSection settingsSection = SettingsSection.general;
   TaskView taskView = TaskView.list;
-  String search = '', part = '', scope = 'all';
+  String search = '', part = '', scope = 'all', relatedMember = '';
   bool fileBusy = false;
   TaskStore get s => widget.store;
   @override
@@ -345,6 +348,10 @@ class _WorkspaceState extends State<Workspace> {
   }
 
   Future<void> import() async {
+    if (!s.canImportManually) {
+      message('읽기 전용 · 수동 가져오기 권한이 없습니다.');
+      return;
+    }
     setState(() => fileBusy = true);
     try {
       final file = await openFile(
@@ -356,7 +363,32 @@ class _WorkspaceState extends State<Workspace> {
       if (await File(file.path).length() > 10 * 1024 * 1024) {
         throw StateError('통합본은 10MB 이하만 지원합니다.');
       }
-      final result = s.importSnapshot(jsonDecode(await file.readAsString()));
+      if (!mounted) return;
+      final trusted = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => IeumDialog(
+          title: const Text('신뢰할 수 있는 통합본인가요?'),
+          content: const Text(
+            '수동 JSON은 GitHub에서 검증된 통합본과 다릅니다. 출처를 확인한 파일만 가져오세요. 현재 프로젝트의 업무 데이터가 변경되며 충돌은 자동 덮어쓰지 않습니다.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('취소'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('출처 확인 · 가져오기'),
+            ),
+          ],
+        ),
+      );
+      if (trusted != true || !mounted) return;
+      final result = s.importManualSnapshot(
+        jsonDecode(await file.readAsString()),
+        trusted: true,
+      );
+
       if (result.applied) {
         message('통합본을 반영했습니다. 개인 변경은 보존했습니다.');
       } else if (mounted) {
@@ -522,6 +554,9 @@ class _WorkspaceState extends State<Workspace> {
       final filtered = all
           .where(
             (t) =>
+                (relatedMember.isEmpty ||
+                    t.assigneeId == relatedMember ||
+                    t.reviewerId == relatedMember) &&
                 (part.isEmpty || t.part == part) &&
                 (search.isEmpty ||
                     ('${t.title} ${t.id} ${t.description}')
@@ -638,7 +673,21 @@ class _WorkspaceState extends State<Workspace> {
                                         '비활성화된 참여자입니다. 작업 수정·진행·업로드가 차단됩니다. 관리자에게 활성화를 요청하세요.',
                                       ),
                                     if (page == 0) ...[
+                                      const Text(
+                                        '프로젝트 전체 현황',
+                                        key: Key('project-stats-scope'),
+                                      ),
+                                      const SizedBox(height: 8),
                                       stats(all),
+                                      if (relatedMember.isNotEmpty)
+                                        InputChip(
+                                          label: Text(
+                                            '${s.member(relatedMember).name} · 관련 업무',
+                                          ),
+                                          onDeleted: () => setState(
+                                            () => relatedMember = '',
+                                          ),
+                                        ),
                                       const SizedBox(height: 27),
                                       toolbar(),
                                       const SizedBox(height: 17),
@@ -689,6 +738,16 @@ class _WorkspaceState extends State<Workspace> {
                             ),
                           )
                         : SettingsShell(
+                            personal:
+                                settingsSection == SettingsSection.general,
+                            projectName: s.project?.name ?? '예시 작업 공간',
+                            projectSelector:
+                                widget.projectSwitcherBuilder?.call(
+                                  () => selectSettings(
+                                    SettingsSection.projectGeneral,
+                                  ),
+                                ) ??
+                                widget.projectSwitcher,
                             selected: settingsSection,
                             onSelected: selectSettings,
                             contentBuilder: settingsContent,
@@ -717,19 +776,13 @@ class _WorkspaceState extends State<Workspace> {
     padding: const EdgeInsets.fromLTRB(9, 12, 9, 12),
     child: Column(
       children: [
-        widget.projectSwitcher ??
-            Tooltip(
-              message: s.project?.name ?? '졸업작품 팀',
-              child: const SizedBox(
-                width: 44,
-                height: 44,
-                child: Icon(
-                  Icons.folder_outlined,
-                  size: 21,
-                  color: Color(0xff505753),
-                ),
-              ),
-            ),
+        railButton(
+          'project-home',
+          '${s.project?.name ?? '현재 프로젝트'} 홈',
+          Icons.home_outlined,
+          () => rememberView(() => page = 0),
+          selected: page == 0,
+        ),
         const SizedBox(height: 8),
         railButton(
           'nav-0',
@@ -762,6 +815,8 @@ class _WorkspaceState extends State<Workspace> {
           role: s.isProject ? s.actor.roleLabel : '테스트 사용자',
           avatar: avatar(s.actor),
           onSettings: () => selectSettings(SettingsSection.general),
+          onProjectSettings: () =>
+              selectSettings(SettingsSection.projectGeneral),
           onSignOut: widget.onSignOut,
           profileControl: s.isProject
               ? null
@@ -1298,11 +1353,12 @@ class _WorkspaceState extends State<Workspace> {
             '통합 전 변경 ${s.changes.length}건',
             '기준 통합본: ${s.baseRevision} · 전송 상태는 GitHub 동기화에서 확인하세요.',
           ),
-          Row(
-            mainAxisSize: MainAxisSize.min,
+          Wrap(
+            spacing: 10,
+            runSpacing: 8,
             children: [
               OutlinedButton.icon(
-                onPressed: fileBusy ? null : import,
+                onPressed: fileBusy || !s.canImportManually ? null : import,
                 icon: const Icon(Icons.upload_outlined, size: 16),
                 label: const Text('통합본 가져오기', style: TextStyle(fontSize: 11)),
               ),
@@ -1317,6 +1373,7 @@ class _WorkspaceState extends State<Workspace> {
         ],
       ),
       const SizedBox(height: 20),
+      if (!s.canImportManually) info('읽기 전용 · 수동 가져오기는 작업 변경 권한이 필요합니다.'),
       if (s.changes.isEmpty)
         Container(
           width: double.infinity,
@@ -1429,15 +1486,36 @@ class _WorkspaceState extends State<Workspace> {
   );
   Widget settingsContent(SettingsSection section) => switch (section) {
     SettingsSection.general => generalSettings(),
+    SettingsSection.projectGeneral => projectGeneralSettings(),
     SettingsSection.roles =>
       s.isProject && widget.session != null && widget.sync != null
-          ? RolesPanel(store: s, sync: widget.sync!, session: widget.session!)
+          ? RolesPanel(
+              store: s,
+              sync: widget.sync!,
+              session: widget.session!,
+              onMember: (id) {
+                relatedMember = id;
+                selectSettings(SettingsSection.team);
+              },
+            )
           : settingsGroup('역할', [
               ('프로젝트 필요', '프로젝트를 연결하면 역할을 관리할 수 있습니다.', ''),
             ]),
     SettingsSection.team =>
       s.isProject && widget.session != null && widget.sync != null
-          ? TeamPanel(store: s, sync: widget.sync!, session: widget.session!)
+          ? TeamPanel(
+              store: s,
+              sync: widget.sync!,
+              session: widget.session!,
+              initialMember: relatedMember,
+              onOpenTasks: (id) => rememberView(() {
+                relatedMember = id;
+                page = 0;
+                scope = 'all';
+                search = '';
+                part = '';
+              }),
+            )
           : info('프로젝트에 로그인하면 참여자와 역할, 가입 요청을 관리할 수 있습니다.'),
     SettingsSection.assignments => Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1512,60 +1590,93 @@ class _WorkspaceState extends State<Workspace> {
   String nameNotice = '';
   Future<void> renameAccount() async {
     final controller = TextEditingController(text: s.actor.name);
-    final name = await showDialog<String>(
+    final original = s.actor.name;
+    var busy = false, saved = false;
+    var error = '';
+    await showDialog<void>(
       context: context,
-      builder: (ctx) => IeumDialog(
-        title: const Text('이름 변경'),
-        icon: Icons.edit_outlined,
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            TextField(
-              key: const Key('account-display-name'),
-              controller: controller,
-              maxLength: 40,
-              decoration: const InputDecoration(labelText: '이름 / 닉네임'),
-            ),
-            const SizedBox(height: 12),
-            const Text(
-              '이 컴퓨터에 연결된 모든 참여 프로젝트에 커밋으로 반영합니다. GitHub 아이디와 기존 브랜치는 유지됩니다.',
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('취소'),
-          ),
-          FilledButton(
-            onPressed: () {
-              if (controller.text.trim().isNotEmpty) {
-                Navigator.pop(ctx, controller.text.trim());
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, update) {
+          Future<void> save() async {
+            if (busy) return;
+            final name = controller.text.trim();
+            if (name.isEmpty) {
+              update(() => error = '이름을 입력하세요.');
+              return;
+            }
+            update(() {
+              busy = true;
+              error = '';
+            });
+            try {
+              final result = widget.onRename != null
+                  ? await widget.onRename!(name)
+                  : await renameCurrent(name);
+              if (!ctx.mounted || !mounted) return;
+              setState(() => nameNotice = result);
+              update(() {
+                saved = true;
+                busy = false;
+              });
+              await WidgetsBinding.instance.endOfFrame;
+              if (ctx.mounted) Navigator.pop(ctx);
+            } catch (e) {
+              if (ctx.mounted) {
+                update(() {
+                  busy = false;
+                  error = '이름 저장 실패 · 초안은 유지됩니다. $e';
+                });
               }
-            },
-            child: const Text('변경'),
-          ),
-        ],
+            }
+          }
+
+          return DraftGuard(
+            dirty: !saved && controller.text.trim() != original,
+            busy: busy,
+            onSave: save,
+            child: IeumDialog(
+              title: const Text('이름 변경'),
+              icon: Icons.edit_outlined,
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  TextField(
+                    key: const Key('account-display-name'),
+                    controller: controller,
+                    enabled: !busy,
+                    maxLength: 40,
+                    onChanged: (_) => update(() {}),
+                    decoration: const InputDecoration(labelText: '이름 / 닉네임'),
+                  ),
+                  const Text(
+                    '이 컴퓨터에 연결된 참여 프로젝트에 커밋으로 반영합니다. GitHub 아이디와 기존 브랜치는 유지됩니다. 프로젝트별 실패 결과는 별도로 표시합니다.',
+                  ),
+                  if (controller.text.trim() != original)
+                    const Text('저장하지 않은 변경사항'),
+                  if (error.isNotEmpty)
+                    Text(error, style: const TextStyle(color: Colors.red)),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: busy ? null : () => Navigator.maybePop(ctx),
+                  child: const Text('취소'),
+                ),
+                FilledButton(
+                  onPressed: busy || controller.text.trim() == original
+                      ? null
+                      : save,
+                  child: Text(busy ? '반영 중…' : '변경'),
+                ),
+              ],
+            ),
+          );
+        },
       ),
     );
     await Future<void>.delayed(const Duration(milliseconds: 250));
     controller.dispose();
-    if (name == null || !mounted) return;
-    setState(() {
-      nameBusy = true;
-      nameNotice = '';
-    });
-    try {
-      final result = widget.onRename != null
-          ? await widget.onRename!(name)
-          : await renameCurrent(name);
-      if (mounted) setState(() => nameNotice = result);
-    } catch (e) {
-      if (mounted) setState(() => nameNotice = '$e');
-    } finally {
-      if (mounted) setState(() => nameBusy = false);
-    }
   }
 
   Future<String> renameCurrent(String name) async {
@@ -1579,7 +1690,7 @@ class _WorkspaceState extends State<Workspace> {
     return '이름을 변경했습니다.';
   }
 
-  Widget generalSettings() => Column(
+  Widget projectGeneralSettings() => Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
       settingsGroup('프로젝트', [
@@ -1598,18 +1709,19 @@ class _WorkspaceState extends State<Workspace> {
         ),
       ]),
       const SizedBox(height: 32),
+      settingsGroup('현재 참여 상태', [
+        ('역할', '이 프로젝트에서 부여받은 권한입니다.', s.actor.roleLabel),
+        ('상태', '비활성화된 참여자는 작업·업로드가 제한됩니다.', s.actor.active ? '활성화' : '비활성화'),
+      ]),
+    ],
+  );
+
+  Widget generalSettings() => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
       settingsGroup('계정', [
         ('이름', '참여 중인 프로젝트에서 사용하는 표시 이름입니다.', s.actor.name),
-        (
-          '상태',
-          '비활성화된 참여자는 작업을 수정하거나 업로드할 수 없습니다.',
-          s.actor.active ? '활성화' : '비활성화',
-        ),
-        (
-          '역할',
-          '프로젝트에서 지정된 역할과 권한입니다.',
-          s.isProject ? s.actor.roleLabel : '테스트 사용자',
-        ),
+        ('GitHub 계정', '표시 이름과 별개의 로그인 식별자입니다.', s.actor.login),
       ]),
       if (s.isProject && widget.session != null)
         Align(

@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
 import 'app_update.dart';
+import 'app_release.dart';
+import 'desktop_platform.dart';
 
 class UpdateScope extends InheritedNotifier<AppUpdater> {
   const UpdateScope({
@@ -8,8 +10,10 @@ class UpdateScope extends InheritedNotifier<AppUpdater> {
     required AppUpdater updater,
     required this.restart,
     required super.child,
+    this.supportsAutomaticInstall = true,
   }) : super(notifier: updater);
   final Future<void> Function() restart;
+  final bool supportsAutomaticInstall;
   static UpdateScope? of(BuildContext context) =>
       context.dependOnInheritedWidgetOfExactType<UpdateScope>();
 }
@@ -19,6 +23,30 @@ class UpdateButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scope = UpdateScope.of(context);
+    if (scope != null && !scope.supportsAutomaticInstall) {
+      return TextButton.icon(
+        key: const Key('app-update-button'),
+        icon: const Icon(Icons.open_in_new_rounded, size: 15),
+        label: const Text('Linux 업데이트 다운로드', style: TextStyle(fontSize: 11)),
+        onPressed: () async {
+          try {
+            await openDesktopUrl(
+              'https://github.com/$updateRepository/releases/latest',
+            );
+          } catch (_) {
+            if (context.mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(
+                    'https://github.com/$updateRepository/releases/latest 에서 Linux 빌드를 받으세요.',
+                  ),
+                ),
+              );
+            }
+          }
+        },
+      );
+    }
     if (scope == null) return const SizedBox.shrink();
     final updater = scope.notifier!;
     return Tooltip(

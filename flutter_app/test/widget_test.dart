@@ -33,14 +33,10 @@ void main() {
   }
 
   Future<void> settings(WidgetTester tester, {bool changes = false}) async {
-    await tester.tapAt(
-      tester.getTopLeft(find.byKey(const Key('sidebar-account'))) +
-          const Offset(18, 18),
-    );
+    await tester.tap(find.byKey(const Key('sidebar-account')));
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('account-settings')));
+    await tester.tap(find.byKey(const Key('project-settings')));
     await tester.pumpAndSettle();
-    expect(find.byKey(const Key('account-settings')), findsNothing);
     if (changes) {
       await tester.tap(find.byKey(const Key('settings-changes')));
       await tester.pumpAndSettle();

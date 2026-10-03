@@ -15,7 +15,7 @@ abstract interface class OAuthVault {
   Future<void> delete();
 }
 
-class WindowsOAuthVault implements OAuthVault {
+class DesktopOAuthVault implements OAuthVault {
   static const channel = MethodChannel('ieum/oauth_credentials');
   @override
   Future<String?> read() => channel.invokeMethod<String>('read');
@@ -166,7 +166,7 @@ class GitHubOAuth {
     DateTime Function()? now,
     Future<void> Function(Duration)? delay,
   }) : transport = transport ?? HttpOAuthTransport(),
-       vault = vault ?? WindowsOAuthVault(),
+       vault = vault ?? DesktopOAuthVault(),
        now = now ?? DateTime.now,
        delay = delay ?? Future<void>.delayed;
   final OAuthTransport transport;

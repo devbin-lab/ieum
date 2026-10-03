@@ -537,6 +537,7 @@ void main() {
         find.byKey(const Key('account-display-name')),
         '새 이름',
       );
+      await tester.pump();
       await tester.tap(find.widgetWithText(FilledButton, '변경'));
       await tester.pumpAndSettle();
       await tester.pump(const Duration(milliseconds: 300));
@@ -565,6 +566,7 @@ void main() {
         find.byKey(const Key('permission-task.review')),
       );
       await tester.tap(find.byKey(const Key('permission-task.review')));
+      await tester.pump();
       await tester.tap(find.byKey(const Key('save-role')));
       await tester.pumpAndSettle();
       await tester.pump(const Duration(milliseconds: 300));

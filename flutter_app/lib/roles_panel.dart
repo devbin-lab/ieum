@@ -7,6 +7,7 @@ import 'project_service.dart';
 import 'popup_ui.dart';
 import 'role_editor.dart';
 import 'permission_ui.dart';
+import 'draft_guard.dart';
 
 class RolesPanel extends StatefulWidget {
   const RolesPanel({
@@ -14,7 +15,9 @@ class RolesPanel extends StatefulWidget {
     required this.store,
     required this.sync,
     required this.session,
+    this.onMember,
   });
+  final ValueChanged<String>? onMember;
   final TaskStore store;
   final GitHubSync sync;
   final GitHubSession session;
@@ -71,7 +74,7 @@ class _RolesPanelState extends State<RolesPanel> {
     if (!mounted || latest == null || !widget.store.actor.has('role.manage')) {
       return;
     }
-    final current = role == null
+    var current = role == null
         ? null
         : latest.roles.where((r) => r.id == role.id).firstOrNull;
     if (role != null && current == null) {
@@ -82,132 +85,230 @@ class _RolesPanelState extends State<RolesPanel> {
       context,
       widget.store.actor,
       role: current,
+      onReload: current == null
+          ? null
+          : () async {
+              final refreshed = await widget.session.loadProject(
+                widget.sync.config,
+              );
+              if (refreshed.id != latest.id) throw StateError('프로젝트가 변경되었습니다.');
+              final nextRole = refreshed.roles
+                  .where((r) => r.id == role!.id)
+                  .firstOrNull;
+              if (nextRole == null) {
+                throw StateError('역할이 삭제되었습니다. 초안을 다른 이름으로 보관하거나 편집을 종료하세요.');
+              }
+              current = nextRole;
+              if (mounted) widget.store.updateProject(refreshed);
+              return nextRole;
+            },
+      onSave: (draft) async {
+        final project = await widget.session.saveRole(
+          widget.sync.config,
+          draft,
+          expectedProjectId: latest.id,
+          expectedRole: current,
+        );
+        if (mounted) widget.store.updateProject(project);
+      },
     );
     if (result != null && mounted) {
-      final saved = await run(
-        () => widget.session.saveRole(widget.sync.config, result),
-      );
-      if (saved != null && mounted) {
-        setState(() {
-          selected = result.id;
-          showMembers = false;
-        });
-      }
+      setState(() {
+        selected = result.id;
+        showMembers = false;
+        message = '저장소에 반영했습니다.';
+      });
     }
   }
 
   Future<void> remove(ProjectRole original) async {
-    final latest = await run(
+    var latest = await run(
       () => widget.session.loadProject(widget.sync.config),
       silent: true,
     );
     if (latest == null || !mounted) return;
-    final role = latest.roles.where((r) => r.id == original.id).firstOrNull;
+    var role = latest.roles.where((r) => r.id == original.id).firstOrNull;
     if (role == null || !editable(role.id)) {
       setState(() => message = '역할이 변경되었거나 삭제 권한이 없습니다.');
       return;
     }
-    final affected = members(role.id);
-    final candidates =
-        [
-              'worker',
-              'viewer',
-              if (widget.store.owns && members('manager').isNotEmpty) 'manager',
-              ...latest.roles.where((r) => r.id != role.id).map((r) => r.id),
-            ]
-            .where(
-              (id) => widget.store.actor.permissions.containsAll(
-                definition(id).permissions,
-              ),
-            )
-            .toList();
+    final projectId = latest.id;
     String? replacement;
-    final accepted = await showDialog<bool>(
+    var saving = false, saved = false;
+    var error = '';
+    await showDialog<void>(
       context: context,
       builder: (ctx) => StatefulBuilder(
-        builder: (ctx, update) => IeumDialog(
-          title: Text('“${role.name}” 역할 삭제'),
-          icon: Icons.delete_outline,
-          content: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                affected.isEmpty
-                    ? '이 역할에 배정된 참여자가 없습니다. 삭제 후 목록에서 제거됩니다.'
-                    : '${affected.length}명의 참여자가 사용하고 있습니다. 이동할 역할을 선택하면 재배정과 삭제가 함께 적용됩니다.',
-                style: const TextStyle(fontSize: 12, height: 1.7),
-              ),
-              if (affected.isNotEmpty) ...[
-                const SizedBox(height: 12),
-                Text(
-                  affected
-                      .map((p) => '${p.name}${p.enabled ? '' : ' (비활성화)'}')
-                      .join(', '),
-                  style: const TextStyle(fontSize: 12),
-                ),
-                const SizedBox(height: 16),
-                if (widget.store.actor.has('member.manage') &&
-                    candidates.isNotEmpty)
-                  IeumSelect(
-                    key: const Key('delete-role-replacement'),
-                    value: replacement ?? '',
-                    values: {
-                      '': '이동할 역할 선택',
-                      for (final id in candidates) id: definition(id).roleLabel,
-                    },
-                    onChanged: (value) => update(
-                      () => replacement = value.isEmpty ? null : value,
+        builder: (ctx, update) {
+          final affected = latest!.people
+              .where((p) => p.role == role!.id)
+              .toList();
+          final candidates =
+              [
+                    'worker',
+                    'viewer',
+                    if (widget.store.owns && members('manager').isNotEmpty)
+                      'manager',
+                    ...latest!.roles
+                        .where((r) => r.id != role!.id)
+                        .map((r) => r.id),
+                  ]
+                  .where(
+                    (id) => widget.store.actor.permissions.containsAll(
+                      definition(id).permissions,
                     ),
                   )
-                else
-                  const Text('참여자를 다른 역할로 옮기려면 참여자 관리 권한이 필요합니다.'),
-                const SizedBox(height: 12),
-                const Text(
-                  '권한이 줄어드는 경우 진행 중인 작업과 통합 대기 PR의 인수인계를 먼저 확인합니다. 참여자의 활성 상태는 유지됩니다.',
-                  style: TextStyle(
-                    fontSize: 11,
-                    height: 1.6,
-                    color: Color(0xff737b76),
+                  .toList();
+          Future<void> save() async {
+            if (saving || affected.isNotEmpty && replacement == null) return;
+            update(() {
+              saving = true;
+              error = '';
+            });
+            try {
+              final next = await widget.session.deleteRole(
+                widget.sync.config,
+                role!.id,
+                replacementRoleId: replacement,
+                expectedProjectId: projectId,
+                expectedRole: role,
+                expectedMembers: affected,
+              );
+              if (!ctx.mounted || !mounted) return;
+              widget.store.updateProject(next);
+              setState(() {
+                selected = null;
+                message = '역할 삭제를 저장소에 반영했습니다.';
+              });
+              update(() {
+                saved = true;
+                saving = false;
+              });
+              await WidgetsBinding.instance.endOfFrame;
+              if (ctx.mounted) Navigator.pop(ctx);
+            } catch (e) {
+              if (ctx.mounted) {
+                update(() {
+                  saving = false;
+                  error = '삭제 실패 · 선택 유지: $e';
+                });
+              }
+            }
+          }
+
+          return DraftGuard(
+            dirty: !saved && replacement != null,
+            busy: saving,
+            onSave: save,
+            child: IeumDialog(
+              title: Text('“${role!.name}” 역할 삭제'),
+              icon: Icons.delete_outline,
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    affected.isEmpty
+                        ? '배정된 참여자가 없습니다. 삭제 후 목록에서 제거됩니다.'
+                        : '${affected.length}명이 사용 중입니다. 이동할 역할을 선택하면 재배정과 삭제가 함께 적용됩니다.',
+                  ),
+                  if (affected.isNotEmpty) ...[
+                    const SizedBox(height: 12),
+                    Text(
+                      affected
+                          .map((p) => '${p.name}${p.enabled ? '' : ' (비활성화)'}')
+                          .join(', '),
+                    ),
+                    const SizedBox(height: 12),
+                    if (widget.store.actor.has('member.manage') &&
+                        candidates.isNotEmpty)
+                      IgnorePointer(
+                        ignoring: saving,
+                        child: IeumSelect(
+                          key: const Key('delete-role-replacement'),
+                          value: replacement ?? '',
+                          values: {
+                            '': '이동할 역할 선택',
+                            for (final id in candidates)
+                              id: definition(id).roleLabel,
+                          },
+                          onChanged: (v) =>
+                              update(() => replacement = v.isEmpty ? null : v),
+                        ),
+                      )
+                    else
+                      const Text('재배정에는 참여자 관리 권한이 필요합니다.'),
+                    const Text(
+                      '권한이 줄어들면 업무와 PR 인수인계를 먼저 확인합니다. 참여자의 활성 상태는 유지됩니다.',
+                      style: TextStyle(fontSize: 12),
+                    ),
+                  ],
+                  if (error.isNotEmpty) ...[
+                    Text(error, style: const TextStyle(color: Colors.red)),
+                    TextButton(
+                      onPressed: saving
+                          ? null
+                          : () async {
+                              update(() => saving = true);
+                              try {
+                                final refreshed = await widget.session
+                                    .loadProject(widget.sync.config);
+                                if (refreshed.id != projectId) {
+                                  throw StateError('프로젝트가 변경되었습니다.');
+                                }
+                                final found = refreshed.roles
+                                    .where((r) => r.id == original.id)
+                                    .firstOrNull;
+                                if (found == null) {
+                                  throw StateError('역할이 이미 삭제되었습니다.');
+                                }
+                                if (ctx.mounted && mounted) {
+                                  widget.store.updateProject(refreshed);
+                                  update(() {
+                                    latest = refreshed;
+                                    role = found;
+                                    error = '최신 영향을 확인했습니다. 이동할 역할을 다시 확인한 뒤 삭제하세요.';
+                                  });
+                                }
+                              } catch (e) {
+                                if (ctx.mounted) update(() => error = '$e');
+                              } finally {
+                                if (ctx.mounted) update(() => saving = false);
+                              }
+                            },
+                      child: const Text('최신 값 확인 · 선택 유지'),
+                    ),
+                  ],
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: saving ? null : () => Navigator.maybePop(ctx),
+                  child: const Text('취소'),
+                ),
+                FilledButton(
+                  key: const Key('confirm-delete-role'),
+                  onPressed:
+                      saving || affected.isNotEmpty && replacement == null
+                      ? null
+                      : save,
+                  style: FilledButton.styleFrom(
+                    backgroundColor: const Color(0xffb34b51),
+                  ),
+                  child: Text(
+                    saving
+                        ? '삭제 중…'
+                        : affected.isEmpty
+                        ? '삭제'
+                        : '재배정 후 삭제',
                   ),
                 ),
               ],
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('취소'),
             ),
-            FilledButton(
-              key: const Key('confirm-delete-role'),
-              onPressed: affected.isNotEmpty && replacement == null
-                  ? null
-                  : () => Navigator.pop(ctx, true),
-              style: FilledButton.styleFrom(
-                backgroundColor: const Color(0xffb34b51),
-              ),
-              child: Text(affected.isEmpty ? '삭제' : '재배정 후 삭제'),
-            ),
-          ],
-        ),
+          );
+        },
       ),
     );
-    if (accepted == true && mounted) {
-      final deleted = await run(
-        () => widget.session.deleteRole(
-          widget.sync.config,
-          role.id,
-          replacementRoleId: replacement,
-        ),
-      );
-      if (deleted != null && mounted) {
-        setState(() {
-          selected = null;
-          showMembers = false;
-        });
-      }
-    }
   }
 
   @override
@@ -506,6 +607,9 @@ class _RolesPanelState extends State<RolesPanel> {
                 dense: true,
                 contentPadding: EdgeInsets.zero,
                 leading: const Icon(Icons.person_outline, size: 20),
+                onTap: widget.onMember == null
+                    ? null
+                    : () => widget.onMember!(member.id),
                 title: Text(member.name, style: const TextStyle(fontSize: 12)),
                 subtitle: Text(
                   '@${member.login} · ${member.enabled ? '활성화' : '비활성화'}',

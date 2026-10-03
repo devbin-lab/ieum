@@ -14,6 +14,8 @@ import 'project_catalog.dart';
 import 'profile_service.dart';
 import 'project_picker.dart';
 import 'store.dart';
+import 'settings_shell.dart';
+import 'desktop_platform.dart';
 import 'update_ui.dart';
 
 class ProjectGate extends StatefulWidget {
@@ -173,7 +175,7 @@ class _ProjectGateState extends State<ProjectGate> {
       return;
     }
     try {
-      await Process.start('rundll32.exe', ['url.dll,FileProtocolHandler', url]);
+      await openDesktopUrl(url);
     } catch (_) {
       if (mounted) setState(() => error = '브라우저에서 $url 을 직접 열어주세요.');
     }
@@ -325,7 +327,10 @@ class _ProjectGateState extends State<ProjectGate> {
     if (recent != null) await openSaved(recent!);
   });
 
-  Future<void> openSaved(SavedProject entry) async {
+  Future<void> openSaved(
+    SavedProject entry, {
+    bool settingsView = false,
+  }) async {
     if (store?.filename == entry.path) {
       sync?.resume();
       if (mounted) setState(() => showingSetup = false);
@@ -369,6 +374,19 @@ class _ProjectGateState extends State<ProjectGate> {
         }
       }
       final opened = next;
+      if (settingsView) {
+        final view = <String, dynamic>{};
+        try {
+          view.addAll(
+            jsonDecode(opened.meta('ui.workspace')) as Map<String, dynamic>,
+          );
+        } catch (_) {
+          /* A new project has no saved view yet. */
+        }
+        view['page'] = 2;
+        view['settings'] = SettingsSection.projectGeneral.name;
+        opened.setMeta('ui.workspace', jsonEncode(view));
+      }
       next = null; // openStore owns cleanup from here, including failure.
       await openStore(opened, config, cached: cached);
     } catch (_) {
@@ -439,11 +457,12 @@ class _ProjectGateState extends State<ProjectGate> {
             catalog.warning,
             error,
           ].where((s) => s.isNotEmpty).join(' · '),
-          projectSwitcher: ProjectPicker(
+          projectSwitcherBuilder: (onSettings) => ProjectPicker(
             projects: catalog.forAccount(session.user!.id),
             activePath: store!.filename,
             busy: busy,
-            onSelected: (entry) => run(() => openSaved(entry)),
+            onSelected: (entry) =>
+                run(() => openSaved(entry, settingsView: true)),
             onCreate: () => showSetup(true),
             onJoin: () => showSetup(false),
           ),
@@ -499,9 +518,9 @@ class _ProjectGateState extends State<ProjectGate> {
                           '이 컴퓨터에서 로그인 유지',
                           style: TextStyle(fontSize: 12),
                         ),
-                        subtitle: const Text(
-                          'Windows 자격 증명 관리자에 안전하게 보관합니다.',
-                          style: TextStyle(fontSize: 11, color: muted),
+                        subtitle: Text(
+                          credentialStorageDescription(),
+                          style: const TextStyle(fontSize: 11, color: muted),
                         ),
                         value: rememberLogin,
                         onChanged: busy

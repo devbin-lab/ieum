@@ -96,6 +96,11 @@ void main() {
         await tester.tap(find.byKey(const Key('account-settings')));
         await tester.pumpAndSettle();
         expect(tester.takeException(), isNull);
+        expect(find.byKey(const Key('settings-team')), findsNothing);
+        await tester.tap(find.byKey(const Key('sidebar-account')));
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(const Key('project-settings')));
+        await tester.pumpAndSettle();
         for (final field in tester.widgetList<SelectableText>(
           find.byType(SelectableText),
         )) {
@@ -110,7 +115,7 @@ void main() {
           'github',
           'notifications',
           'changes',
-          'general',
+          'projectGeneral',
         ]) {
           await section(id);
         }
@@ -144,6 +149,10 @@ void main() {
       );
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('account-settings')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('sidebar-account')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('project-settings')));
       await tester.pumpAndSettle();
       await section('notifications');
       await tester.tap(find.byKey(const Key('settings-category-menu')));

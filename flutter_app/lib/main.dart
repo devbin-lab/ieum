@@ -14,15 +14,22 @@ import 'app_release.dart';
 import 'update_ui.dart';
 import 'startup_health.dart';
 import 'window_layout.dart';
+import 'github_oauth.dart';
 
 import 'package:screen_retriever/screen_retriever.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   final session = GitHubSession();
+  // The portable EXE updater is a Windows distribution mechanism. Linux
+  // downloads its complete tar bundle from Releases through the settings UI.
+  final updaterEnabled =
+      Platform.isWindows && Platform.environment['IEUM_DISABLE_UPDATES'] != '1';
   final updater = AppUpdater(
     root: Directory(
-      '${Platform.environment['LOCALAPPDATA'] ?? Platform.environment['TEMP']}${Platform.pathSeparator}Ieum',
+      Platform.isWindows
+          ? '${Platform.environment['LOCALAPPDATA'] ?? Directory.systemTemp.path}${Platform.pathSeparator}Ieum'
+          : '${(await getApplicationSupportDirectory()).path}${Platform.pathSeparator}updates',
     ),
     currentVersion: appVersion,
     source: GitHubUpdateSource(
@@ -30,8 +37,7 @@ Future<void> main() async {
       credential: session.oauthCredential,
     ),
   );
-  if (Platform.environment['IEUM_DISABLE_UPDATES'] != '1' &&
-      await updater.restartPending()) {
+  if (updaterEnabled && await updater.restartPending()) {
     exit(0);
   }
   await windowManager.ensureInitialized();
@@ -55,6 +61,23 @@ Future<void> main() async {
       backgroundColor: Colors.white,
     ),
   );
+  // Only the CI smoke process uses an empty, temporary Secret Service keyring.
+  final smokeTest =
+      Platform.isLinux &&
+      Platform.environment['IEUM_SMOKE_TEST'] == '1' &&
+      Platform.environment['CI'] == 'true';
+  if (smokeTest) {
+    final vault = DesktopOAuthVault();
+    if (await vault.read() != null) {
+      throw StateError('Smoke keyring must be empty');
+    }
+    await vault.write('ieum-ci-vault-check');
+    if (await vault.read() != 'ieum-ci-vault-check') {
+      throw StateError('Keyring round trip failed');
+    }
+    await vault.delete();
+    if (await vault.read() != null) throw StateError('Keyring deletion failed');
+  }
   var appStarted = false;
   try {
     final base =
@@ -65,8 +88,11 @@ Future<void> main() async {
     runApp(
       UpdateScope(
         updater: updater,
+        supportsAutomaticInstall: Platform.isWindows,
         restart: () async {
-          if (await updater.restartPending()) await windowManager.close();
+          if (updaterEnabled && await updater.restartPending()) {
+            await windowManager.close();
+          }
         },
         child: IeumApp(
           store: placeholder,
@@ -90,9 +116,15 @@ Future<void> main() async {
   }
   await windowManager.show();
   await WidgetsBinding.instance.endOfFrame;
+  if (appStarted && smokeTest) {
+    await File(Platform.environment['IEUM_SMOKE_MARKER']!).writeAsString(
+      'IEUM $appVersion: Linux first frame and native keyring passed\n',
+      flush: true,
+    );
+  }
   // The distribution launcher waits for this signal before committing an update.
   final startupMarker = Platform.environment['IEUM_STARTUP_MARKER'];
-  if (appStarted && startupMarker != null) {
+  if (appStarted && startupMarker != null && Platform.isWindows) {
     try {
       final marker = startupHealthFile(
         '${Platform.environment['LOCALAPPDATA']}${Platform.pathSeparator}Ieum${Platform.pathSeparator}builds',
@@ -105,5 +137,5 @@ Future<void> main() async {
       // Startup itself remains usable if the status marker cannot be written.
     }
   }
-  if (Platform.environment['IEUM_DISABLE_UPDATES'] != '1') updater.start();
+  if (updaterEnabled) updater.start();
 }

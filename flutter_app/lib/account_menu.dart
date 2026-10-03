@@ -10,6 +10,7 @@ class AccountMenu extends StatelessWidget {
     required this.onSettings,
     this.onSignOut,
     this.profileControl,
+    this.onProjectSettings,
   });
 
   final String name, role;
@@ -17,6 +18,7 @@ class AccountMenu extends StatelessWidget {
   final VoidCallback onSettings;
   final VoidCallback? onSignOut;
   final Widget? profileControl;
+  final VoidCallback? onProjectSettings;
 
   @override
   Widget build(BuildContext context) => MenuAnchor(
@@ -60,8 +62,15 @@ class AccountMenu extends StatelessWidget {
         key: const Key('account-settings'),
         onPressed: onSettings,
         leadingIcon: const Icon(Icons.settings_outlined, size: 18),
-        child: const Text('설정', style: TextStyle(fontSize: 12)),
+        child: const Text('개인 설정', style: TextStyle(fontSize: 12)),
       ),
+      if (onProjectSettings != null)
+        MenuItemButton(
+          key: const Key('project-settings'),
+          onPressed: onProjectSettings,
+          leadingIcon: const Icon(Icons.folder_outlined, size: 18),
+          child: const Text('프로젝트 설정', style: TextStyle(fontSize: 12)),
+        ),
       if (onSignOut != null) ...[
         const Divider(height: 1),
         MenuItemButton(

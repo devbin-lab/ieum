@@ -97,7 +97,8 @@ void main() {
             sessionNotice: offline
                 ? '오프라인 · 저장된 프로젝트를 열었습니다. 연결되면 계정을 다시 확인하고 변경을 전송합니다.'
                 : null,
-            projectSwitcher: ProjectPicker(
+            projectSwitcherBuilder: (onSettings) => ProjectPicker(
+              onSettings: onSettings,
               projects: projects,
               activePath: 'a.sqlite',
               onSelected: (p) => selected = p.projectId,
@@ -112,7 +113,7 @@ void main() {
       expect(find.text('이음'), findsNothing);
       expect(find.text('IEUM'), findsNothing);
       expect(find.text('팀의 작업을 잇다'), findsNothing);
-      final picker = tester.getRect(find.byKey(const Key('project-picker')));
+      final picker = tester.getRect(find.byKey(const Key('project-home')));
       final bell = tester.getRect(
         find.byKey(const Key('sidebar-notifications')),
       );
@@ -169,6 +170,10 @@ void main() {
       );
       expect(content.left, navigation.right);
       await capture('settings-general');
+      await tester.tap(find.byKey(const Key('sidebar-account')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('project-settings')));
+      await tester.pumpAndSettle();
       await tester.enterText(find.byKey(const Key('settings-search')), '배정');
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('settings-team')), findsNothing);
@@ -216,6 +221,12 @@ void main() {
       expect(find.byKey(const Key('card-IE-101')), findsOneWidget);
       expect(tester.takeException(), isNull);
       await capture('sidebar-cleanup-kanban');
+      if (find.byKey(const Key('project-picker')).evaluate().isEmpty) {
+        await tester.tap(find.byKey(const Key('sidebar-account')));
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(const Key('project-settings')));
+        await tester.pumpAndSettle();
+      }
       await tester.tap(find.byKey(const Key('project-picker')));
       await tester.pumpAndSettle();
       expect(find.text('새 프로젝트 만들기'), findsOneWidget);
@@ -224,6 +235,12 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('project-option-b.sqlite')));
       await tester.pumpAndSettle();
       expect(selected, 'b');
+      if (find.byKey(const Key('project-picker')).evaluate().isEmpty) {
+        await tester.tap(find.byKey(const Key('sidebar-account')));
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(const Key('project-settings')));
+        await tester.pumpAndSettle();
+      }
       await tester.tap(find.byKey(const Key('project-picker')));
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('project-create-menu')));

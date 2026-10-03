@@ -1,0 +1,49 @@
+name: Linux release build
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  linux:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: flutter_app
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install native build and desktop dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev libsecret-1-dev liblzma-dev libblkid-dev xvfb dbus-x11 gnome-keyring fonts-noto-cjk
+      - name: Install exact Flutter SDK
+        run: |
+          git clone --depth 1 --branch 3.47.5 https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
+          echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
+      - name: Verify release version
+        run: |
+          version=$(sed -n 's/^version: //p' pubspec.yaml | tr -d '\r')
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then test "$GITHUB_REF_NAME" = "v$version"; fi
+          grep -F "const appVersion = '$version';" lib/app_release.dart
+      - name: Analyze and test
+        run: |
+          flutter pub get
+          flutter analyze
+          flutter test --reporter expanded
+      - name: Build Linux x64 bundle
+        run: flutter build linux --release
+      - name: Check runtime dependencies and headless startup
+        run: |
+          ldd build/linux/x64/release/bundle/ieum_flutter | tee "$RUNNER_TEMP/ieum-ldd.txt"
+          if grep -q 'not found' "$RUNNER_TEMP/ieum-ldd.txt"; then exit 1; fi
+          bash linux/smoke-test.sh build/linux/x64/release/bundle/ieum_flutter
+      - name: Package complete Linux bundle
+        run: bash package-linux.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Ieum-Linux-x64
+          path: flutter_app/dist/linux/*
+          if-no-files-found: error

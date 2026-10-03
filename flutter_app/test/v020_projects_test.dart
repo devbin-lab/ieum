@@ -126,6 +126,59 @@ void main() {
     );
   }
 
+  testWidgets(
+    'project settings selector switches context and home keeps selected project',
+    (tester) async {
+      tester.view.physicalSize = const Size(1440, 960);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final first = await seed();
+      final second = await seed(suffix: 'two');
+      ProjectCatalog(prefs)
+        ..remember('gh-1', second)
+        ..remember('gh-1', first);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ProjectGate(preferences: prefs, session: session),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('project-picker')), findsNothing);
+      expect(find.byIcon(Icons.home_outlined), findsOneWidget);
+      await tester.tap(find.byKey(const Key('sidebar-account')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('project-settings')));
+      await tester.pumpAndSettle();
+      final selector = tester.getRect(
+        find.byKey(const Key('settings-project-selector')),
+      );
+      final search = tester.getRect(find.byKey(const Key('settings-search')));
+      expect(selector.bottom, lessThan(search.top));
+      await tester.tap(find.byKey(const Key('project-picker')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(ValueKey('project-option-${second.path}')));
+      await tester.pumpAndSettle();
+      final active = tester.widget<Workspace>(find.byType(Workspace)).store;
+      expect(active.filename, second.path);
+      expect(
+        find.byKey(const Key('settings-project-selector')),
+        findsOneWidget,
+      );
+      await tester.tap(find.byKey(const Key('project-home')));
+      await tester.pumpAndSettle();
+      expect(
+        tester.widget<Workspace>(find.byType(Workspace)).store,
+        same(active),
+      );
+      expect(find.byKey(const Key('task-list')), findsOneWidget);
+      expect(find.byKey(const Key('settings-shell')), findsNothing);
+      expect(find.byKey(const Key('project-picker')), findsNothing);
+      await tester.pumpWidget(const SizedBox());
+      await tester.pumpAndSettle();
+    },
+  );
+
   test(
     'catalog isolates accounts and keeps valid backup after damaged primary',
     () {
@@ -300,7 +353,7 @@ void main() {
       expect(find.text('프로젝트 시작하기'), findsNothing);
       await tester.pumpAndSettle();
       expect(find.byType(Workspace), findsOneWidget);
-      expect(find.byKey(const Key('project-picker')), findsOneWidget);
+      expect(find.byKey(const Key('project-home')), findsOneWidget);
       expect(ProjectCatalog(prefs).lastFor('gh-1')!.path, project.path);
       expect(jsonDecode(prefs.readAsStringSync())['schema'], 2);
       await tester.pumpWidget(const SizedBox());
@@ -332,6 +385,12 @@ void main() {
       );
       await tester.pumpAndSettle();
       final current = tester.widget<Workspace>(find.byType(Workspace)).store;
+      if (find.byKey(const Key('project-picker')).evaluate().isEmpty) {
+        await tester.tap(find.byKey(const Key('sidebar-account')));
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(const Key('project-settings')));
+        await tester.pumpAndSettle();
+      }
       await tester.tap(find.byKey(const Key('project-picker')));
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(ValueKey('project-option-${missing.path}')));
@@ -342,6 +401,12 @@ void main() {
       );
       expect(catalog.lastFor('gh-1')!.path, good.path);
       expect(find.textContaining('DB 파일이 없습니다.'), findsOneWidget);
+      if (find.byKey(const Key('project-picker')).evaluate().isEmpty) {
+        await tester.tap(find.byKey(const Key('sidebar-account')));
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(const Key('project-settings')));
+        await tester.pumpAndSettle();
+      }
       await tester.tap(find.byKey(const Key('project-picker')));
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('project-create-menu')));
@@ -445,6 +510,12 @@ void main() {
           .store;
       Directory('${prefs.path}.tmp').createSync();
       Future<void> select(SavedProject entry) async {
+        if (find.byKey(const Key('project-picker')).evaluate().isEmpty) {
+          await tester.tap(find.byKey(const Key('sidebar-account')));
+          await tester.pumpAndSettle();
+          await tester.tap(find.byKey(const Key('project-settings')));
+          await tester.pumpAndSettle();
+        }
         await tester.tap(find.byKey(const Key('project-picker')));
         await tester.pumpAndSettle();
         await tester.tap(find.byKey(ValueKey('project-option-${entry.path}')));

@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
 
 enum SettingsSection {
-  general('일반', '개인', Icons.tune_rounded, '프로젝트 설정 저장 폴더 버전 계정'),
-  notifications('알림', '개인', Icons.notifications_none_rounded, 'Discord 디스코드'),
+  general('일반', '개인', Icons.tune_rounded, '버전 계정 이름'),
+  projectGeneral('일반', '프로젝트', Icons.folder_outlined, '저장 폴더 저장소'),
+  notifications('알림', '프로젝트', Icons.notifications_none_rounded, 'Discord 디스코드'),
   team('참여자 관리', '프로젝트', Icons.people_outline_rounded, '팀원 역할 가입 승인'),
   roles('역할 · 권한', '프로젝트', Icons.admin_panel_settings_outlined, '역할 추가 생성 권한'),
   assignments('파트별 배정', '프로젝트', Icons.account_tree_outlined, '담당자 검토자 작업'),
@@ -21,8 +22,14 @@ class SettingsShell extends StatefulWidget {
     required this.selected,
     required this.onSelected,
     required this.contentBuilder,
+    this.personal,
+    this.projectName,
+    this.projectSelector,
   });
 
+  final bool? personal;
+  final String? projectName;
+  final Widget? projectSelector;
   final SettingsSection selected;
   final ValueChanged<SettingsSection> onSelected;
   final Widget Function(SettingsSection) contentBuilder;
@@ -58,9 +65,12 @@ class _SettingsShellState extends State<SettingsShell> {
     final query = search.text.trim().toLowerCase();
     final sections = SettingsSection.values
         .where(
-          (s) => '${s.title} ${s.group} ${s.keywords}'.toLowerCase().contains(
-            query,
-          ),
+          (s) =>
+              (widget.personal == null ||
+                  (s == SettingsSection.general) == widget.personal) &&
+              '${s.title} ${s.group} ${s.keywords}'.toLowerCase().contains(
+                query,
+              ),
         )
         .toList();
     return LayoutBuilder(
@@ -137,10 +147,22 @@ class _SettingsShellState extends State<SettingsShell> {
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Padding(
-          padding: EdgeInsets.only(left: 8, bottom: 18),
+        if (widget.personal == false && widget.projectSelector != null) ...[
+          SizedBox(
+            key: const Key('settings-project-selector'),
+            width: double.infinity,
+            child: widget.projectSelector!,
+          ),
+          const SizedBox(height: 18),
+        ],
+        Padding(
+          padding: const EdgeInsets.only(left: 8, bottom: 18),
           child: Text(
-            '설정',
+            widget.personal == null
+                ? '설정'
+                : widget.personal!
+                ? '개인 설정'
+                : '프로젝트 설정',
             style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
           ),
         ),
@@ -251,43 +273,62 @@ class _SettingsShellState extends State<SettingsShell> {
 
   Widget content({bool compact = false}) => ColoredBox(
     color: Colors.white,
-    child: Scrollbar(
-      controller: contentScroll,
-      child: SingleChildScrollView(
-        key: const Key('settings-content-scroll'),
-        controller: contentScroll,
-        padding: EdgeInsets.fromLTRB(
-          compact ? 16 : 28,
-          compact ? 24 : 48,
-          compact ? 16 : 28,
-          36,
-        ),
-        child: Align(
-          alignment: Alignment.topLeft,
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 960),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  widget.selected.title,
-                  key: const Key('settings-content-title'),
-                  style: const TextStyle(
-                    fontSize: 27,
-                    fontWeight: FontWeight.w700,
-                    color: Color(0xff242825),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (widget.personal == false)
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            decoration: const BoxDecoration(
+              border: Border(bottom: BorderSide(color: Color(0xffe1e4e3))),
+            ),
+            child: Text(
+              '${widget.projectName ?? ''} · 이 프로젝트에만 적용',
+              key: const Key('settings-project-scope'),
+              style: const TextStyle(fontSize: 12),
+            ),
+          ),
+        Expanded(
+          child: Scrollbar(
+            controller: contentScroll,
+            child: SingleChildScrollView(
+              key: const Key('settings-content-scroll'),
+              controller: contentScroll,
+              padding: EdgeInsets.fromLTRB(
+                compact ? 16 : 28,
+                compact ? 24 : 48,
+                compact ? 16 : 28,
+                36,
+              ),
+              child: Align(
+                alignment: Alignment.topLeft,
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 960),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        widget.selected.title,
+                        key: const Key('settings-content-title'),
+                        style: const TextStyle(
+                          fontSize: 27,
+                          fontWeight: FontWeight.w700,
+                          color: Color(0xff242825),
+                        ),
+                      ),
+                      const SizedBox(height: 32),
+                      KeyedSubtree(
+                        key: ValueKey(widget.selected),
+                        child: widget.contentBuilder(widget.selected),
+                      ),
+                    ],
                   ),
                 ),
-                const SizedBox(height: 32),
-                KeyedSubtree(
-                  key: ValueKey(widget.selected),
-                  child: widget.contentBuilder(widget.selected),
-                ),
-              ],
+              ),
             ),
           ),
         ),
-      ),
+      ],
     ),
   );
 }
