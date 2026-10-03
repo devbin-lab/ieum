@@ -807,6 +807,7 @@ void main() {
       expect(find.byKey(const Key('participant-gh-1')), findsNothing);
       await tester.tap(find.byKey(const Key('participant-gh-2')));
       await tester.pump();
+      await tester.ensureVisible(find.text('관련 업무 보기'));
       await tester.tap(find.text('관련 업무 보기'));
       await tester.pump();
       expect(related, 'gh-2');

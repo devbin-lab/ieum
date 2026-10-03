@@ -109,7 +109,7 @@ class AccountMenu extends StatelessWidget {
         role,
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
-        style: const TextStyle(fontSize: 10, color: Color(0xff9990a5)),
+        style: const TextStyle(fontSize: 10, color: Color(0xff6e687b)),
       ),
     ],
   );

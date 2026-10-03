@@ -793,10 +793,29 @@ class _TeamPanelState extends State<TeamPanel> {
           const Text('관리자 · 프로젝트 소유자'),
         const Divider(height: 28),
         Text('관련 업무 ${tasks.length}건'),
-        for (final status in statuses.entries)
-          Text(
-            '${status.value}: ${tasks.where((t) => t.status == status.key).length}건',
-          ),
+        const SizedBox(height: 10),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            for (final status in statuses.entries)
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 8,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  border: Border.all(color: const Color(0xffe1e4e3)),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  '${status.value} ${tasks.where((t) => t.status == status.key).length}',
+                  style: const TextStyle(fontSize: 12),
+                ),
+              ),
+          ],
+        ),
         if (widget.onOpenTasks != null)
           TextButton.icon(
             onPressed: () {
@@ -862,13 +881,20 @@ class _TeamPanelState extends State<TeamPanel> {
         ],
       );
       return Card(
-        margin: const EdgeInsets.only(bottom: 6),
+        margin: EdgeInsets.zero,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.zero,
+          side: BorderSide(color: Color(0xffedf0ed), width: .5),
+        ),
         elevation: 0,
-        color: selected == person.id
-            ? const Color(0xffe9edeb)
-            : const Color(0xfff8f9f8),
+        color: selected == person.id ? const Color(0xffe9edeb) : Colors.white,
         child: ListTile(
           key: Key('participant-${person.id}'),
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 16,
+            vertical: 6,
+          ),
+          horizontalTitleGap: 16,
           focusNode: rowFocus.putIfAbsent(person.id, FocusNode.new),
           onTap: () => openDetail(person, wide),
           title: columns
@@ -963,32 +989,58 @@ class _TeamPanelState extends State<TeamPanel> {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
+          Row(
             children: [
-              OutlinedButton(
-                key: const Key('team-refresh'),
-                onPressed: busy ? null : refresh,
-                child: const Text('새로고침'),
+              Expanded(
+                child: Text(
+                  '참여자 ${widget.store.people.length}명',
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
               ),
-              if (widget.store.actor.has('role.manage'))
-                OutlinedButton.icon(
-                  key: const Key('team-add-role'),
-                  onPressed: busy || offline ? null : addRole,
-                  icon: const Icon(Icons.add, size: 16),
-                  label: const Text('역할 추가'),
-                ),
-              if (widget.store.owns) ...[
-                OutlinedButton(
+              if (widget.store.owns)
+                FilledButton.icon(
+                  key: const Key('team-invite'),
                   onPressed: busy || offline ? null : invite,
-                  child: const Text('GitHub 협업자 초대'),
+                  icon: const Icon(Icons.person_add_alt_1_outlined, size: 17),
+                  label: const Text('참여자 초대'),
                 ),
-                OutlinedButton(
-                  onPressed: busy || offline ? null : transfer,
-                  child: const Text('관리자 권한 이전'),
+              const SizedBox(width: 4),
+              IconButton(
+                key: const Key('team-refresh'),
+                tooltip: '참여자 새로고침',
+                onPressed: busy ? null : refresh,
+                icon: const Icon(Icons.refresh, size: 20),
+              ),
+              if (widget.store.actor.has('role.manage') || widget.store.owns)
+                MenuAnchor(
+                  menuChildren: [
+                    if (widget.store.actor.has('role.manage'))
+                      MenuItemButton(
+                        key: const Key('team-add-role'),
+                        leadingIcon: const Icon(Icons.add, size: 18),
+                        onPressed: busy || offline ? null : addRole,
+                        child: const Text('역할 추가'),
+                      ),
+                    if (widget.store.owns)
+                      MenuItemButton(
+                        key: const Key('team-transfer'),
+                        leadingIcon: const Icon(Icons.swap_horiz, size: 18),
+                        onPressed: busy || offline ? null : transfer,
+                        child: const Text('관리자 권한 이전'),
+                      ),
+                  ],
+                  builder: (_, controller, _) => IconButton(
+                    key: const Key('team-more'),
+                    tooltip: '참여자 관리 더 보기',
+                    onPressed: () => controller.isOpen
+                        ? controller.close()
+                        : controller.open(),
+                    icon: const Icon(Icons.more_horiz),
+                  ),
                 ),
-              ],
             ],
           ),
           const SizedBox(height: 12),
@@ -998,7 +1050,7 @@ class _TeamPanelState extends State<TeamPanel> {
             Text(error, style: const TextStyle(color: Colors.red)),
           if (checkedAt != null)
             Text(
-              '마지막 확인: ${checkedAt!.toLocal()}${offline ? ' · 오프라인/연결 실패 · 변경 불가' : ' · 저장은 GitHub에 즉시 반영'}',
+              '마지막 확인: ${checkedAt!.toLocal().hour.toString().padLeft(2, '0')}:${checkedAt!.toLocal().minute.toString().padLeft(2, '0')}${offline ? ' · 오프라인/연결 실패 · 변경 불가' : ' · 저장은 GitHub에 즉시 반영'}',
               style: const TextStyle(fontSize: 11),
             ),
           if (!widget.store.actor.has('member.manage'))
@@ -1059,7 +1111,13 @@ class _TeamPanelState extends State<TeamPanel> {
               ),
               TextButton(
                 key: const Key('participant-filter-reset'),
-                onPressed: resetFilters,
+                onPressed:
+                    query.isEmpty &&
+                        roleFilter.isEmpty &&
+                        stateFilter.isEmpty &&
+                        partFilter.isEmpty
+                    ? null
+                    : resetFilters,
                 child: const Text('필터 초기화'),
               ),
             ],

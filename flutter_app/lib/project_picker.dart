@@ -34,7 +34,7 @@ class ProjectPicker extends StatelessWidget {
         shape: WidgetStatePropertyAll(
           RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(12),
-            side: const BorderSide(color: Color(0xffe9e5ef)),
+            side: const BorderSide(color: Color(0xffe1e3e6)),
           ),
         ),
       ),
@@ -43,7 +43,7 @@ class ProjectPicker extends StatelessWidget {
           padding: EdgeInsets.fromLTRB(12, 8, 12, 6),
           child: Text(
             '내 프로젝트',
-            style: TextStyle(fontSize: 11, color: Color(0xff9990a5)),
+            style: TextStyle(fontSize: 11, color: Color(0xff6e687b)),
           ),
         ),
         for (final project in projects)
@@ -81,7 +81,7 @@ class ProjectPicker extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
                         fontSize: 10,
-                        color: Color(0xff9990a5),
+                        color: Color(0xff6e687b),
                       ),
                     ),
                   ],

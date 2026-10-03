@@ -446,7 +446,7 @@ void main() {
       expect(find.byKey(const Key('team-refresh')), findsOneWidget);
       expect(tester.takeException(), isNull);
       expect(find.byKey(const Key('account-settings')), findsNothing);
-      await tester.tap(find.byKey(const Key('nav-0')));
+      await tester.tap(find.byKey(const Key('project-home')));
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('task-list')), findsOneWidget);
       await tester.tap(find.byKey(const Key('sidebar-account')));

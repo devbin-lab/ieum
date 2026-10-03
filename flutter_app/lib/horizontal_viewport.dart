@@ -19,15 +19,20 @@ class _HorizontalViewportState extends State<HorizontalViewport> {
   }
 
   @override
-  Widget build(BuildContext context) => Scrollbar(
-    controller: controller,
-    thumbVisibility: true,
-    interactive: true,
-    child: SingleChildScrollView(
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) => Scrollbar(
       controller: controller,
-      scrollDirection: Axis.horizontal,
-      padding: const EdgeInsets.only(bottom: 12),
-      child: widget.child,
+      thumbVisibility: true,
+      interactive: true,
+      child: SingleChildScrollView(
+        controller: controller,
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.only(bottom: 12),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(minWidth: constraints.maxWidth),
+          child: widget.child,
+        ),
+      ),
     ),
   );
 }

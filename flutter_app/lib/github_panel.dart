@@ -6,7 +6,7 @@ import 'github_sync.dart';
 import 'popup_ui.dart';
 
 const _purple = Color(0xff7963d5),
-    _muted = Color(0xff9990a5),
+    _muted = Color(0xff6e687b),
     _border = Color(0xffe9e5ef);
 
 class GitHubPanel extends StatelessWidget {
@@ -155,7 +155,7 @@ class GitHubPanel extends StatelessWidget {
                 const SizedBox(width: 10),
                 const Expanded(
                   child: Text(
-                    'GitHub 자동 동기화',
+                    '연결 상태',
                     style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
                   ),
                 ),
@@ -179,19 +179,20 @@ class GitHubPanel extends StatelessWidget {
               spacing: 10,
               runSpacing: 8,
               children: [
-                FilledButton(
-                  key: const Key('github-configure'),
-                  onPressed: busy || sync.store.isProject
-                      ? null
-                      : () => configure(context),
-                  child: Text(
-                    sync.store.isProject
-                        ? '프로젝트 저장소에 연결됨'
-                        : config.enabled
-                        ? '연결 설정'
-                        : '저장소 연결',
+                if (!sync.store.isProject)
+                  FilledButton(
+                    key: const Key('github-configure'),
+                    onPressed: busy || sync.store.isProject
+                        ? null
+                        : () => configure(context),
+                    child: Text(
+                      sync.store.isProject
+                          ? '프로젝트 저장소에 연결됨'
+                          : config.enabled
+                          ? '연결 설정'
+                          : '저장소 연결',
+                    ),
                   ),
-                ),
                 if (sync.store.isProject && !config.enabled)
                   OutlinedButton(
                     onPressed: busy

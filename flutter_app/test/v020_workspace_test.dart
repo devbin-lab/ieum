@@ -126,7 +126,7 @@ void main() {
       );
       expect(picker.top - titlebar.bottom, lessThan(20));
       expect(
-        tester.getRect(find.byKey(const Key('nav-0'))).top - picker.bottom,
+        bell.top - picker.bottom,
         lessThan(20),
       );
       expect(find.byKey(const Key('nav-1')), findsNothing);
@@ -149,7 +149,7 @@ void main() {
       expect(settings.bottom, lessThanOrEqualTo(account.top));
       await capture('account-menu');
       // Clicking outside dismisses the menu without changing the current view.
-      await tester.tap(find.byKey(const Key('nav-0')));
+      await tester.tap(find.byKey(const Key('project-home')));
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('account-settings')), findsNothing);
       expect(find.byKey(const Key('task-list')), findsOneWidget);
@@ -193,12 +193,12 @@ void main() {
       }
       await tester.tap(find.byKey(const Key('settings-changes')));
       await tester.pumpAndSettle();
-      expect(find.text('개인 브랜치 · PR'), findsOneWidget);
+      expect(find.byKey(const Key('manual-transfer')), findsOneWidget);
       await tester.pumpWidget(const SizedBox());
       await tester.pumpWidget(app());
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('settings-shell')), findsOneWidget);
-      await tester.tap(find.byKey(const Key('nav-0')));
+      await tester.tap(find.byKey(const Key('project-home')));
       await tester.pumpAndSettle();
       await capture('sidebar-cleanup-offline-list');
       if (Platform.environment['IEUM_CAPTURE_UI'] == '1') {

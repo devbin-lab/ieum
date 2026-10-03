@@ -121,7 +121,7 @@ void main() {
         }
         final close = tester.getRect(find.byKey(const Key('window-close')));
         expect(close.right, lessThanOrEqualTo(size.width));
-        await tester.tap(find.byKey(const Key('nav-0')));
+        await tester.tap(find.byKey(const Key('project-home')));
         await tester.pumpAndSettle();
         await tester.ensureVisible(find.byKey(const Key('view-kanban')));
         await tester.tap(find.byKey(const Key('view-kanban')));
@@ -170,7 +170,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('settings-category-menu')), findsOneWidget);
       expect(tester.takeException(), isNull);
-      await tester.tap(find.byKey(const Key('nav-0')));
+      await tester.tap(find.byKey(const Key('project-home')));
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('task-list')), findsOneWidget);
       await tester.pumpWidget(const SizedBox());

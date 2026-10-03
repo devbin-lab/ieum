@@ -377,15 +377,37 @@ class _RolesPanelState extends State<RolesPanel> {
               return Column(
                 key: const Key('roles-stacked'),
                 crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [list, const SizedBox(height: 20), detail],
+                children: [
+                  IeumSelect(
+                    key: const Key('compact-role-select'),
+                    label: '역할 선택',
+                    value: id ?? '',
+                    values: {
+                      if (id == null) '': '역할을 선택하세요',
+                      for (final r in project.roles)
+                        r.id: '${r.name} · ${members(r.id).length}명',
+                      'owner': '관리자 · 시스템 권한',
+                      if (members('manager').isNotEmpty)
+                        'manager': '관리자 · 기존 권한',
+                      'worker': '작업자 · 시스템 권한',
+                      'viewer': '${definition('viewer').roleLabel} · 시스템 권한',
+                    },
+                    onChanged: (value) => setState(() {
+                      selected = value;
+                      showMembers = false;
+                    }),
+                  ),
+                  const SizedBox(height: 20),
+                  detail,
+                ],
               );
             }
             return Row(
               key: const Key('roles-columns'),
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                SizedBox(width: 220, child: list),
-                const SizedBox(width: 24),
+                SizedBox(width: 200, child: list),
+                const SizedBox(width: 20),
                 Expanded(child: detail),
               ],
             );

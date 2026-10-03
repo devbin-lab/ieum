@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 enum SettingsSection {
   general('일반', '개인', Icons.tune_rounded, '버전 계정 이름'),
   projectGeneral('일반', '프로젝트', Icons.folder_outlined, '저장 폴더 저장소'),
-  notifications('알림', '프로젝트', Icons.notifications_none_rounded, 'Discord 디스코드'),
+  notifications('알림', '프로젝트', Icons.notifications_none_rounded, '앱 알림함 작업 배정'),
   team('참여자 관리', '프로젝트', Icons.people_outline_rounded, '팀원 역할 가입 승인'),
   roles('역할 · 권한', '프로젝트', Icons.admin_panel_settings_outlined, '역할 추가 생성 권한'),
   assignments('파트별 배정', '프로젝트', Icons.account_tree_outlined, '담당자 검토자 작업'),
@@ -111,7 +111,7 @@ class _SettingsShellState extends State<SettingsShell> {
                           const Spacer(),
                           Flexible(
                             child: Text(
-                              widget.selected.title,
+                              widget.personal == true ? '개인 설정' : '프로젝트 설정',
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: const TextStyle(fontSize: 12),
@@ -166,35 +166,36 @@ class _SettingsShellState extends State<SettingsShell> {
             style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
           ),
         ),
-        TextField(
-          key: const Key('settings-search'),
-          controller: search,
-          onChanged: (_) => setState(() {}),
-          decoration: InputDecoration(
-            hintText: '검색',
-            prefixIcon: const Icon(Icons.search_rounded, size: 18),
-            suffixIcon: search.text.trim().isEmpty
-                ? null
-                : IconButton(
-                    tooltip: '검색 지우기',
-                    icon: const Icon(Icons.close_rounded, size: 16),
-                    onPressed: () => setState(search.clear),
-                  ),
-            fillColor: const Color(0xffecefee),
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(24),
-              borderSide: BorderSide.none,
-            ),
-            enabledBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(24),
-              borderSide: BorderSide.none,
-            ),
-            contentPadding: const EdgeInsets.symmetric(
-              horizontal: 12,
-              vertical: 10,
+        if (widget.personal != true)
+          TextField(
+            key: const Key('settings-search'),
+            controller: search,
+            onChanged: (_) => setState(() {}),
+            decoration: InputDecoration(
+              hintText: '검색',
+              prefixIcon: const Icon(Icons.search_rounded, size: 18),
+              suffixIcon: search.text.trim().isEmpty
+                  ? null
+                  : IconButton(
+                      tooltip: '검색 지우기',
+                      icon: const Icon(Icons.close_rounded, size: 16),
+                      onPressed: () => setState(search.clear),
+                    ),
+              fillColor: const Color(0xffecefee),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(24),
+                borderSide: BorderSide.none,
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(24),
+                borderSide: BorderSide.none,
+              ),
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 12,
+                vertical: 10,
+              ),
             ),
           ),
-        ),
         const SizedBox(height: 16),
         Expanded(
           child: Scrollbar(
@@ -204,16 +205,17 @@ class _SettingsShellState extends State<SettingsShell> {
               children: [
                 for (final group in ['개인', '프로젝트', '통합'])
                   if (sections.any((s) => s.group == group)) ...[
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(8, 12, 8, 8),
-                      child: Text(
-                        group,
-                        style: const TextStyle(
-                          fontSize: 11,
-                          color: Color(0xff7d8380),
+                    if (widget.personal != true)
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(8, 12, 8, 8),
+                        child: Text(
+                          group,
+                          style: const TextStyle(
+                            fontSize: 11,
+                            color: Color(0xff7d8380),
+                          ),
                         ),
                       ),
-                    ),
                     for (final section in sections.where(
                       (s) => s.group == group,
                     ))
@@ -271,23 +273,47 @@ class _SettingsShellState extends State<SettingsShell> {
     ),
   );
 
-  Widget content({bool compact = false}) => ColoredBox(
+  Widget content({bool compact = false}) => Material(
     color: Colors.white,
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        if (widget.personal == false)
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            decoration: const BoxDecoration(
-              border: Border(bottom: BorderSide(color: Color(0xffe1e4e3))),
-            ),
-            child: Text(
-              '${widget.projectName ?? ''} · 이 프로젝트에만 적용',
-              key: const Key('settings-project-scope'),
-              style: const TextStyle(fontSize: 12),
-            ),
+        Container(
+          key: const Key('settings-page-header'),
+          padding: EdgeInsets.fromLTRB(
+            compact ? 16 : 28,
+            20,
+            compact ? 16 : 28,
+            20,
           ),
+          decoration: const BoxDecoration(
+            border: Border(bottom: BorderSide(color: Color(0xffe8ebe9))),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                widget.selected.title,
+                key: const Key('settings-content-title'),
+                style: const TextStyle(
+                  fontSize: 24,
+                  fontWeight: FontWeight.w700,
+                  color: Color(0xff242825),
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                widget.personal == false
+                    ? '${widget.projectName ?? ''} · 이 프로젝트에만 적용'
+                    : '계정과 이 컴퓨터의 앱 설정을 관리합니다.',
+                key: widget.personal == false
+                    ? const Key('settings-project-scope')
+                    : null,
+                style: const TextStyle(fontSize: 12, color: Color(0xff666e68)),
+              ),
+            ],
+          ),
+        ),
         Expanded(
           child: Scrollbar(
             controller: contentScroll,
@@ -296,32 +322,20 @@ class _SettingsShellState extends State<SettingsShell> {
               controller: contentScroll,
               padding: EdgeInsets.fromLTRB(
                 compact ? 16 : 28,
-                compact ? 24 : 48,
+                24,
                 compact ? 16 : 28,
                 36,
               ),
               child: Align(
                 alignment: Alignment.topLeft,
                 child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 960),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        widget.selected.title,
-                        key: const Key('settings-content-title'),
-                        style: const TextStyle(
-                          fontSize: 27,
-                          fontWeight: FontWeight.w700,
-                          color: Color(0xff242825),
-                        ),
-                      ),
-                      const SizedBox(height: 32),
-                      KeyedSubtree(
-                        key: ValueKey(widget.selected),
-                        child: widget.contentBuilder(widget.selected),
-                      ),
-                    ],
+                  constraints: const BoxConstraints(maxWidth: 1120),
+                  child: SizedBox(
+                    width: double.infinity,
+                    child: KeyedSubtree(
+                      key: ValueKey(widget.selected),
+                      child: widget.contentBuilder(widget.selected),
+                    ),
                   ),
                 ),
               ),

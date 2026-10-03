@@ -83,7 +83,7 @@ class _RolePermissionGroupsState extends State<RolePermissionGroups> {
                   child: Column(
                     children: [
                       for (final id in group.value.where(matches)) ...[
-                        if (id != group.value.first)
+                        if (id != group.value.where(matches).first)
                           const Divider(height: 1, indent: 14, endIndent: 14),
                         if (onChanged != null)
                           CheckboxListTile(
@@ -96,11 +96,11 @@ class _RolePermissionGroupsState extends State<RolePermissionGroups> {
                             controlAffinity: ListTileControlAffinity.trailing,
                             title: Text(
                               permissionLabels[id]!,
-                              style: const TextStyle(fontSize: 12),
+                              style: const TextStyle(fontSize: 13),
                             ),
                             subtitle: Text(
                               permissionDescriptions[id]!,
-                              style: const TextStyle(fontSize: 11, height: 1.5),
+                              style: const TextStyle(fontSize: 12, height: 1.5),
                             ),
                             value: permissions.contains(id),
                             onChanged: actor?.has(id) == true
@@ -120,13 +120,13 @@ class _RolePermissionGroupsState extends State<RolePermissionGroups> {
                                     children: [
                                       Text(
                                         permissionLabels[id]!,
-                                        style: const TextStyle(fontSize: 12),
+                                        style: const TextStyle(fontSize: 13),
                                       ),
                                       const SizedBox(height: 4),
                                       Text(
                                         permissionDescriptions[id]!,
                                         style: const TextStyle(
-                                          fontSize: 11,
+                                          fontSize: 12,
                                           height: 1.5,
                                           color: Color(0xff737b76),
                                         ),

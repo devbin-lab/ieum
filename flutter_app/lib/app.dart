@@ -24,20 +24,20 @@ import 'roles_panel.dart';
 
 const purple = Color(0xff7963d5),
     ink = Color(0xff302b3c),
-    muted = Color(0xff9990a5),
-    border = Color(0xffe9e5ef),
-    canvas = Color(0xfffaf9fc);
+    muted = Color(0xff6e687b),
+    border = Color(0xffe1e3e6),
+    canvas = Color(0xfffafbfa);
 Color statusColor(String id) => {
-  'todo': const Color(0xff9895a2),
+  'todo': const Color(0xff6e687b),
   'doing': purple,
-  'review': const Color(0xffbd9655),
-  'rework': const Color(0xffc47c89),
-  'done': const Color(0xff65987d),
+  'review': const Color(0xff8c652d),
+  'rework': const Color(0xffa0445a),
+  'done': const Color(0xff417458),
 }[id]!;
 Color priorityColor(String id) => id == 'high'
-    ? const Color(0xffbe8951)
+    ? const Color(0xff9a622b)
     : id == 'low'
-    ? const Color(0xff7b9b84)
+    ? const Color(0xff50735a)
     : muted;
 Widget badge(String text, {Color color = muted}) => Container(
   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
@@ -130,7 +130,11 @@ class IeumApp extends StatelessWidget {
         style: TextButton.styleFrom(
           foregroundColor: purple,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-          textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+          textStyle: const TextStyle(
+            fontFamily: 'Malgun Gothic',
+            fontSize: 13,
+            fontWeight: FontWeight.w600,
+          ),
         ),
       ),
       textTheme: const TextTheme(
@@ -154,15 +158,23 @@ class IeumApp extends StatelessWidget {
       filledButtonTheme: FilledButtonThemeData(
         style: FilledButton.styleFrom(
           backgroundColor: purple,
-          padding: const EdgeInsets.symmetric(horizontal: 19, vertical: 17),
+          textStyle: const TextStyle(
+            fontFamily: 'Malgun Gothic',
+            fontSize: 13,
+            fontWeight: FontWeight.w600,
+          ),
+          minimumSize: const Size(40, 40),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
         ),
       ),
       outlinedButtonTheme: OutlinedButtonThemeData(
         style: OutlinedButton.styleFrom(
-          foregroundColor: muted,
+          foregroundColor: ink,
+          textStyle: const TextStyle(fontFamily: 'Malgun Gothic', fontSize: 13),
+          minimumSize: const Size(40, 40),
           side: const BorderSide(color: border),
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 17),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
         ),
       ),
@@ -462,7 +474,9 @@ class _WorkspaceState extends State<Workspace> {
         icon: Icons.notifications_none_rounded,
         content: SizedBox(
           width: 470,
-          height: 440,
+          height: s.notifications.isEmpty
+              ? 130
+              : min(440, MediaQuery.sizeOf(ctx).height * .55),
           child: AnimatedBuilder(
             animation: s,
             builder: (_, _) => ListView(
@@ -615,11 +629,15 @@ class _WorkspaceState extends State<Workspace> {
                                             crossAxisAlignment:
                                                 CrossAxisAlignment.start,
                                             children: [
-                                              const Text(
-                                                'TEAM WORKSPACE',
-                                                style: TextStyle(
-                                                  fontSize: 9,
-                                                  letterSpacing: 2,
+                                              Text(
+                                                s.project?.name ?? '예시 작업 공간',
+                                                key: const Key(
+                                                  'workspace-project-name',
+                                                ),
+                                                maxLines: 1,
+                                                overflow: TextOverflow.ellipsis,
+                                                style: const TextStyle(
+                                                  fontSize: 12,
                                                   color: muted,
                                                 ),
                                               ),
@@ -784,14 +802,6 @@ class _WorkspaceState extends State<Workspace> {
           selected: page == 0,
         ),
         const SizedBox(height: 8),
-        railButton(
-          'nav-0',
-          '일정 · 작업',
-          Icons.calendar_month_outlined,
-          () => rememberView(() => page = 0),
-          selected: page == 0,
-        ),
-        const SizedBox(height: 8),
         IconButton(
           key: const Key('sidebar-notifications'),
           tooltip: s.isProject ? '내 알림' : '알림 미리보기',
@@ -862,8 +872,8 @@ class _WorkspaceState extends State<Workspace> {
           (i) => SizedBox(
             width: width,
             child: Container(
-              height: 106,
-              padding: const EdgeInsets.all(20),
+              constraints: BoxConstraints(minHeight: columns == 4 ? 106 : 82),
+              padding: EdgeInsets.all(columns == 4 ? 20 : 12),
               decoration: BoxDecoration(
                 color: Colors.white,
                 border: Border.all(color: border),
@@ -971,7 +981,7 @@ class _WorkspaceState extends State<Workspace> {
           backgroundColor: Colors.white,
           selectedBackgroundColor: const Color(0xffeee8fb),
           side: const BorderSide(color: border),
-          textStyle: const TextStyle(fontSize: 11),
+          textStyle: const TextStyle(fontFamily: 'Malgun Gothic', fontSize: 12),
           iconSize: 16,
           padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 10),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(7)),
@@ -1230,7 +1240,84 @@ class _WorkspaceState extends State<Workspace> {
       ),
     ),
   );
-  Widget schedule(List<WorkTask> tasks) => Container(
+  Widget schedule(List<WorkTask> tasks) => LayoutBuilder(
+    builder: (context, constraints) => constraints.maxWidth < 700
+        ? compactSchedule(tasks)
+        : scheduleTable(tasks),
+  );
+
+  Widget compactSchedule(List<WorkTask> tasks) => Material(
+    key: const Key('task-list'),
+    color: Colors.white,
+    clipBehavior: Clip.antiAlias,
+    shape: RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(10),
+      side: const BorderSide(color: border),
+    ),
+    child: Column(
+      children: [
+        for (var i = 0; i < tasks.length; i++) ...[
+          if (i > 0) const Divider(height: 1, color: border),
+          InkWell(
+            key: Key('compact-task-${tasks[i].id}'),
+            onTap: () => details(tasks[i]),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          tasks[i].title,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      badge(
+                        statuses[tasks[i].status]!,
+                        color: statusColor(tasks[i].status),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  Wrap(
+                    spacing: 12,
+                    runSpacing: 6,
+                    children: [
+                      Text(
+                        '${tasks[i].part} · ${s.member(tasks[i].currentId).name}',
+                        style: const TextStyle(fontSize: 12, color: muted),
+                      ),
+                      Text(
+                        '마감 ${tasks[i].dueDate.isEmpty ? '미정' : tasks[i].dueDate}',
+                        style: const TextStyle(fontSize: 12, color: muted),
+                      ),
+                      Text(
+                        priorities[tasks[i].priority]!,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: priorityColor(tasks[i].priority),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ],
+    ),
+  );
+
+  Widget scheduleTable(List<WorkTask> tasks) => Container(
     key: const Key('task-list'),
     width: double.infinity,
     decoration: BoxDecoration(
@@ -1245,8 +1332,9 @@ class _WorkspaceState extends State<Workspace> {
         headingRowHeight: 49,
         dataRowMinHeight: 70,
         dataRowMaxHeight: 70,
-        headingTextStyle: const TextStyle(fontSize: 10, color: muted),
-        dataTextStyle: const TextStyle(fontSize: 11, color: ink),
+        headingTextStyle: const TextStyle(fontSize: 12, color: muted),
+        dataTextStyle: const TextStyle(fontSize: 12, color: ink),
+        dividerThickness: .5,
         columns: [
           '작업내용',
           '상태',
@@ -1310,70 +1398,11 @@ class _WorkspaceState extends State<Workspace> {
   Widget changesPanel() => Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
-      Container(
-        padding: const EdgeInsets.all(23),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          border: Border.all(color: border),
-          borderRadius: BorderRadius.circular(10),
-        ),
-        child: Wrap(
-          spacing: 25,
-          runSpacing: 15,
-          children: ['개인 SQLite', '변경안 JSON', '개인 브랜치 · PR', 'main 통합본']
-              .asMap()
-              .entries
-              .map(
-                (e) => Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    badge('${e.key + 1}', color: purple),
-                    const SizedBox(width: 10),
-                    Text(
-                      e.value,
-                      style: const TextStyle(fontSize: 11, color: muted),
-                    ),
-                    if (e.key < 3) ...[
-                      const SizedBox(width: 18),
-                      const Icon(Icons.arrow_forward, size: 15, color: muted),
-                    ],
-                  ],
-                ),
-              )
-              .toList(),
-        ),
-      ),
-      const SizedBox(height: 27),
-      Wrap(
-        alignment: WrapAlignment.spaceBetween,
-        runSpacing: 15,
-        spacing: 20,
-        children: [
-          heading(
-            '통합 전 변경 ${s.changes.length}건',
-            '기준 통합본: ${s.baseRevision} · 전송 상태는 GitHub 동기화에서 확인하세요.',
-          ),
-          Wrap(
-            spacing: 10,
-            runSpacing: 8,
-            children: [
-              OutlinedButton.icon(
-                onPressed: fileBusy || !s.canImportManually ? null : import,
-                icon: const Icon(Icons.upload_outlined, size: 16),
-                label: const Text('통합본 가져오기', style: TextStyle(fontSize: 11)),
-              ),
-              const SizedBox(width: 10),
-              FilledButton.icon(
-                onPressed: fileBusy || s.changes.isEmpty ? null : export,
-                icon: const Icon(Icons.download_outlined, size: 16),
-                label: const Text('변경안 내보내기', style: TextStyle(fontSize: 11)),
-              ),
-            ],
-          ),
-        ],
+      heading(
+        '통합 전 변경 ${s.changes.length}건',
+        '작업에서 저장한 변경 내용입니다. 전송 진행 상황은 GitHub 동기화에서 확인하세요.',
       ),
       const SizedBox(height: 20),
-      if (!s.canImportManually) info('읽기 전용 · 수동 가져오기는 작업 변경 권한이 필요합니다.'),
       if (s.changes.isEmpty)
         Container(
           width: double.infinity,
@@ -1458,8 +1487,38 @@ class _WorkspaceState extends State<Workspace> {
           ),
         ),
       ),
-      info(
-        '자동 동기화 중 충돌한 작업은 개인 변경을 보존하고, 나머지 작업은 계속 가져옵니다. 설정의 GitHub 동기화에서 충돌 내용을 확인할 수 있습니다.',
+      const SizedBox(height: 20),
+      ExpansionTile(
+        key: const Key('manual-transfer'),
+        tilePadding: EdgeInsets.zero,
+        title: const Text('수동 가져오기 · 내보내기', style: TextStyle(fontSize: 13)),
+        subtitle: const Text(
+          '자동 동기화를 사용할 수 없을 때',
+          style: TextStyle(fontSize: 12, color: muted),
+        ),
+        childrenPadding: const EdgeInsets.only(bottom: 16),
+        children: [
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Wrap(
+              spacing: 10,
+              runSpacing: 8,
+              children: [
+                OutlinedButton.icon(
+                  onPressed: fileBusy || !s.canImportManually ? null : import,
+                  icon: const Icon(Icons.upload_outlined, size: 16),
+                  label: const Text('통합본 가져오기'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: fileBusy || s.changes.isEmpty ? null : export,
+                  icon: const Icon(Icons.download_outlined, size: 16),
+                  label: const Text('변경안 내보내기'),
+                ),
+              ],
+            ),
+          ),
+          if (!s.canImportManually) info('읽기 전용 · 수동 가져오기는 작업 변경 권한이 필요합니다.'),
+        ],
       ),
     ],
   );
@@ -1541,7 +1600,6 @@ class _WorkspaceState extends State<Workspace> {
                 '담당 파트',
                 '기본 작업자',
                 '검토자',
-                '후속 파트 (설계)',
               ].map((v) => DataColumn(label: Text(v))).toList(),
               rows: s.partRules
                   .map(
@@ -1550,7 +1608,6 @@ class _WorkspaceState extends State<Workspace> {
                         DataCell(Text(r.part)),
                         DataCell(Text(s.member(r.assigneeId).name)),
                         DataCell(Text(s.member(r.reviewerId).name)),
-                        DataCell(Text(r.nextPart.isEmpty ? '—' : r.nextPart)),
                       ],
                     ),
                   )
@@ -1574,7 +1631,6 @@ class _WorkspaceState extends State<Workspace> {
             '작업 배정, 검토 요청, 재작업 결과를 확인합니다.',
             '${s.unreadNotificationCount}개 읽지 않음',
           ),
-          ('Discord', '현재 작업 알림은 이음의 앱 알림함으로 전달됩니다.', '미연결'),
         ]),
         const SizedBox(height: 16),
         OutlinedButton.icon(
@@ -1719,20 +1775,22 @@ class _WorkspaceState extends State<Workspace> {
   Widget generalSettings() => Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
-      settingsGroup('계정', [
-        ('이름', '참여 중인 프로젝트에서 사용하는 표시 이름입니다.', s.actor.name),
-        ('GitHub 계정', '표시 이름과 별개의 로그인 식별자입니다.', s.actor.login),
-      ]),
-      if (s.isProject && widget.session != null)
-        Align(
-          alignment: Alignment.centerLeft,
-          child: TextButton.icon(
-            key: const Key('change-account-name'),
-            onPressed: nameBusy ? null : renameAccount,
-            icon: const Icon(Icons.edit_outlined, size: 16),
-            label: Text(nameBusy ? '이름 반영 중…' : '모든 프로젝트의 이름 변경'),
-          ),
-        ),
+      settingsGroup(
+        '계정',
+        [
+          ('이름', '참여 중인 모든 프로젝트에서 사용하는 표시 이름입니다.', s.actor.name),
+          ('GitHub 계정', '표시 이름과 별개의 로그인 식별자입니다.', s.actor.login),
+        ],
+        actions: {
+          if (s.isProject && widget.session != null)
+            '이름': OutlinedButton.icon(
+              key: const Key('change-account-name'),
+              onPressed: nameBusy ? null : renameAccount,
+              icon: const Icon(Icons.edit_outlined, size: 16),
+              label: Text(nameBusy ? '이름 반영 중…' : '이름 변경'),
+            ),
+        },
+      ),
       if (nameNotice.isNotEmpty)
         Padding(
           padding: const EdgeInsets.only(top: 8),
@@ -1741,99 +1799,115 @@ class _WorkspaceState extends State<Workspace> {
             style: const TextStyle(fontSize: 12),
           ),
         ),
-      const SizedBox(height: 32),
-      settingsGroup('앱 정보', [('이음 버전', '새 버전을 확인하고 다운로드합니다.', appVersion)]),
-      const Align(alignment: Alignment.centerLeft, child: UpdateButton()),
+      const SizedBox(height: 28),
+      settingsGroup(
+        '앱 정보',
+        [('이음 버전', '새 버전을 확인하고 다운로드합니다.', appVersion)],
+        actions: {'이음 버전': const UpdateButton()},
+      ),
     ],
   );
 
-  Widget settingsGroup(String title, List<(String, String, String)> rows) =>
-      Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            title,
-            style: const TextStyle(
-              fontSize: 13,
-              fontWeight: FontWeight.w600,
-              color: Color(0xff303632),
-            ),
-          ),
-          const SizedBox(height: 14),
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              border: Border.all(color: const Color(0xffe5e8e6)),
-              borderRadius: BorderRadius.circular(16),
-            ),
-            child: Column(
-              children: [
-                for (var i = 0; i < rows.length; i++) ...[
-                  if (i > 0) const Divider(height: 1, color: Color(0xffeceeec)),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    child: settingRow(rows[i]),
-                  ),
-                ],
-              ],
-            ),
-          ),
-        ],
-      );
-  Widget settingRow((String, String, String) row) => LayoutBuilder(
-    builder: (context, constraints) {
-      final label = Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            row.$1,
+  Widget settingsGroup(
+    String title,
+    List<(String, String, String)> rows, {
+    Map<String, Widget> actions = const {},
+  }) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Text(
+        title,
+        style: const TextStyle(
+          fontSize: 13,
+          fontWeight: FontWeight.w600,
+          color: Color(0xff303632),
+        ),
+      ),
+      const SizedBox(height: 14),
+      Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          border: Border.all(color: const Color(0xffe5e8e6)),
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Column(
+          children: [
+            for (var i = 0; i < rows.length; i++) ...[
+              if (i > 0) const Divider(height: 1, color: Color(0xffeceeec)),
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                child: settingRow(rows[i], action: actions[rows[i].$1]),
+              ),
+            ],
+          ],
+        ),
+      ),
+    ],
+  );
+  Widget settingRow((String, String, String) row, {Widget? action}) =>
+      LayoutBuilder(
+        builder: (context, constraints) {
+          final label = Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                row.$1,
+                style: const TextStyle(
+                  fontSize: 12,
+                  height: 1.5,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 5),
+              Text(
+                row.$2,
+                style: const TextStyle(
+                  fontSize: 11,
+                  color: Color(0xff7d8380),
+                  height: 1.5,
+                ),
+              ),
+            ],
+          );
+          final valueText = SelectableText(
+            row.$3,
+            textAlign: TextAlign.left,
             style: const TextStyle(
               fontSize: 12,
-              height: 1.5,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          const SizedBox(height: 5),
-          Text(
-            row.$2,
-            style: const TextStyle(
-              fontSize: 11,
-              color: Color(0xff7d8380),
+              color: Color(0xff666e68),
               height: 1.5,
             ),
-          ),
-        ],
+          );
+          final value = Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              valueText,
+              if (action != null) ...[const SizedBox(height: 10), action],
+            ],
+          );
+          return constraints.maxWidth < 560
+              ? Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [label, const SizedBox(height: 12), value],
+                )
+              : Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    SizedBox(width: 220, child: label),
+                    const SizedBox(width: 24),
+                    Expanded(child: value),
+                  ],
+                );
+        },
       );
-      final value = SelectableText(
-        row.$3,
-        textAlign: TextAlign.left,
-        style: const TextStyle(
-          fontSize: 12,
-          color: Color(0xff666e68),
-          height: 1.5,
-        ),
-      );
-      return constraints.maxWidth < 560
-          ? Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [label, const SizedBox(height: 12), value],
-            )
-          : Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                SizedBox(width: 220, child: label),
-                const SizedBox(width: 24),
-                Expanded(child: value),
-              ],
-            );
-    },
-  );
   Widget detailBody(BuildContext ctx, WorkTask t) {
     final canEdit = s.canEdit(t);
     final lockReason = t.status == 'review' || !s.canEditContent(t)
-        ? s.editLockReason(t)
+        ? (t.status == 'review' && s.canMove(t, 'done')
+              ? '제출된 본문은 잠겨 있습니다. 검토 후 완료 승인 또는 재작업 요청을 선택하세요.'
+              : s.editLockReason(t))
         : '';
     final history = s.activity.where((a) => a['taskId'] == t.id);
     return ListView(

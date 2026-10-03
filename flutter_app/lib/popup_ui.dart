@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 
 const _accent = Color(0xff7963d5),
     _text = Color(0xff302b3c),
-    _muted = Color(0xff9990a5),
+    _muted = Color(0xff6e687b),
     _line = Color(0xffe9e5ef);
 
 /// Anchored, keyboard-accessible selection menu shared by every dropdown.
@@ -209,11 +209,13 @@ class IeumDialog extends StatelessWidget {
     this.actions = const [],
     this.icon = Icons.auto_awesome_outlined,
     this.width = 540,
+    this.closeTooltip = '팝업 닫기',
   });
   final Widget title, content;
   final List<Widget> actions;
   final IconData icon;
   final double width;
+  final String closeTooltip;
 
   @override
   Widget build(BuildContext context) => Dialog(
@@ -256,7 +258,7 @@ class IeumDialog extends StatelessWidget {
                   ),
                 ),
                 IconButton(
-                  tooltip: '팝업 닫기',
+                  tooltip: closeTooltip,
                   onPressed: () => Navigator.pop(context),
                   icon: const Icon(
                     Icons.close_rounded,

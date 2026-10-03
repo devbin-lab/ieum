@@ -58,7 +58,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('settings-github')));
       await tester.pumpAndSettle();
-      expect(find.text('GitHub 자동 동기화'), findsOneWidget);
+      expect(find.text('연결 상태'), findsOneWidget);
       for (final size in [const Size(1480, 940), const Size(1160, 740)]) {
         tester.view.physicalSize = size;
         await tester.pumpAndSettle();
@@ -99,7 +99,7 @@ void main() {
     expect(tester.takeException(), isNull);
     for (final i in [1, 2, 0]) {
       if (i == 0) {
-        await tester.tap(find.byKey(const Key('nav-0')));
+        await tester.tap(find.byKey(const Key('project-home')));
       } else {
         await settings(tester, changes: i == 1);
       }
@@ -224,7 +224,7 @@ void main() {
     expect(find.text('1개 작업 · 자동 저장'), findsOneWidget);
     await settings(tester, changes: true);
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('nav-0')));
+    await tester.tap(find.byKey(const Key('project-home')));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('task-list')), findsOneWidget);
     expect(tester.widget<DataTable>(find.byType(DataTable)).rows, hasLength(1));
