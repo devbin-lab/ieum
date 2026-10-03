@@ -631,6 +631,12 @@ class _WorkspaceState extends State<Workspace> {
                                       info(
                                         '가입 승인 대기 중입니다. 개설자가 역할을 부여하면 자동 동기화 후 작업을 진행할 수 있습니다.',
                                       ),
+                                    if (s.isProject &&
+                                        s.actor.role != 'pending' &&
+                                        !s.actor.active)
+                                      info(
+                                        '비활성화된 참여자입니다. 작업 수정·진행·업로드가 차단됩니다. 관리자에게 활성화를 요청하세요.',
+                                      ),
                                     if (page == 0) ...[
                                       stats(all),
                                       const SizedBox(height: 27),
@@ -1594,6 +1600,11 @@ class _WorkspaceState extends State<Workspace> {
       const SizedBox(height: 32),
       settingsGroup('계정', [
         ('이름', '참여 중인 프로젝트에서 사용하는 표시 이름입니다.', s.actor.name),
+        (
+          '상태',
+          '비활성화된 참여자는 작업을 수정하거나 업로드할 수 없습니다.',
+          s.actor.active ? '활성화' : '비활성화',
+        ),
         (
           '역할',
           '프로젝트에서 지정된 역할과 권한입니다.',

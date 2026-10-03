@@ -7,6 +7,7 @@ import 'models.dart';
 import 'popup_ui.dart';
 import 'project_service.dart';
 import 'store.dart';
+import 'role_editor.dart';
 
 class TeamPanel extends StatefulWidget {
   const TeamPanel({
@@ -185,40 +186,82 @@ class _TeamPanelState extends State<TeamPanel> {
     }
   }
 
+  List<String> get assignableRoles =>
+      [
+            'manager',
+            'worker',
+            'viewer',
+            ...widget.store.project!.roles.map((r) => r.id),
+          ]
+          .where(
+            (id) =>
+                (widget.store.owns || id != 'manager') &&
+                widget.store.actor.permissions.containsAll(
+                  rolePerson(id).permissions,
+                ),
+          )
+          .toList();
+  Person rolePerson(String id) =>
+      Person('', '', '', id, 0).resolved(widget.store.project!.roles);
+
+  Future<ProjectRole?> addRole() async {
+    try {
+      final latest = await widget.session.loadProject(widget.sync.config);
+      if (!mounted) return null;
+      widget.store.updateProject(latest);
+      if (!widget.store.actor.has('role.manage')) {
+        throw StateError('역할 관리 권한이 필요합니다.');
+      }
+      final role = await showProjectRoleDialog(context, widget.store.actor);
+      if (role == null || !mounted) return null;
+      setState(() {
+        busy = true;
+        error = '';
+      });
+      final next = await widget.session.saveRole(widget.sync.config, role);
+      widget.store.updateProject(next);
+      return role;
+    } catch (e) {
+      if (mounted) setState(() => error = '$e');
+      return null;
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
+  Future<void> setEnabled(Person person, bool enabled) async {
+    setState(() {
+      busy = true;
+      error = '';
+    });
+    try {
+      final next = await widget.session.setMemberEnabled(
+        widget.sync.config,
+        person.id,
+        enabled,
+      );
+      widget.store.updateProject(next);
+    } catch (e) {
+      if (mounted) setState(() => error = '$e');
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
   Future<void> assign(Person person, {Map<String, dynamic>? request}) async {
-    final assignable =
-        [
-              'manager',
-              'worker',
-              'viewer',
-              'disabled',
-              ...widget.store.project!.roles.map((r) => r.id),
-            ]
-            .where(
-              (id) =>
-                  (widget.store.owns || id != 'manager') &&
-                  widget.store.actor.permissions.containsAll(
-                    Person(
-                      '',
-                      '',
-                      '',
-                      id,
-                      0,
-                    ).resolved(widget.store.project!.roles).permissions,
-                  ),
-            )
-            .toList();
-    var role = assignable.contains(person.role)
+    var role = assignableRoles.contains(person.role)
         ? person.role
-        : assignable.contains('worker')
+        : assignableRoles.contains('worker')
         ? 'worker'
-        : assignable.first;
-    final parts = person.parts.toSet();
+        : assignableRoles.first;
+    var enabled = person.role == 'pending' ? true : person.enabled;
+    var adding = false;
+    var dialogMessage = '';
     final result = await showDialog<Person>(
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, update) => IeumDialog(
-          title: Text('${person.name} · 역할과 담당 파트'),
+          title: Text('${person.name} · 역할과 상태'),
           icon: Icons.admin_panel_settings_outlined,
           content: Column(
             mainAxisSize: MainAxisSize.min,
@@ -229,66 +272,146 @@ class _TeamPanelState extends State<TeamPanel> {
                 style: const TextStyle(color: Color(0xff9990a5)),
               ),
               const SizedBox(height: 18),
-              IeumSelect(
-                key: const Key('member-role'),
-                value: role,
-                values: {
-                  for (final id in assignable)
-                    id: Person(
-                      '',
-                      '',
-                      '',
-                      id,
-                      0,
-                    ).resolved(widget.store.project!.roles).roleLabel,
-                },
-                onChanged: (value) => update(() => role = value),
-              ),
-              const SizedBox(height: 18),
-              const Text('담당 파트'),
+              const Text('상태', style: TextStyle(fontWeight: FontWeight.w600)),
               const SizedBox(height: 8),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
+              Row(
                 children: [
-                  for (final rule in rules)
-                    FilterChip(
-                      label: Text(rule.part),
-                      selected: parts.contains(rule.part),
-                      onSelected: (checked) => update(
-                        () => checked
-                            ? parts.add(rule.part)
-                            : parts.remove(rule.part),
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      key: const Key('member-enabled'),
+                      onPressed:
+                          widget.store.actor.has('member.status') && !adding
+                          ? () => update(() => enabled = true)
+                          : null,
+                      icon: Icon(
+                        enabled ? Icons.check_circle : Icons.circle_outlined,
+                        size: 17,
                       ),
+                      label: const Text('활성화'),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      key: const Key('member-disabled'),
+                      onPressed:
+                          widget.store.actor.has('member.status') && !adding
+                          ? () => update(() => enabled = false)
+                          : null,
+                      icon: Icon(
+                        !enabled ? Icons.check_circle : Icons.circle_outlined,
+                        size: 17,
+                      ),
+                      label: const Text('비활성화'),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Text(
+                widget.store.actor.has('member.status')
+                    ? '비활성화하면 작업 수정·진행·업로드가 차단됩니다. 역할은 보존됩니다.'
+                    : '상태는 참여자 상태 관리 권한이 있는 관리자만 변경할 수 있습니다.',
+                style: const TextStyle(fontSize: 11, height: 1.6),
+              ),
+              const SizedBox(height: 20),
+              Row(
+                children: [
+                  const Expanded(
+                    child: Text(
+                      '역할',
+                      style: TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                  if (widget.store.actor.has('role.manage'))
+                    TextButton.icon(
+                      key: const Key('member-add-role'),
+                      onPressed: adding
+                          ? null
+                          : () async {
+                              update(() {
+                                adding = true;
+                                dialogMessage = '';
+                              });
+                              final created = await addRole();
+                              if (!ctx.mounted) return;
+                              update(() {
+                                adding = false;
+                                if (created != null) {
+                                  role = created.id;
+                                } else {
+                                  dialogMessage = error;
+                                }
+                              });
+                            },
+                      icon: const Icon(Icons.add, size: 16),
+                      label: const Text('역할 추가'),
                     ),
                 ],
               ),
-              const SizedBox(height: 14),
-              Text(
-                Person('', '', '', role, 0)
-                    .resolved(widget.store.project!.roles)
-                    .permissions
-                    .map((p) => permissionLabels[p])
-                    .join(' · '),
-                style: TextStyle(fontSize: 11, height: 1.7),
-              ),
+              const SizedBox(height: 8),
+              for (final id in assignableRoles)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Material(
+                    color: role == id ? const Color(0xfff0ebfc) : Colors.white,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                      side: const BorderSide(color: Color(0xffe9e5ef)),
+                    ),
+                    child: ListTile(
+                      key: Key('member-role-$id'),
+                      dense: true,
+                      leading: Icon(
+                        role == id
+                            ? Icons.radio_button_checked
+                            : Icons.radio_button_off,
+                        size: 19,
+                      ),
+                      title: Text(
+                        rolePerson(id).roleLabel,
+                        style: const TextStyle(fontSize: 12),
+                      ),
+                      subtitle: Text(
+                        rolePerson(id).permissions.isEmpty
+                            ? '목록 조회'
+                            : rolePerson(id).permissions
+                                  .map((p) => permissionLabels[p])
+                                  .join(' · '),
+                        style: const TextStyle(fontSize: 10, height: 1.5),
+                      ),
+                      onTap: adding ? null : () => update(() => role = id),
+                    ),
+                  ),
+                ),
+              if (dialogMessage.isNotEmpty)
+                Text(
+                  dialogMessage,
+                  style: const TextStyle(
+                    color: Color(0xffbd6b7a),
+                    fontSize: 11,
+                  ),
+                ),
             ],
           ),
           actions: [
             TextButton(
-              onPressed: () => Navigator.pop(ctx),
+              onPressed: adding ? null : () => Navigator.pop(ctx),
               child: const Text('취소'),
             ),
             FilledButton(
-              onPressed: () => Navigator.pop(
-                ctx,
-                Person.fromJson({
-                  ...person.json,
-                  'role': role,
-                  'parts': parts.toList(),
-                }),
-              ),
-              child: Text(request == null ? '역할 저장' : '가입 승인'),
+              key: const Key('save-member'),
+              onPressed: adding
+                  ? null
+                  : () => Navigator.pop(
+                      ctx,
+                      Person.fromJson({
+                        ...person.json,
+                        'role': role,
+                        'enabled': enabled,
+                      }),
+                    ),
+              child: Text(request == null ? '저장' : '가입 승인'),
             ),
           ],
         ),
@@ -300,13 +423,13 @@ class _TeamPanelState extends State<TeamPanel> {
       error = '';
     });
     try {
-      final project = await widget.session.assign(
+      final next = await widget.session.assign(
         widget.sync.config,
         result,
         request: request,
       );
       if (!mounted) return;
-      widget.store.updateProject(project);
+      widget.store.updateProject(next);
       await refresh();
     } catch (e) {
       if (mounted) setState(() => error = '$e');
@@ -342,6 +465,16 @@ class _TeamPanelState extends State<TeamPanel> {
           ],
         ),
         const SizedBox(height: 12),
+        if (widget.store.actor.has('role.manage'))
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: OutlinedButton.icon(
+              key: const Key('team-add-role'),
+              onPressed: busy ? null : addRole,
+              icon: const Icon(Icons.add, size: 16),
+              label: const Text('역할 추가'),
+            ),
+          ),
         if (widget.store.owns)
           Padding(
             padding: const EdgeInsets.only(bottom: 12),
@@ -371,10 +504,26 @@ class _TeamPanelState extends State<TeamPanel> {
               children: [
                 Expanded(
                   child: Text(
-                    '${member.name}  @${member.login}\n${member.roleLabel} · ${member.parts.isEmpty ? '파트 미지정' : member.parts.join(', ')}',
+                    '${member.name}  @${member.login}\n${member.roleLabel} · ${member.role == 'pending'
+                        ? '가입 승인 대기'
+                        : member.active
+                        ? '활성화'
+                        : '비활성화'}',
                     style: const TextStyle(fontSize: 12, height: 1.6),
                   ),
                 ),
+                if (canManageMemberStatus(
+                  widget.store.actor,
+                  member,
+                  widget.store.project!.ownerId,
+                ))
+                  TextButton(
+                    key: Key('member-status-${member.id}'),
+                    onPressed: busy
+                        ? null
+                        : () => setEnabled(member, !member.enabled),
+                    child: Text(member.enabled ? '비활성화' : '활성화'),
+                  ),
                 if (widget.store.actor.has('member.manage') &&
                     (widget.store.owns || member.role != 'manager') &&
                     widget.store.actor.permissions.containsAll(

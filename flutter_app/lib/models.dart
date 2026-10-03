@@ -64,6 +64,7 @@ const permissionLabels = {
   'task.reviewAll': '전체 작업 검토',
   'task.integrate': '다른 참여자의 작업 PR 통합',
   'member.manage': '가입 승인·참여자 역할 배정',
+  'member.status': '관리자: 참여자 활성화·비활성화',
   'role.manage': '역할 생성·수정·삭제',
 };
 const workerPermissions = {'task.work', 'task.review'};
@@ -76,6 +77,7 @@ const managerPermissions = {
   'task.reviewAll',
   'task.integrate',
   'member.manage',
+  'member.status',
 };
 
 class ProjectRole {
@@ -117,7 +119,9 @@ class Person {
     this.login = '',
     this.parts = const [],
     this.customRole,
+    this.enabled = true,
   });
+  final bool enabled;
   final ProjectRole? customRole;
   Set<String> get permissions => switch (role) {
     'owner' => permissionLabels.keys.toSet(),
@@ -129,8 +133,9 @@ class Person {
   String get roleLabel => roleLabels[role] ?? customRole?.name ?? '알 수 없는 역할';
   bool get manages => has('task.editAll');
   bool get active =>
-      ['owner', 'manager', 'worker', 'viewer'].contains(role) ||
-      customRole != null;
+      enabled &&
+      (['owner', 'manager', 'worker', 'viewer'].contains(role) ||
+          customRole != null);
   bool get canWork => has('task.work') || has('task.editAll');
   bool get canReview => has('task.review') || has('task.reviewAll');
   bool get canMutate => active && permissions.any((p) => p.startsWith('task.'));
@@ -142,20 +147,26 @@ class Person {
     color,
     login: login,
     parts: parts,
+    enabled: enabled,
     customRole: roles.where((r) => r.id == role).firstOrNull,
   );
 
   Map<String, dynamic> get json => {
     'id': id,
     'name': name,
-    'role': role,
+    // Older clients already reject disabled roles; retain the real role separately.
+    'role': enabled ? role : 'disabled',
+    if (!enabled && role != 'disabled') 'assignedRole': role,
+    'enabled': enabled,
     'login': login,
     'parts': parts,
   };
   factory Person.fromJson(Map<String, dynamic> data) {
     final id = data['id'],
         name = data['name'],
-        role = data['role'],
+        role = data['role'] == 'disabled' && data['assignedRole'] is String
+            ? data['assignedRole']
+            : data['role'],
         login = data['login'];
     if (id is! String ||
         !RegExp(r'^gh-[0-9]+$').hasMatch(id) ||
@@ -167,7 +178,8 @@ class Person {
         (role is! String ||
             !roleLabels.containsKey(role) &&
                 !RegExp(r'^role-[a-zA-Z0-9-]{1,60}$').hasMatch(role)) ||
-        data['parts'] is! List) {
+        data['parts'] is! List ||
+        data.containsKey('enabled') && data['enabled'] is! bool) {
       throw StateError('참여자 정보가 올바르지 않습니다.');
     }
     final parts = List<String>.from(data['parts']);
@@ -182,9 +194,16 @@ class Person {
       0xff7963d5,
       login: login,
       parts: List.unmodifiable(parts),
+      enabled: data['enabled'] as bool? ?? data['role'] != 'disabled',
     );
   }
 }
+
+bool canManageMemberStatus(Person actor, Person target, String ownerId) =>
+    actor.has('member.status') &&
+    target.id != ownerId &&
+    target.role != 'pending' &&
+    (!target.permissions.contains('role.manage') || actor.has('role.manage'));
 
 const roleLabels = {
   'owner': '개설자',
@@ -252,7 +271,9 @@ class ProjectManifest {
         !RegExp(r'^gh-[0-9]+$')
             .hasMatch('${raw['founderId'] ?? raw['ownerId']}') ||
         people.where((p) => p.role == 'owner').length != 1 ||
-        !people.any((p) => p.id == raw['ownerId'] && p.role == 'owner')) {
+        !people.any(
+          (p) => p.id == raw['ownerId'] && p.role == 'owner' && p.enabled,
+        )) {
       throw StateError('프로젝트 개설자와 참여자 정보를 확인하세요.');
     }
     return ProjectManifest(

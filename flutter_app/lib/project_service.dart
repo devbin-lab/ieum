@@ -789,7 +789,8 @@ class GitHubSession {
     if (executor == null ||
         !executor.has('member.manage') ||
         member.id == current.ownerId ||
-        !resolved.active && member.role != 'disabled' ||
+        (!roleLabels.containsKey(member.role) && resolved.customRole == null) ||
+        member.role == 'pending' ||
         !executor.permissions.containsAll(resolved.permissions) ||
         target.any((p) => !executor.permissions.containsAll(p.permissions)) ||
         executor.role != 'owner' &&
@@ -798,6 +799,11 @@ class GitHubSession {
       throw const GitHubFailure(
         '참여자 관리 권한이 필요합니다. 본인보다 높은 권한을 부여하거나 변경할 수 없습니다.',
       );
+    }
+    final wasEnabled = target.isEmpty ? true : target.single.enabled;
+    if ((member.enabled != wasEnabled || member.role == 'disabled') &&
+        !executor.has('member.status')) {
+      throw const GitHubFailure('활성화·비활성화는 참여자 상태 관리 권한이 있는 관리자만 변경할 수 있습니다.');
     }
     if (request != null) {
       if (request['projectId'] != current.id) {
@@ -857,6 +863,40 @@ class GitHubSession {
     }
     return next;
   }
+
+  Future<ProjectManifest> setMemberEnabled(
+    GitHubConfig config,
+    String memberId,
+    bool enabled,
+  ) => changeManifest(
+    config,
+    enabled ? 'Activate IEUM member' : 'Deactivate IEUM member',
+    (current, actor) async {
+      final target = current.people.where((p) => p.id == memberId).firstOrNull;
+      if (target == null ||
+          !canManageMemberStatus(actor, target, current.ownerId)) {
+        throw const GitHubFailure(
+          '참여자 상태 관리 권한이 있는 관리자만 변경할 수 있습니다. 개설자의 상태는 변경할 수 없습니다.',
+        );
+      }
+      return ProjectManifest.fromJson({
+        ...current.json,
+        'members': [
+          for (final person in current.people)
+            if (person.id == memberId)
+              {
+                ...person.json,
+                'role': person.role == 'disabled' ? 'worker' : person.role,
+                'enabled': enabled,
+                // Restore a legacy disabled member as a worker when enabling.
+                if (person.role == 'disabled') 'assignedRole': 'worker',
+              }
+            else
+              person.json,
+        ],
+      });
+    },
+  );
 
   Future<ProjectManifest> transferOwnership(
     GitHubConfig config,

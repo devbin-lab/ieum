@@ -224,6 +224,12 @@ class GitHubPublisher {
   }) async {
     final identity = checkedIdentity ?? await api.call('GET', '/user');
     final people = manifest.people.where((p) => p.id == 'gh-${identity['id']}');
+    if (people.isNotEmpty && !people.first.enabled) {
+      throw const GitHubFailure(
+        '비활성화된 참여자는 작업을 업로드하거나 통합할 수 없습니다. 관리자에게 활성화를 요청하세요.',
+        403,
+      );
+    }
     if (people.isEmpty || !people.first.active) {
       throw const GitHubFailure('가입 승인을 받거나 현재 역할을 확인하세요.');
     }
