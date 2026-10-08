@@ -8,11 +8,75 @@ import 'package:ieum_flutter/store.dart';
 const owner = Person('gh-1', '개설자', '개', 'owner', 0, login: 'owner');
 const worker = Person('gh-2', '기획자', '기', 'worker', 0, login: 'worker');
 const reviewer = Person('gh-3', '검토자', '검', 'worker', 0, login: 'reviewer');
-const project = ProjectManifest('project-v020', '테스트', 'gh-1', [
-  owner,
-  worker,
-  reviewer,
-]);
+const legacyFourStages = [
+  WorkflowStage('todo', '확인중'),
+  WorkflowStage('doing', '진행중'),
+  WorkflowStage('review', '검토'),
+  WorkflowStage('done', '완료'),
+];
+const project = ProjectManifest(
+  'project-v020',
+  '테스트',
+  'gh-1',
+  [owner, worker, reviewer],
+  parts: ['기획', '프로그래밍', '아트', '사운드', 'QA'],
+  workflowStages: legacyFourStages,
+);
+
+// Tests of configured personal handoffs opt in to designation explicitly. The
+// shared project fixture preserves the old four-state workflow for compatibility.
+const assignedReviewAutomation = WorkflowAutomation(
+  reviewEnabled: true,
+  connections: [
+    WorkflowConnection('todo', 'doing', assignedOnly: true),
+    WorkflowConnection('doing', 'review', assignedOnly: true),
+    WorkflowConnection(
+      'review',
+      'done',
+      action: 'approve',
+      actor: 'reviewer',
+      assignedOnly: true,
+    ),
+    WorkflowConnection(
+      'review',
+      'doing',
+      action: 'reject',
+      actor: 'reviewer',
+      assignedOnly: true,
+    ),
+  ],
+);
+
+const designatedReviewSheet = WorkflowSheet(
+  nodes: [
+    WorkflowSheetNode('todo', 'todo'),
+    WorkflowSheetNode('doing', 'doing'),
+    WorkflowSheetNode('review', 'review'),
+    WorkflowSheetNode('done', 'done'),
+  ],
+  routes: [
+    WorkflowSheetRoute(id: 'start', from: 'todo', to: 'doing', person: 'gh-2'),
+    WorkflowSheetRoute(
+      id: 'submit',
+      from: 'doing',
+      to: 'review',
+      person: 'gh-3',
+    ),
+    WorkflowSheetRoute(
+      id: 'approve',
+      from: 'review',
+      to: 'done',
+      action: 'approve',
+    ),
+    WorkflowSheetRoute(
+      id: 'reject',
+      from: 'review',
+      to: 'doing',
+      person: 'gh-2',
+      action: 'reject',
+    ),
+  ],
+);
 
 Map<String, dynamic> draft({String title = '작업', String reviewerId = 'gh-3'}) =>
     {
@@ -53,6 +117,30 @@ void main() {
   setUp(() => store = TaskStore(':memory:', project: project, identity: owner));
   tearDown(() => store.dispose());
 
+  test('configured workflow order is preserved in project Kanban columns', () {
+    final reordered = ProjectManifest.fromJson({
+      ...project.json,
+      'workflowStages': [
+        const WorkflowStage('doing', '진행').json,
+        const WorkflowStage('todo', '확인').json,
+        const WorkflowStage('done', '완료').json,
+      ],
+    });
+    final orderedStore = TaskStore(
+      ':memory:',
+      project: reordered,
+      identity: owner,
+    );
+    addTearDown(orderedStore.dispose);
+
+    expect(reordered.workflowStages.map((stage) => stage.id), [
+      'doing',
+      'todo',
+      'done',
+    ]);
+    expect(orderedStore.workflowStatuses.keys, ['doing', 'todo', 'done']);
+  });
+
   void move(String id, String state, {String reason = ''}) => store.transition(
     id,
     state,
@@ -60,40 +148,49 @@ void main() {
     expectedVersion: store.find(id).version,
   );
 
-  test('review locks submitted content, rejection unlocks worker, done locks everyone', () {
+  test('review remains shared editable and rejection preserves the route while done locks everyone', () {
+    store.updateProject(
+      ProjectManifest.fromJson({
+        ...project.partWorkflowView.json,
+        'workflowSheet': designatedReviewSheet.json,
+      }),
+    );
     final created = store.save(draft());
     store.setMeta('profile', worker.id);
     move(created.id, 'doing');
     move(created.id, 'review');
     final reviewing = store.find(created.id);
-    expect(store.canEdit(reviewing), isFalse);
-    expect(
-      () => store.save({
-        ...reviewing.data,
-        'title': '검토 중 변경',
-      }, expectedVersion: reviewing.version),
-      throwsStateError,
-    );
-    expect(() => move(created.id, 'done'), throwsStateError);
+    expect(store.canEdit(reviewing), isTrue);
+    final workerEdit = store.save({
+      ...reviewing.data,
+      'title': '검토 중 변경',
+    }, expectedVersion: reviewing.version);
+    expect(workerEdit.workflowPerson, reviewing.workflowPerson);
+    expect(store.canMove(workerEdit, 'done'), isTrue);
 
     store.setMeta('profile', owner.id);
-    expect(store.canEdit(reviewing), isTrue);
-    expect(store.canEditContent(reviewing), isFalse);
+    expect(store.canEdit(workerEdit), isTrue);
+    expect(store.canEditContent(workerEdit), isTrue);
+    final ownerEdit = store.save({
+      ...workerEdit.data,
+      'description': '관리자 내용 변경',
+    }, expectedVersion: workerEdit.version);
+    final rescheduled = store.save({
+      ...ownerEdit.data,
+      'dueDate': '2026-10-07',
+    }, expectedVersion: ownerEdit.version);
+    expect(rescheduled.status, reviewing.status);
+    expect(rescheduled.workflowPerson, reviewing.workflowPerson);
     expect(
       () => store.save({
         ...reviewing.data,
-        'description': '관리자 내용 변경',
+        'title': '오래된 편집창',
       }, expectedVersion: reviewing.version),
       throwsStateError,
     );
-    final reassigned = store.save({
-      ...reviewing.data,
-      'dueDate': '2026-10-07',
-    }, expectedVersion: reviewing.version);
-    expect(reassigned.status, 'review');
 
     store.setMeta('profile', reviewer.id);
-    move(created.id, 'rework', reason: '내용 보완');
+    move(created.id, 'doing', reason: '내용 보완');
     store.setMeta('profile', worker.id);
     final rejected = store.find(created.id);
     expect(store.canEditContent(rejected), isTrue);
@@ -101,7 +198,6 @@ void main() {
       ...rejected.data,
       'description': '보완 완료',
     }, expectedVersion: rejected.version);
-    move(created.id, 'doing');
     move(created.id, 'review');
     store.setMeta('profile', reviewer.id);
     move(created.id, 'done');
@@ -302,7 +398,7 @@ void main() {
     expect(store.find(healthy.id).version, remoteHealthy.version);
   });
 
-  test('partial snapshots preserve omitted tasks and handoff never silently combines worker content', () {
+  test('partial snapshots preserve omitted tasks and merge shared content with a remote handoff', () {
     final first = store.save(draft());
     final second = store.save(draft(title: '유지되는 작업'));
     store.importSnapshot(snapshot([first, second]));
@@ -316,9 +412,11 @@ void main() {
       snapshot([handoff]),
       allowPartial: true,
     );
-    expect(result.conflicts, hasLength(1));
-    expect(store.find(first.id).data, local.data);
-    expect(store.baseline[first.id]!.data, first.data);
+    expect(result.applied, isTrue);
+    expect(result.conflicts, isEmpty);
+    expect(store.find(first.id).description, local.description);
+    expect(store.find(first.id).status, handoff.status);
+    expect(store.baseline[first.id]!.data, handoff.data);
     expect(store.find(second.id).data, second.data);
   });
 
@@ -387,11 +485,23 @@ void main() {
   });
 
   test('incoming assignments and review requests create one readable local inbox event', () {
-    final assigned = store.save(draft());
-    final client = TaskStore(':memory:', project: project, identity: worker);
+    final withReview = ProjectManifest.fromJson({
+      ...project.partWorkflowView.json,
+      'workflowSheet': designatedReviewSheet.json,
+    });
+    store.updateProject(withReview);
+    final created = store.save(draft());
+    store.recoverTask(
+      created.id,
+      stageId: 'todo',
+      personId: worker.id,
+      expectedVersion: created.version,
+    );
+    final assigned = store.find(created.id);
+    final client = TaskStore(':memory:', project: withReview, identity: worker);
     final reviewClient = TaskStore(
       ':memory:',
-      project: project,
+      project: withReview,
       identity: reviewer,
     );
     try {
@@ -406,7 +516,10 @@ void main() {
       expect(client.notifications.single['read'], isTrue);
       reviewClient.importSnapshot(snapshot([assigned], 'main-1'));
       expect(reviewClient.notifications, isEmpty);
-      final reviewing = assigned.copy({'status': 'review', 'version': 3});
+      store.setMeta('profile', worker.id);
+      move(assigned.id, 'doing');
+      move(assigned.id, 'review');
+      final reviewing = store.find(assigned.id);
       reviewClient.importSnapshot(snapshot([reviewing]));
       expect(reviewClient.notifications.single['eventType'], 'task.review');
       expect(reviewClient.unreadNotificationCount, 1);
@@ -414,13 +527,11 @@ void main() {
       expect(reviewClient.notifications, hasLength(1));
       client.importSnapshot(snapshot([reviewing]));
       expect(client.notifications, hasLength(1));
-      final rejected = reviewing.copy({
-        'status': 'rework',
-        'reworkReason': '완료 조건 보완',
-        'version': 4,
-      });
+      store.setMeta('profile', reviewer.id);
+      move(assigned.id, 'doing', reason: '완료 조건 보완');
+      final rejected = store.find(assigned.id);
       client.importSnapshot(snapshot([rejected], 'main-3'));
-      expect(client.notifications.first['eventType'], 'task.rework');
+      expect(client.notifications.first['eventType'], 'task.rejected');
       expect(client.notifications.first['reason'], '완료 조건 보완');
       expect(client.unreadNotificationCount, 1);
     } finally {

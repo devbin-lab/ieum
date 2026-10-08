@@ -166,7 +166,11 @@ void main() {
     api = AutoMergeApi();
     session = GitHubSession(api: api);
     await session.signIn(token: 'test-only');
-    final project = await session.createProject(config, '자동 통합 테스트', '개설자');
+    await session.createProject(config, '자동 통합 테스트', '개설자');
+    final project = await session.savePermissionPart(
+      config,
+      const ProjectRole('role-plan', '기획', {}),
+    );
     store = TaskStore(
       ':memory:',
       project: project,
@@ -309,15 +313,25 @@ void main() {
       'id': 'gh-2',
       'name': '작업자',
       'login': 'worker',
-      'role': 'worker',
+      'role': 'unassigned',
       'parts': ['기획'],
     });
-    final manifest = ProjectManifest(
-      store.project!.id,
-      store.project!.name,
-      store.project!.ownerId,
-      [...store.project!.people, worker],
-    );
+    final manifest = ProjectManifest.fromJson({
+      ...store.project!.json,
+      'workflowStages': [
+        const WorkflowStage('todo', '확인중').json,
+        const WorkflowStage('doing', '진행중').json,
+        const WorkflowStage('review', '검토').json,
+        const WorkflowStage('done', '완료').json,
+      ],
+      'workflowSheet': WorkflowSheet.defaultFor([
+        'todo',
+        'doing',
+        'review',
+        'done',
+      ]).json,
+      'members': [...store.project!.people.map((p) => p.json), worker.json],
+    });
     final content = {
       'encoding': 'base64',
       'sha': 'manifest-worker',
@@ -346,13 +360,23 @@ void main() {
         expectedVersion: workerStore.find(value.id).version,
       );
       await idle(workerSync);
-      workerStore.transition(
-        value.id,
-        'review',
-        expectedVersion: workerStore.find(value.id).version,
+      var current = workerStore.find(value.id);
+      current = workerStore.setTaskLocked(
+        current.id,
+        true,
+        expectedVersion: current.version,
       );
+      final plan = workerStore.planHandoff(
+        current,
+        current.status,
+        routeId: 'manual-handoff',
+        receiverPerson: store.project!.ownerId,
+      );
+      workerStore.confirmHandoff(plan);
       await idle(workerSync);
-      expect(workerStore.baseline[value.id]!.status, 'review');
+      expect(workerStore.baseline[value.id]!.status, 'doing');
+      expect(workerStore.baseline[value.id]!.lockedBy, store.project!.ownerId);
+      expect(workerStore.canEdit(workerStore.find(value.id)), isFalse);
       expect(api.prs.every((p) => p['merged'] == true), isTrue);
       api.identityId = 1;
       api.identityLogin = 'tester';

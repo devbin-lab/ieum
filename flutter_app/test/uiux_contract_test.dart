@@ -23,6 +23,7 @@ import 'package:ieum_flutter/team_panel.dart';
 import 'github_auto_merge_test.dart' show AutoMergeApi;
 import 'github_oauth_test.dart' show MemoryVault;
 import 'project_test.dart' show member, task;
+import 'v020_store_test.dart' show legacyFourStages;
 
 const config = GitHubConfig(repository: 'team/data', enabled: true);
 
@@ -40,7 +41,7 @@ void main() {
       sha: file!['sha'],
       message: 'isolated test fixture',
     );
-    project = next;
+    project = next.partWorkflowView;
   }
 
   setUp(() async {
@@ -51,12 +52,26 @@ void main() {
     );
     await session.signIn(token: 'mock-only');
     project = await session.createProject(config, 'UIUX 테스트', '관리자');
+    project = await session.savePermissionPart(
+      config,
+      const ProjectRole('role-plan', '기획', {}),
+    );
     await persist(
-      ProjectManifest(project.id, project.name, project.ownerId, [
-        ...project.people,
-        member(2, 'worker'),
-        member(3, 'viewer'),
-      ]),
+      ProjectManifest.fromJson({
+        ...project.json,
+        'workflowStages': legacyFourStages.map((s) => s.json).toList(),
+        'workflowSheet': WorkflowSheet.defaultFor([
+          'todo',
+          'doing',
+          'review',
+          'done',
+        ]).json,
+        'members': [
+          ...project.people.map((p) => p.json),
+          member(2, 'unassigned').json,
+          {...member(3, 'unassigned').json, 'parts': <String>[]},
+        ],
+      }),
     );
   });
   tearDown(() => session.signOut());
@@ -87,7 +102,7 @@ void main() {
         project.people.first,
         project.ownerId,
       ),
-      isFalse,
+      isTrue,
     );
     expect(
       canAssignMember(
@@ -99,11 +114,18 @@ void main() {
     );
   });
 
-  test('manual import requires trust and mutation rights while automatic read-only pull remains valid', () {
-    final viewer = TaskStore(
+  test('manual import requires trust and active membership while automatic read-only pull remains valid', () {
+    final inactiveProject = ProjectManifest.fromJson({
+      ...project.json,
+      'members': [
+        for (final p in project.people)
+          {...p.json, if (p.id == 'gh-3') 'enabled': false},
+      ],
+    });
+    final inactive = TaskStore(
       ':memory:',
-      project: project,
-      identity: member(3, 'viewer'),
+      project: inactiveProject,
+      identity: member(3, 'unassigned'),
     );
     final owner = TaskStore(
       ':memory:',
@@ -111,7 +133,7 @@ void main() {
       identity: project.people.first,
     );
     addTearDown(() {
-      viewer.dispose();
+      inactive.dispose();
       owner.dispose();
     });
     final snapshot = {
@@ -121,14 +143,14 @@ void main() {
       'tasks': [],
     };
     expect(
-      () => viewer.importManualSnapshot(snapshot, trusted: true),
+      () => inactive.importManualSnapshot(snapshot, trusted: true),
       throwsStateError,
     );
     expect(
       () => owner.importManualSnapshot(snapshot, trusted: false),
       throwsStateError,
     );
-    expect(viewer.importSnapshot(snapshot).applied, isTrue);
+    expect(inactive.importSnapshot(snapshot).applied, isTrue);
     expect(owner.importManualSnapshot(snapshot, trusted: true).applied, isTrue);
     expect(
       () => owner.importManualSnapshot({
@@ -179,19 +201,23 @@ void main() {
     expect(api.writes, writes);
   });
 
-  test('role draft detects remote edits and cannot overwrite a changed permission set', () async {
-    const before = ProjectRole('role-qa', 'QA', {'task.review'});
-    await session.saveRole(config, before);
-    await session.saveRole(
+  test('part draft detects a remote rename and cannot overwrite the latest definition', () async {
+    project = await session.savePermissionPart(
       config,
-      const ProjectRole('role-qa', 'QA 최신', {'task.work'}),
+      const ProjectRole('role-qa', 'QA', {}),
+    );
+    final before = project.roles.singleWhere((r) => r.id == 'role-qa');
+    await session.savePermissionPart(
+      config,
+      const ProjectRole('role-qa', 'QA 최신', {}),
+      expectedPart: before,
     );
     final writes = api.writes;
     await expectLater(
-      session.saveRole(
+      session.savePermissionPart(
         config,
-        const ProjectRole('role-qa', '초안', {'task.review'}),
-        expectedRole: before,
+        const ProjectRole('role-qa', '초안', {}),
+        expectedPart: before,
         expectedProjectId: project.id,
       ),
       throwsA(isA<GitHubFailure>()),
@@ -199,14 +225,36 @@ void main() {
     expect(api.writes, writes);
   });
 
-  test('deactivation checks unfinished work on both status and role-assignment routes', () async {
+  test('deactivation checks current work and configured recipients through both status and assignment APIs', () async {
+    final base = project.workflowSheet!;
+    project = await session.saveWorkflowSheet(
+      config,
+      WorkflowSheet(
+        nodes: base.nodes,
+        routes: [
+          for (final r in base.routes)
+            WorkflowSheetRoute(
+              id: r.id,
+              from: r.from,
+              to: r.to,
+              action: r.action,
+              person: r.id == 'default-next-0' ? 'gh-2' : '',
+            ),
+        ],
+      ),
+      expectedSheet: base,
+    );
     final store = TaskStore(
       ':memory:',
       project: project,
       identity: project.people.first,
     );
     addTearDown(store.dispose);
-    final created = store.save(task(member(2, 'worker'), project.people.first));
+    var created = store.save(
+      task(member(2, 'unassigned'), project.people.first),
+    );
+    store.transition(created.id, 'doing', expectedVersion: created.version);
+    created = store.find(created.id);
     api.addMainProposal(store.exportChanges(), created.id);
     final writes = api.writes;
     await expectLater(
@@ -216,81 +264,122 @@ void main() {
     await expectLater(
       session.assign(
         config,
-        Person.fromJson({...member(2, 'worker').json, 'enabled': false}),
+        Person.fromJson({
+          ...project.people.firstWhere((p) => p.id == 'gh-2').json,
+          'enabled': false,
+        }),
       ),
       throwsA(isA<GitHubFailure>()),
     );
     expect(api.writes, writes);
-    api.addMainProposal({
-      ...store.exportChanges(),
-      'changes': [
-        {
-          ...store.changes.single,
-          'task': {
-            ...created.data,
-            'status': 'done',
-            'completedDate': '2026-10-03',
-          },
-        },
-      ],
-    }, created.id);
+    store.transition(created.id, 'review', expectedVersion: created.version);
+    store.transition(
+      created.id,
+      'done',
+      expectedVersion: store.find(created.id).version,
+    );
+    api.addMainProposal(store.exportChanges(), created.id);
+    project = await session.saveWorkflowSheet(
+      config,
+      WorkflowSheet.defaultFor(
+        project.workflowStages.map((s) => s.id).toList(),
+      ),
+      expectedSheet: project.workflowSheet,
+    );
     final next = await session.setMemberEnabled(config, 'gh-2', false);
-    expect(next.people[1].enabled, isFalse);
+    expect(next.people.firstWhere((p) => p.id == 'gh-2').enabled, isFalse);
   });
 
-  test('unfinished-work handoff permits deactivation without changing completed work', () async {
+  test('administrator recovery transfers current processing before participant deactivation', () async {
+    final base = project.workflowSheet!;
+    project = await session.saveWorkflowSheet(
+      config,
+      WorkflowSheet(
+        nodes: base.nodes,
+        routes: [
+          for (final r in base.routes)
+            WorkflowSheetRoute(
+              id: r.id,
+              from: r.from,
+              to: r.to,
+              action: r.action,
+              person: r.id == 'default-next-0' ? 'gh-2' : '',
+            ),
+        ],
+      ),
+      expectedSheet: base,
+    );
     final store = TaskStore(
       ':memory:',
       project: project,
       identity: project.people.first,
     );
     addTearDown(store.dispose);
-    final created = store.save(task(member(2, 'worker'), project.people.first));
+    final created = store.save(
+      task(member(2, 'unassigned'), project.people.first),
+    );
+    store.transition(created.id, 'doing', expectedVersion: created.version);
     api.addMainProposal(store.exportChanges(), created.id);
     await expectLater(
       session.setMemberEnabled(config, 'gh-2', false),
       throwsA(isA<GitHubFailure>()),
     );
-    store.save({
-      ...created.data,
-      'assigneeId': project.ownerId,
-    }, expectedVersion: created.version);
+    store.recoverTask(
+      created.id,
+      stageId: 'todo',
+      personId: project.ownerId,
+      expectedVersion: store.find(created.id).version,
+    );
     api.addMainProposal(store.exportChanges(), created.id);
+    project = await session.saveWorkflowSheet(
+      config,
+      WorkflowSheet.defaultFor(
+        project.workflowStages.map((s) => s.id).toList(),
+      ),
+      expectedSheet: project.workflowSheet,
+    );
     final next = await session.setMemberEnabled(config, 'gh-2', false);
     expect(next.people.firstWhere((p) => p.id == 'gh-2').active, isFalse);
-    expect(store.find(created.id).assigneeId, project.ownerId);
+    expect(store.find(created.id).workflowPerson, project.ownerId);
     expect(store.find(created.id).status, 'todo');
   });
 
   test(
-    'role deletion refuses changed assignment and cross-project targets',
+    'part deletion refuses a changed definition and a cross-project target',
     () async {
-      const role = ProjectRole('role-review', '검토', {'task.review'});
-      project = await session.saveRole(config, role);
-      final expected = project.people.where((p) => p.role == role.id).toList();
-      project = await session.assign(config, member(2, role.id));
+      const part = ProjectRole('role-review', '검토', {});
+      project = await session.savePermissionPart(config, part);
+      final before = project.roles.singleWhere((r) => r.id == part.id);
+      project = await session.savePermissionPart(
+        config,
+        const ProjectRole('role-review', '검토 최신', {}),
+        expectedPart: before,
+      );
       final writes = api.writes;
       await expectLater(
-        session.deleteRole(
+        session.deletePermissionPart(
           config,
-          role.id,
-          replacementRoleId: 'worker',
-          expectedRole: role,
-          expectedMembers: expected,
+          part.id,
+          expectedPart: before,
           expectedProjectId: project.id,
         ),
         throwsA(isA<GitHubFailure>()),
       );
       await expectLater(
-        session.deleteRole(
+        session.deletePermissionPart(
           config,
-          role.id,
-          replacementRoleId: 'worker',
+          part.id,
           expectedProjectId: 'other',
         ),
         throwsA(isA<GitHubFailure>()),
       );
       expect(api.writes, writes);
+      expect(
+        (await session.loadProject(config)).roles
+            .singleWhere((r) => r.id == part.id)
+            .name,
+        '검토 최신',
+      );
     },
   );
 
@@ -305,7 +394,7 @@ void main() {
       session.setMemberEnabled(config, 'gh-2', true),
       throwsA(isA<GitHubFailure>()),
     );
-    final next = await session.assign(config, member(2, 'worker'));
+    final next = await session.assign(config, member(2, 'unassigned'));
     expect(next.people.where((p) => p.id == 'gh-2').single.active, isTrue);
     await expectLater(
       session.setMemberEnabled(config, project.ownerId, false),
@@ -464,6 +553,17 @@ void main() {
   testWidgets(
     'member confirmation cannot be duplicated and cancellation leaves draft retryable',
     (tester) async {
+      project = await session.savePermissionPart(
+        config,
+        const ProjectRole('role-plan', '기획', {}),
+      );
+      project = await session.assign(
+        config,
+        Person.fromJson({
+          ...project.people.firstWhere((p) => p.id == 'gh-2').json,
+          'parts': <String>[],
+        }),
+      );
       final store = TaskStore(
         ':memory:',
         project: project,
@@ -487,10 +587,10 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('member-actions-gh-2')));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('역할 변경'));
+      await tester.tap(find.text('파트 배정'));
       await tester.pumpAndSettle();
-      await tester.ensureVisible(find.byKey(const Key('member-role-viewer')));
-      await tester.tap(find.byKey(const Key('member-role-viewer')));
+      await tester.ensureVisible(find.byKey(const Key('member-part-기획')));
+      await tester.tap(find.byKey(const Key('member-part-기획')));
       await tester.pump();
       final button = tester.widget<FilledButton>(
         find.byKey(const Key('save-member')),
@@ -498,7 +598,7 @@ void main() {
       button.onPressed!();
       button.onPressed!();
       await tester.pumpAndSettle();
-      expect(find.text('역할·상태 변경 확인'), findsOneWidget);
+      expect(find.text('파트·상태 변경 확인'), findsOneWidget);
       await tester.tap(find.widgetWithText(TextButton, '취소').last);
       await tester.pumpAndSettle();
       expect(
@@ -507,12 +607,14 @@ void main() {
             .onPressed,
         isNotNull,
       );
-      expect(store.member('gh-2').role, 'worker');
+      expect(store.member('gh-2').role, 'unassigned');
+      expect(store.member('gh-2').parts, isEmpty);
       await tester.tap(find.byKey(const Key('save-member')));
       await tester.pumpAndSettle();
       await tester.tap(find.widgetWithText(FilledButton, '확인'));
       await tester.pumpAndSettle();
-      expect(store.member('gh-2').role, 'viewer');
+      expect(store.member('gh-2').role, 'unassigned');
+      expect(store.member('gh-2').parts, ['기획']);
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pumpAndSettle();
     },
@@ -543,26 +645,22 @@ void main() {
           ),
         ),
       );
-      await tester.enterText(
-        find.byKey(const Key('permission-search')),
-        '새 작업',
-      );
-      await tester.pump();
-      await tester.tap(find.byKey(const Key('permission-search')));
-      await tester.pump();
-      final field = tester.widget<EditableText>(find.byType(EditableText));
-      expect(field.focusNode.hasFocus, isTrue);
       await tester.sendKeyEvent(LogicalKeyboardKey.tab);
       await tester.pump();
-      expect(field.focusNode.hasFocus, isFalse);
       await tester.sendKeyEvent(LogicalKeyboardKey.space);
       await tester.pump();
-      expect(permissions, {'task.create'});
+      expect(permissions, {'member.manage'});
+      await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+      await tester.sendKeyEvent(LogicalKeyboardKey.space);
+      await tester.pump();
+      expect(permissions, {'member.manage', 'role.manage'});
       await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
       await tester.sendKeyEvent(LogicalKeyboardKey.tab);
       await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
       await tester.pump();
-      expect(field.focusNode.hasFocus, isTrue);
+      await tester.sendKeyEvent(LogicalKeyboardKey.space);
+      await tester.pump();
+      expect(permissions, {'role.manage'});
     },
   );
 
@@ -622,25 +720,23 @@ void main() {
   );
 
   testWidgets(
-    'permission search is read-only and settings navigation has separate scopes',
+    'management summary is read-only and settings navigation has separate scopes',
     (tester) async {
       await tester.pumpWidget(
         const MaterialApp(
           home: Scaffold(
             body: SingleChildScrollView(
-              child: RolePermissionGroups(permissions: {'task.work'}),
+              child: RolePermissionGroups(permissions: {'member.manage'}),
             ),
           ),
         ),
       );
       expect(find.byType(CheckboxListTile), findsNothing);
-      await tester.enterText(
-        find.byKey(const Key('permission-search')),
-        '본인 담당',
-      );
-      await tester.pump();
-      expect(find.text(permissionLabels['task.work']!), findsOneWidget);
-      expect(find.text(permissionLabels['member.manage']!), findsNothing);
+      expect(find.byKey(const Key('permission-search')), findsNothing);
+      expect(find.text('참여자 관리'), findsOneWidget);
+      expect(find.text('역할 관리'), findsOneWidget);
+      expect(find.byKey(const Key('permission-task.work')), findsNothing);
+      expect(find.byKey(const Key('permission-task.integrate')), findsNothing);
       await tester.pumpWidget(
         MaterialApp(
           home: SettingsShell(
@@ -677,10 +773,10 @@ void main() {
           'members': [
             project.people.first.json,
             {
-              ...member(2, 'worker').json,
+              ...member(2, 'unassigned').json,
               'name': '아주 긴 이름을 쓰는 참여자와 프로젝트 역할 배정 검증용 이름',
             },
-            {...member(3, 'viewer').json, 'login': 'viewer-account'},
+            {...member(3, 'unassigned').json, 'login': 'viewer-account'},
           ],
         }),
       );

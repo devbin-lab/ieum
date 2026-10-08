@@ -29,7 +29,11 @@ void main() {
     api = ReliabilityApi();
     session = GitHubSession(api: api);
     await session.signIn(token: 'test-only');
-    final project = await session.createProject(config, 'audit', 'owner');
+    await session.createProject(config, 'audit', 'owner');
+    final project = await session.savePermissionPart(
+      config,
+      const ProjectRole('role-plan', '기획', {}),
+    );
     store = TaskStore(
       ':memory:',
       project: project,
@@ -151,7 +155,7 @@ void main() {
     },
   );
 
-  test('ownership transfer preserves project identity and enables manager membership recovery', () async {
+  test('ownership transfer preserves project identity and moves membership authority to the new owner', () async {
     Future<Person> join(int id, String role) async {
       api.identityId = id;
       api.identityLogin = 'guest$id';
@@ -168,7 +172,8 @@ void main() {
       await session.signIn(token: 'test-only');
       final member = Person.fromJson({
         ...request['member'] as Map,
-        'role': role,
+        'role': 'unassigned',
+        'parts': ['기획'],
       });
       final manifest = await session.assign(config, member, request: request);
       store.updateProject(manifest);
@@ -182,10 +187,10 @@ void main() {
     expect(transferred.founderId, original.founderId);
     store.updateProject(transferred);
     expect(store.owns, isFalse);
-    expect(store.manages, isTrue);
+    expect(store.manages, isFalse);
     await sync.connect(config);
     await idle(sync);
-    // The previous owner is now a manager and can approve ordinary participants.
+    // The previous owner becomes a normal participant; management moves too.
     api.identityId = 3;
     api.identityLogin = 'guest3';
     await session.signIn(token: 'test-only');
@@ -196,11 +201,18 @@ void main() {
     await session.signIn(token: 'test-only');
     final worker = Person.fromJson({
       ...request['member'] as Map,
-      'role': 'worker',
+      'role': 'unassigned',
     });
+    await expectLater(
+      session.assign(config, worker, request: request),
+      throwsA(isA<GitHubFailure>()),
+    );
+    api.identityId = 2;
+    api.identityLogin = 'guest2';
+    await session.signIn(token: 'test-only');
     final manifest = await session.assign(config, worker, request: request);
     expect(
-      manifest.people.any((p) => p.id == 'gh-3' && p.role == 'worker'),
+      manifest.people.any((p) => p.id == 'gh-3' && p.role == 'unassigned'),
       isTrue,
     );
     await expectLater(
@@ -228,15 +240,13 @@ void main() {
         'id': 'gh-2',
         'login': 'guest2',
         'name': '작업자',
-        'role': 'worker',
+        'role': 'unassigned',
         'parts': <String>[],
       });
-      final manifest = ProjectManifest(
-        store.project!.id,
-        store.project!.name,
-        owner.id,
-        [owner, worker],
-      );
+      final manifest = ProjectManifest.fromJson({
+        ...store.project!.json,
+        'members': [owner.json, worker.json],
+      });
       final file = await session.readJson(config, '.ieum/project.json');
       await session.writeJson(
         config,
@@ -246,16 +256,15 @@ void main() {
         message: 'fixture',
       );
       store.updateProject(manifest);
-      store.save({
-        ...task.data,
-        'assigneeId': worker.id,
-      }, expectedVersion: task.version);
+      store.recoverTask(
+        task.id,
+        stageId: 'todo',
+        personId: worker.id,
+        expectedVersion: task.version,
+      );
       await idle(sync);
       await expectLater(
-        session.assign(
-          config,
-          Person.fromJson({...worker.json, 'role': 'disabled'}),
-        ),
+        session.setMemberEnabled(config, worker.id, false),
         throwsA(
           isA<GitHubFailure>().having(
             (e) => e.message,
@@ -264,7 +273,25 @@ void main() {
           ),
         ),
       );
-      expect((await session.loadProject(config)).people.last.role, 'worker');
+      expect(
+        (await session.loadProject(config)).people.last.role,
+        'unassigned',
+      );
+      store.recoverTask(
+        task.id,
+        stageId: 'todo',
+        personId: owner.id,
+        expectedVersion: store.find(task.id).version,
+      );
+      await idle(sync);
+      expect(
+        (await session.setMemberEnabled(
+          config,
+          worker.id,
+          false,
+        )).people.last.active,
+        isFalse,
+      );
     },
   );
 }

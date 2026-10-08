@@ -6,55 +6,16 @@ import 'store.dart';
 import 'popup_ui.dart';
 import 'draft_guard.dart';
 
-class ReworkDialog extends StatefulWidget {
-  const ReworkDialog({super.key});
-  @override
-  State<ReworkDialog> createState() => _ReworkDialogState();
-}
-
-class _ReworkDialogState extends State<ReworkDialog> {
-  final controller = TextEditingController();
-  @override
-  void dispose() {
-    controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) => IeumDialog(
-    title: const Text('재작업 요청'),
-    icon: Icons.rate_review_outlined,
-    content: SizedBox(
-      width: 400,
-      child: TextField(
-        key: const Key('rework-reason'),
-        controller: controller,
-        autofocus: true,
-        maxLines: 4,
-        maxLength: 2000,
-        onChanged: (_) => setState(() {}),
-        decoration: const InputDecoration(labelText: '재작업 사유'),
-      ),
-    ),
-    actions: [
-      TextButton(
-        onPressed: () => Navigator.maybePop(context),
-        child: const Text('취소'),
-      ),
-      FilledButton(
-        onPressed: controller.text.trim().isEmpty
-            ? null
-            : () => Navigator.pop(context, controller.text),
-        child: const Text('재작업 요청'),
-      ),
-    ],
-  );
-}
-
 class TaskEditor extends StatefulWidget {
   final TaskStore store;
   final WorkTask? task;
-  const TaskEditor({super.key, required this.store, this.task});
+  final DateTime? initialDate;
+  const TaskEditor({
+    super.key,
+    required this.store,
+    this.task,
+    this.initialDate,
+  });
   @override
   State<TaskEditor> createState() => _TaskEditorState();
 }
@@ -66,6 +27,7 @@ class _TaskEditorState extends State<TaskEditor> {
   String error = '';
   String initialDraft = '';
   bool saved = false;
+  bool lockOnCreate = false;
   String get draft => [
     title.text,
     assigned.text,
@@ -75,6 +37,7 @@ class _TaskEditorState extends State<TaskEditor> {
     priority,
     assigneeId,
     reviewerId,
+    lockOnCreate.toString(),
   ].join('\u0000');
   bool get dirty => !saved && draft != initialDraft;
   WorkTask? get currentTask =>
@@ -82,27 +45,35 @@ class _TaskEditorState extends State<TaskEditor> {
   bool get contentEditable => currentTask == null
       ? widget.store.canCreate
       : widget.store.canEditContent(currentTask!);
-  bool get assignmentEditable =>
-      currentTask?.status != 'done' &&
-      (!widget.store.isProject ||
-          (widget.task == null
-              ? widget.store.canCreate
-              : widget.store.actor.has('task.assign')));
+  bool get assignmentEditable => contentEditable;
+
   bool get canSave => currentTask == null
-      ? widget.store.canCreate
+      ? widget.store.canCreate && part.isNotEmpty
       : widget.store.canEdit(currentTask!);
+  bool get assigneeEditable => assignmentEditable;
   @override
   void initState() {
     super.initState();
     final t = widget.task;
     title = TextEditingController(text: t?.title ?? '');
-    assigned = TextEditingController(text: t?.assignedDate ?? localDate());
-    due = TextEditingController(text: t?.dueDate ?? '');
+    final date = widget.initialDate == null
+        ? ''
+        : widget.initialDate!.toIso8601String().substring(0, 10);
+    assigned = TextEditingController(
+      text: t?.assignedDate ?? (date.isEmpty ? localDate() : date),
+    );
+    due = TextEditingController(text: t?.dueDate ?? date);
     description = TextEditingController(text: t?.description ?? '');
-    part = t?.part ?? widget.store.partRules.first.part;
+    part = t?.part ?? widget.store.partRules.firstOrNull?.part ?? '';
     priority = t?.priority ?? 'normal';
-    assigneeId = t?.assigneeId ?? widget.store.partRules.first.assigneeId;
-    reviewerId = t?.reviewerId ?? widget.store.partRules.first.reviewerId;
+    assigneeId =
+        t?.assigneeId ??
+        widget.store.partRules.firstOrNull?.assigneeId ??
+        widget.store.profileId;
+    reviewerId =
+        t?.reviewerId ??
+        widget.store.partRules.firstOrNull?.reviewerId ??
+        widget.store.profileId;
     initialDraft = draft;
     for (final c in [title, assigned, due, description]) {
       c.addListener(() {
@@ -138,9 +109,11 @@ class _TaskEditorState extends State<TaskEditor> {
     Map<String, String> values,
     ValueChanged<String> change,
   ) => IgnorePointer(
-    ignoring: !assignmentEditable,
+    ignoring: !(key == 'task-assignee' ? assigneeEditable : assignmentEditable),
     child: Opacity(
-      opacity: assignmentEditable ? 1 : 0.65,
+      opacity: (key == 'task-assignee' ? assigneeEditable : assignmentEditable)
+          ? 1
+          : 0.65,
       child: IeumSelect(
         key: ValueKey('$key-$value'),
         value: value,
@@ -164,6 +137,8 @@ class _TaskEditorState extends State<TaskEditor> {
     try {
       widget.store.save({
         if (widget.task != null) 'id': widget.task!.id,
+        if (widget.task == null)
+          'lockedBy': lockOnCreate ? widget.store.profileId : '',
         'title': title.text,
         'part': part,
         'priority': priority,
@@ -208,8 +183,7 @@ class _TaskEditorState extends State<TaskEditor> {
                 Padding(
                   padding: const EdgeInsets.only(top: 16),
                   child: Text(
-                    '${widget.store.editLockReason(currentTask!)}'
-                    '${assignmentEditable && currentTask!.status == 'review' ? '\n관리자는 담당자와 검토자, 일정을 조정할 수 있습니다.' : ''}',
+                    widget.store.editLockReason(currentTask!),
                     style: const TextStyle(
                       fontSize: 12,
                       color: muted,
@@ -234,6 +208,14 @@ class _TaskEditorState extends State<TaskEditor> {
                     : null,
               ),
               const SizedBox(height: 19),
+              if (widget.task == null && widget.store.partRules.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.only(bottom: 12),
+                  child: Text(
+                    '프로젝트 설정의 파트 탭에서 파트를 먼저 추가하세요.',
+                    style: TextStyle(fontSize: 12, color: muted),
+                  ),
+                ),
               Row(
                 children: [
                   Expanded(
@@ -241,13 +223,21 @@ class _TaskEditorState extends State<TaskEditor> {
                       'task-part',
                       '담당 파트',
                       part,
-                      {for (final r in widget.store.partRules) r.part: r.part},
+                      {
+                        if (widget.task != null &&
+                            !widget.store.partRules.any(
+                              (r) => r.part == widget.task!.part,
+                            ))
+                          widget.task!.part: '${widget.task!.part} (삭제된 파트)',
+                        for (final r in widget.store.partRules) r.part: r.part,
+                      },
                       (v) {
                         part = v;
-                        final rule = widget.store.partRules.firstWhere(
-                          (r) => r.part == v,
-                        );
-                        assigneeId = rule.assigneeId;
+                        final rule = widget.store.partRules
+                            .where((r) => r.part == v)
+                            .firstOrNull;
+                        if (rule == null) return;
+                        if (assigneeEditable) assigneeId = rule.assigneeId;
                         reviewerId = rule.reviewerId;
                       },
                     ),
@@ -268,21 +258,18 @@ class _TaskEditorState extends State<TaskEditor> {
               Row(
                 children: [
                   Expanded(
-                    child: select('task-assignee', '담당자', assigneeId, {
-                      for (final p in widget.store.people.where(
-                        (p) => p.canWork,
-                      ))
-                        p.id: p.name,
-                    }, (v) => assigneeId = v),
-                  ),
-                  const SizedBox(width: 15),
-                  Expanded(
-                    child: select('task-reviewer', '검토자', reviewerId, {
-                      for (final p in widget.store.people.where(
-                        (p) => p.canReview,
-                      ))
-                        p.id: p.name,
-                    }, (v) => reviewerId = v),
+                    child: select(
+                      'task-assignee',
+                      widget.task == null ? '첫 담당자' : '등록 담당자',
+                      assigneeId,
+                      {
+                        for (final p in widget.store.people.where(
+                          (p) => p.canWork,
+                        ))
+                          p.id: p.name,
+                      },
+                      (v) => assigneeId = v,
+                    ),
                   ),
                 ],
               ),
@@ -349,10 +336,21 @@ class _TaskEditorState extends State<TaskEditor> {
                 ],
               ),
               const SizedBox(height: 13),
-              const Text(
-                '파트를 선택하면 기본 담당자와 검토자가 자동 배정됩니다.',
+              Text(
+                widget.task == null
+                    ? '첫 담당자를 지정합니다. 이후에는 전달 버튼으로 다음 담당자를 선택할 수 있습니다.'
+                    : '등록 담당자는 최초 배정 정보입니다. 현재 담당자를 변경하려면 전달 버튼을 사용하세요.',
+                key: const Key('task-editor-assignment-help'),
                 style: TextStyle(fontSize: 10, color: muted),
               ),
+              if (currentTask != null) ...[
+                const SizedBox(height: 9),
+                Text(
+                  '현재 담당자 · ${widget.store.currentActorLabel(currentTask!)}',
+                  key: const Key('task-editor-current-assignee'),
+                  style: TextStyle(fontSize: 11, color: muted),
+                ),
+              ],
               const SizedBox(height: 22),
               TextFormField(
                 key: const Key('task-description'),
@@ -366,6 +364,23 @@ class _TaskEditorState extends State<TaskEditor> {
                   counterText: '',
                 ),
               ),
+              if (widget.task == null && widget.store.isProject)
+                CheckboxListTile(
+                  key: const Key('task-create-lock'),
+                  contentPadding: EdgeInsets.zero,
+                  controlAffinity: ListTileControlAffinity.leading,
+                  title: const Text(
+                    '등록 후 내 작업으로 잠금',
+                    style: TextStyle(fontSize: 12),
+                  ),
+                  subtitle: const Text(
+                    '다른 참여자는 열람과 코멘트만 가능합니다.',
+                    style: TextStyle(fontSize: 11),
+                  ),
+                  value: lockOnCreate,
+                  onChanged: (value) =>
+                      setState(() => lockOnCreate = value ?? false),
+                ),
               if (error.isNotEmpty)
                 Padding(
                   padding: const EdgeInsets.only(top: 15),

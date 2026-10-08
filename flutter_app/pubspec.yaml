@@ -1,5 +1,5 @@
 name: ieum_flutter
-description: "이음 · 개인 SQLite와 JSON 통합을 사용하는 팀 작업 관리 데스크톱 앱"
+description: "이음 · GitHub 기반 팀 작업, 일정과 워크플로 데스크톱 앱"
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev
@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 0.7.1
+version: 0.8.0
 
 environment:
   sdk: ^3.13.4

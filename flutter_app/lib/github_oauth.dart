@@ -1,10 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:flutter/services.dart';
 
 import 'github_sync.dart';
+import 'github_http.dart';
 
 const githubOAuthClientId = 'Ov23liDTP1YEtuI7SAx0';
 const githubDeviceUrl = 'https://github.com/login/device';
@@ -31,6 +31,9 @@ abstract interface class OAuthTransport {
 }
 
 class HttpOAuthTransport implements OAuthTransport {
+  HttpOAuthTransport({GitHubHttpTransport? http})
+    : http = http ?? GitHubHttpTransport();
+  final GitHubHttpTransport http;
   @override
   Future<Map<String, dynamic>> post(
     String path,
@@ -39,39 +42,34 @@ class HttpOAuthTransport implements OAuthTransport {
     if (path != '/login/device/code' && path != '/login/oauth/access_token') {
       throw const GitHubFailure('허용되지 않은 인증 주소입니다.');
     }
-    final client = HttpClient()
-      ..connectionTimeout = const Duration(seconds: 15);
     try {
-      final request = await client
-          .postUrl(Uri.https('github.com', path))
-          .timeout(const Duration(seconds: 20));
-      request.followRedirects = false;
-      request.headers.set('Accept', 'application/json');
-      request.headers.set('User-Agent', 'IEUM-Desktop');
-      request.headers.set('Content-Type', 'application/x-www-form-urlencoded');
-      request.write(Uri(queryParameters: values).query);
-      final response = await request.close().timeout(
-        const Duration(seconds: 30),
+      final response = await http.send(
+        'POST',
+        Uri.https('github.com', path),
+        headers: {
+          'Accept': 'application/json',
+          'User-Agent': 'IEUM-Desktop',
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: Uri(queryParameters: values).query,
+        maxBytes: 65536,
       );
-      if (response.statusCode != 200) {
+      if (response.status != 200) {
         throw GitHubFailure(
-          'GitHub 인증 서버에 연결하지 못했습니다. 잠시 후 다시 시도하세요.',
-          response.statusCode,
+          response.status == 407
+              ? 'GitHub 인증 연결에 프록시 로그인이 필요합니다. Windows 프록시 설정을 확인하세요. (HTTP 407)'
+              : 'GitHub 인증 서버가 요청을 처리하지 못했습니다. 잠시 후 다시 시도하세요. (HTTP ${response.status})',
+          response.status,
         );
       }
-      final bytes = <int>[];
-      await for (final chunk in response.timeout(const Duration(seconds: 30))) {
-        bytes.addAll(chunk);
-        if (bytes.length > 65536) throw const FormatException();
-      }
-      return Map<String, dynamic>.from(jsonDecode(utf8.decode(bytes)) as Map);
+      return Map<String, dynamic>.from(jsonDecode(response.text) as Map);
     } on GitHubFailure {
       rethrow;
-    } catch (_) {
+    } catch (error) {
       // Never surface server payloads, device codes or tokens in exception text.
-      throw const GitHubFailure('GitHub 인증 통신에 실패했습니다. 인터넷 연결을 확인하세요.');
+      throw GitHubFailure(githubNetworkMessage(error, authentication: true));
     } finally {
-      client.close(force: true);
+      http.close();
     }
   }
 }

@@ -144,27 +144,22 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      expect(find.byKey(const Key('project-picker')), findsNothing);
+      expect(find.byKey(const Key('project-picker')), findsOneWidget);
       expect(find.byIcon(Icons.home_outlined), findsOneWidget);
       await tester.tap(find.byKey(const Key('sidebar-account')));
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('project-settings')));
       await tester.pumpAndSettle();
-      final selector = tester.getRect(
-        find.byKey(const Key('settings-project-selector')),
-      );
-      final search = tester.getRect(find.byKey(const Key('settings-search')));
-      expect(selector.bottom, lessThan(search.top));
+      expect(find.byKey(const Key('project-view-sidebar')), findsNothing);
+      expect(find.byKey(const Key('settings-navigation')), findsOneWidget);
+      expect(find.byKey(const Key('settings-section-picker')), findsNothing);
       await tester.tap(find.byKey(const Key('project-picker')));
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(ValueKey('project-option-${second.path}')));
       await tester.pumpAndSettle();
       final active = tester.widget<Workspace>(find.byType(Workspace)).store;
       expect(active.filename, second.path);
-      expect(
-        find.byKey(const Key('settings-project-selector')),
-        findsOneWidget,
-      );
+      expect(find.byKey(const Key('settings-navigation')), findsOneWidget);
       await tester.tap(find.byKey(const Key('project-home')));
       await tester.pumpAndSettle();
       expect(
@@ -173,7 +168,7 @@ void main() {
       );
       expect(find.byKey(const Key('task-list')), findsOneWidget);
       expect(find.byKey(const Key('settings-shell')), findsNothing);
-      expect(find.byKey(const Key('project-picker')), findsNothing);
+      expect(find.byKey(const Key('project-picker')), findsOneWidget);
       await tester.pumpWidget(const SizedBox());
       await tester.pumpAndSettle();
     },
@@ -385,10 +380,8 @@ void main() {
       );
       await tester.pumpAndSettle();
       final current = tester.widget<Workspace>(find.byType(Workspace)).store;
-      if (find.byKey(const Key('project-picker')).evaluate().isEmpty) {
-        await tester.tap(find.byKey(const Key('sidebar-account')));
-        await tester.pumpAndSettle();
-        await tester.tap(find.byKey(const Key('project-settings')));
+      if (find.byKey(const Key('project-view-sidebar')).evaluate().isEmpty) {
+        await tester.tap(find.byKey(const Key('titlebar-sidebar-toggle')));
         await tester.pumpAndSettle();
       }
       await tester.tap(find.byKey(const Key('project-picker')));
@@ -401,10 +394,8 @@ void main() {
       );
       expect(catalog.lastFor('gh-1')!.path, good.path);
       expect(find.textContaining('DB 파일이 없습니다.'), findsOneWidget);
-      if (find.byKey(const Key('project-picker')).evaluate().isEmpty) {
-        await tester.tap(find.byKey(const Key('sidebar-account')));
-        await tester.pumpAndSettle();
-        await tester.tap(find.byKey(const Key('project-settings')));
+      if (find.byKey(const Key('project-view-sidebar')).evaluate().isEmpty) {
+        await tester.tap(find.byKey(const Key('titlebar-sidebar-toggle')));
         await tester.pumpAndSettle();
       }
       await tester.tap(find.byKey(const Key('project-picker')));
@@ -510,10 +501,17 @@ void main() {
           .store;
       Directory('${prefs.path}.tmp').createSync();
       Future<void> select(SavedProject entry) async {
-        if (find.byKey(const Key('project-picker')).evaluate().isEmpty) {
-          await tester.tap(find.byKey(const Key('sidebar-account')));
+        if (find.byKey(const Key('settings-shell')).evaluate().isNotEmpty) {
+          await tester.tap(find.byKey(const Key('project-picker')));
           await tester.pumpAndSettle();
-          await tester.tap(find.byKey(const Key('project-settings')));
+          await tester.tap(
+            find.byKey(ValueKey('project-option-${entry.path}')),
+          );
+          await tester.pumpAndSettle();
+          return;
+        }
+        if (find.byKey(const Key('project-view-sidebar')).evaluate().isEmpty) {
+          await tester.tap(find.byKey(const Key('titlebar-sidebar-toggle')));
           await tester.pumpAndSettle();
         }
         await tester.tap(find.byKey(const Key('project-picker')));

@@ -9,6 +9,8 @@ import 'models.dart';
 import 'member_policy.dart';
 import 'github_oauth.dart';
 
+const _uncheckedWorkflowSheet = Object();
+
 /// Authentication belongs to GitHub. IEUM stores a nickname, never a password.
 class GitHubSession {
   GitHubSession({GitHubApi? api, GitHubOAuth? oauth})
@@ -421,7 +423,7 @@ class GitHubSession {
     if (file == null) {
       throw const GitHubFailure('이음 프로젝트가 없는 저장소입니다. 관리자가 먼저 프로젝트를 생성하세요.');
     }
-    return ProjectManifest.fromJson(file['data']);
+    return ProjectManifest.fromJson(file['data']).partWorkflowView;
   }
 
   /// Re-read and re-authorize each SHA retry; never overwrite a concurrent edit.
@@ -430,13 +432,25 @@ class GitHubSession {
     String message,
     Future<ProjectManifest> Function(ProjectManifest, Person) change, {
     String? expectedProjectId,
+    Object? expectedWorkflowSheet = _uncheckedWorkflowSheet,
   }) async {
     if (user == null) throw const GitHubFailure('로그인이 필요합니다.');
     final accountId = user!.id;
+    final authGeneration = _authGeneration;
     for (var attempt = 0; attempt < 3; attempt++) {
       final file = await readJson(config, '.ieum/project.json');
       if (file == null) throw const GitHubFailure('프로젝트를 찾지 못했습니다.');
-      final current = ProjectManifest.fromJson(file['data']);
+      final original = ProjectManifest.fromJson(file['data']);
+      if (!identical(expectedWorkflowSheet, _uncheckedWorkflowSheet)) {
+        final expected = expectedWorkflowSheet as WorkflowSheet?;
+        final actual = expected == null
+            ? original.workflowSheet
+            : original.partWorkflowView.workflowSheet;
+        if (jsonEncode(actual?.json) != jsonEncode(expected?.json)) {
+          throw const GitHubFailure('자동화 흐름이 다른 곳에서 변경되었습니다. 최신 내용을 확인하세요.');
+        }
+      }
+      final current = original.partWorkflowView;
       if (expectedProjectId != null && current.id != expectedProjectId) {
         throw const GitHubFailure('저장소의 프로젝트가 변경되었습니다. 다시 연결하세요.');
       }
@@ -444,8 +458,11 @@ class GitHubSession {
       if (user?.id != accountId || actor == null || !actor.active) {
         throw const GitHubFailure('승인된 참여자만 변경할 수 있습니다.');
       }
-      final next = await change(current, actor);
-      if (jsonEncode(current.json) == jsonEncode(next.json)) return current;
+      final next = (await change(current, actor)).partWorkflowView;
+      if (user?.id != accountId || _authGeneration != authGeneration) {
+        throw const GitHubFailure('처리 중 로그인 계정이 변경되었습니다. 다시 확인하세요.');
+      }
+      if (jsonEncode(original.json) == jsonEncode(next.json)) return current;
       try {
         await writeJson(
           config,
@@ -485,6 +502,111 @@ class GitHubSession {
     );
   }
 
+  Future<ProjectManifest> savePermissionPart(
+    GitHubConfig config,
+    ProjectRole part, {
+    String? expectedProjectId,
+    ProjectRole? expectedPart,
+  }) => changeManifest(config, 'Update IEUM project part', (
+    original,
+    actor,
+  ) async {
+    final current = original.partWorkflowView;
+    final validated = ProjectRole.fromJson({
+      ...part.json,
+      'permissions':
+          part.permissions
+              .where(managementPermissionLabels.containsKey)
+              .toList()
+            ..sort(),
+    });
+    final previous = current.roles.where((r) => r.id == part.id).firstOrNull;
+    if (expectedPart != null &&
+        (previous == null ||
+            previous.id != expectedPart.id ||
+            jsonEncode(previous.json) != jsonEncode(expectedPart.json))) {
+      throw const GitHubFailure('파트가 원격에서 변경되었습니다. 최신 값을 확인한 뒤 다시 저장하세요.');
+    }
+    if (!actor.has('role.manage')) {
+      throw const GitHubFailure('역할 관리 권한이 필요합니다.');
+    }
+    if (validated.permissions
+        .difference(previous?.permissions ?? {})
+        .any((permission) => !actor.has(permission))) {
+      throw const GitHubFailure('보유하지 않은 관리 권한을 새로 부여할 수 없습니다.');
+    }
+    if (validated.name == roleLabels['owner'] &&
+        previous?.name != validated.name) {
+      throw const GitHubFailure('관리자와 구분되는 파트 이름을 입력하세요.');
+    }
+    final roles = [...current.roles.where((r) => r.id != part.id), validated];
+    final next = ProjectManifest.fromJson({
+      ...current.json,
+      'roles': roles.map((r) => r.json).toList(),
+      'parts': roles.map((r) => r.name).toList(),
+      'members': [
+        for (final p in current.people)
+          {
+            ...p.json,
+            'parts': [
+              for (final name in p.parts)
+                if (name == previous?.name) validated.name else name,
+            ],
+          },
+      ],
+    });
+    return next;
+  }, expectedProjectId: expectedProjectId);
+
+  Future<ProjectManifest> deletePermissionPart(
+    GitHubConfig config,
+    String partId, {
+    String? expectedProjectId,
+    ProjectRole? expectedPart,
+  }) => changeManifest(config, 'Delete IEUM project part', (
+    original,
+    actor,
+  ) async {
+    final current = original.partWorkflowView;
+    final part = current.roles.where((r) => r.id == partId).firstOrNull;
+    if (part == null ||
+        expectedPart != null &&
+            jsonEncode(part.json) != jsonEncode(expectedPart.json)) {
+      throw const GitHubFailure('파트가 변경되었거나 삭제되었습니다. 목록을 새로고침하세요.');
+    }
+    if (!actor.has('role.manage')) {
+      throw const GitHubFailure('역할 관리 권한이 필요합니다.');
+    }
+    final publisher = GitHubPublisher(api);
+    final partBlockers = await publisher.partBlockers(config, current, partId);
+    if (partBlockers.isNotEmpty) {
+      throw GitHubFailure(
+        '이 파트가 처리 중인 작업을 먼저 회수하거나 전달하세요: ${partBlockers.take(5).join(', ')}',
+      );
+    }
+    final roles = current.roles.where((r) => r.id != partId).toList();
+    final next = ProjectManifest.fromJson({
+      ...current.json,
+      'roles': roles.map((r) => r.json).toList(),
+      'parts': roles.map((r) => r.name).toList(),
+      if (current.workflowSheet != null)
+        'workflowSheet': {
+          ...current.workflowSheet!.json,
+          'routes': [
+            for (final route in current.workflowSheet!.routes)
+              if (route.source != 'part:$partId' &&
+                  route.destination != 'part:$partId')
+                route.json,
+          ],
+        },
+      'members': [
+        for (final p in current.people)
+          {...p.json, 'parts': p.parts.where((n) => n != part.name).toList()},
+      ],
+    });
+    return next;
+  }, expectedProjectId: expectedProjectId);
+
   Future<ProjectManifest> saveRole(
     GitHubConfig config,
     ProjectRole role, {
@@ -495,6 +617,9 @@ class GitHubSession {
     actor,
   ) async {
     final validated = ProjectRole.fromJson(role.json);
+    if (current.unifiedParts) {
+      throw const GitHubFailure('통합된 파트는 권한 화면에서 수정하세요.');
+    }
     if (expectedRole != null) {
       final latest = current.roles
           .where((r) => r.id == expectedRole.id)
@@ -511,7 +636,7 @@ class GitHubSession {
       throw const GitHubFailure('역할 관리 권한이 필요하며 본인 권한을 초과해 부여할 수 없습니다.');
     }
     final previous = current.roles.where((r) => r.id == role.id).firstOrNull;
-    if (roleLabels.values.contains(validated.name) &&
+    if (validated.name == roleLabels['owner'] &&
         previous?.name != validated.name) {
       throw const GitHubFailure('시스템 권한과 구분되는 역할 이름을 입력하세요.');
     }
@@ -540,6 +665,284 @@ class GitHubSession {
     });
   }, expectedProjectId: expectedProjectId);
 
+  Future<ProjectManifest> saveParts(
+    GitHubConfig config,
+    List<String> parts, {
+    String? expectedProjectId,
+    List<String>? expectedParts,
+  }) => changeManifest(config, 'Update IEUM project parts', (
+    current,
+    actor,
+  ) async {
+    if (current.unifiedParts) {
+      throw const GitHubFailure('통합된 파트는 권한 화면에서 수정하세요.');
+    }
+    if (!actor.has('member.manage')) {
+      throw const GitHubFailure('프로젝트 관리 권한이 필요합니다.');
+    }
+    if (expectedParts != null &&
+        jsonEncode(expectedParts) != jsonEncode(current.parts)) {
+      throw const GitHubFailure('파트가 원격에서 변경되었습니다. 새로고침 후 다시 변경하세요.');
+    }
+    if (!validProjectParts(parts)) {
+      throw const GitHubFailure(
+        '파트 이름은 중복 없이 1~40자로 입력하세요. 최대 50개까지 등록할 수 있습니다.',
+      );
+    }
+    return ProjectManifest.fromJson({...current.json, 'parts': parts});
+  }, expectedProjectId: expectedProjectId);
+
+  Future<ProjectManifest> saveWorkflowStages(
+    GitHubConfig config,
+    List<WorkflowStage> stages, {
+    String? expectedProjectId,
+    List<WorkflowStage>? expectedStages,
+    bool reorderOnly = false,
+  }) => changeManifest(config, 'Update IEUM project workflow stages', (
+    current,
+    actor,
+  ) async {
+    _requireWorkflowManager(current, actor);
+    _checkWorkflowStageSnapshot(
+      current,
+      expectedStages,
+      reorderOnly: reorderOnly,
+    );
+    final validated = _validatedWorkflowStages(stages);
+    if (reorderOnly &&
+        (validated.length != current.workflowStages.length ||
+            current.workflowStages.any(
+              (stage) => !validated.any(
+                (item) => jsonEncode(item.json) == jsonEncode(stage.json),
+              ),
+            ))) {
+      throw const GitHubFailure('작업 단계 구성이 변경되었습니다. 최신 목록을 다시 확인하세요.');
+    }
+    await _guardRemovedWorkflowStages(config, current, validated);
+    return ProjectManifest.fromJson({
+      ...current.json,
+      'workflowStages': validated.map((stage) => stage.json).toList(),
+      if (current.workflowSheet != null)
+        'workflowSheet': _sheetWithoutRemovedStages(
+          current.workflowSheet!,
+          validated.map((stage) => stage.id).toSet(),
+        ).json,
+    });
+  }, expectedProjectId: expectedProjectId);
+
+  void _requireWorkflowManager(ProjectManifest project, Person actor) {
+    if (actor.id != project.ownerId || actor.role != 'owner') {
+      throw const GitHubFailure('프로젝트 관리자만 워크플로를 변경할 수 있습니다.');
+    }
+  }
+
+  void _checkWorkflowStageSnapshot(
+    ProjectManifest current,
+    List<WorkflowStage>? expected, {
+    bool reorderOnly = false,
+  }) {
+    if (expected == null) return;
+    if (current.workflowStages.length != expected.length ||
+        current.workflowStages.asMap().entries.any((entry) {
+          final before = reorderOnly
+              ? expected.where((s) => s.id == entry.value.id).firstOrNull
+              : expected[entry.key];
+          return before == null ||
+              jsonEncode(before.json) != jsonEncode(entry.value.json);
+        })) {
+      throw const GitHubFailure('작업 단계가 다른 곳에서 변경되었습니다. 최신 목록을 다시 확인하세요.');
+    }
+  }
+
+  List<WorkflowStage> _validatedWorkflowStages(List<WorkflowStage> stages) {
+    final validated = stages
+        .map((s) => WorkflowStage.fromJson(s.json))
+        .toList();
+    if (validated.length > maxWorkflowStages ||
+        validated.map((s) => s.id).toSet().length != validated.length ||
+        validated.map((s) => s.name.toLowerCase()).toSet().length !=
+            validated.length) {
+      throw const GitHubFailure('작업 단계 ID와 이름은 중복될 수 없습니다.');
+    }
+    final initial = validated.where((s) => s.initial).toList();
+    if (initial.length > 1 ||
+        initial.any((s) => s.isCompleted || s.locksContent)) {
+      throw const GitHubFailure('등록 단계는 완료되거나 잠긴 단계가 아닌 하나의 단계로 지정하세요.');
+    }
+    return validated;
+  }
+
+  Future<void> _guardRemovedWorkflowStages(
+    GitHubConfig config,
+    ProjectManifest current,
+    List<WorkflowStage> stages,
+  ) async {
+    final remaining = stages.map((s) => s.id).toSet();
+    final removed = current.workflowStages
+        .where((s) => !remaining.contains(s.id))
+        .map((s) => s.id)
+        .toSet();
+    final completionChanges = current.workflowStages
+        .where(
+          (before) => stages.any(
+            (after) =>
+                after.id == before.id &&
+                after.isCompleted != before.isCompleted,
+          ),
+        )
+        .map((s) => s.id)
+        .toSet();
+    final protected = {...removed, ...completionChanges};
+    if (protected.isEmpty) return;
+    final blockers = await GitHubPublisher(api)
+        .workflowStageBlockers(config, current, protected);
+    if (blockers.isNotEmpty) {
+      throw GitHubFailure(
+        '삭제하거나 완료 분류를 바꿀 단계의 작업을 먼저 이동하고 대기 변경을 처리하세요: ${blockers.take(5).join(', ')}',
+      );
+    }
+  }
+
+  WorkflowSheet _sheetWithoutRemovedStages(
+    WorkflowSheet sheet,
+    Set<String> stages,
+  ) {
+    final nodes = sheet.nodes.where((n) => stages.contains(n.stageId)).toList();
+    final ids = nodes.map((n) => n.id).toSet();
+    return WorkflowSheet.fromJson({
+      ...sheet.json,
+      'nodes': nodes.map((n) => n.json).toList(),
+      'routes': sheet.routes
+          .where((r) => ids.contains(r.from) && ids.contains(r.to))
+          .map((r) => r.json)
+          .toList(),
+    });
+  }
+
+  Future<ProjectManifest> saveWorkflowSheet(
+    GitHubConfig config,
+    WorkflowSheet sheet, {
+    String? expectedProjectId,
+    Object? expectedSheet = _uncheckedWorkflowSheet,
+  }) => changeManifest(
+    config,
+    'Update IEUM project workflow sheet',
+    (current, actor) async {
+      _requireWorkflowManager(current, actor);
+      final validated = _validatedWorkflowSheet(current, sheet);
+      return ProjectManifest.fromJson({
+        ...current.json,
+        'workflowSheet': validated.json,
+      });
+    },
+    expectedProjectId: expectedProjectId,
+    expectedWorkflowSheet: expectedSheet,
+  );
+
+  /// Publish statuses and transitions together against the same manifest SHA.
+  Future<ProjectManifest> saveWorkflowDefinition(
+    GitHubConfig config,
+    List<WorkflowStage> stages,
+    WorkflowSheet sheet, {
+    required String expectedProjectId,
+    required List<WorkflowStage> expectedStages,
+    required WorkflowSheet? expectedSheet,
+  }) => changeManifest(
+    config,
+    'Publish IEUM project workflow',
+    (current, actor) async {
+      _requireWorkflowManager(current, actor);
+      _checkWorkflowStageSnapshot(current, expectedStages);
+      final validatedStages = _validatedWorkflowStages(stages);
+      final draft = ProjectManifest.fromJson({
+        ...current.json,
+        'workflowStages': validatedStages.map((s) => s.json).toList(),
+        'workflowSheet': sheet.json,
+      });
+      final validatedSheet = _validatedWorkflowSheet(draft, sheet);
+      await _guardRemovedWorkflowStages(config, current, validatedStages);
+      return ProjectManifest.fromJson({
+        ...draft.json,
+        'workflowSheet': validatedSheet.json,
+      });
+    },
+    expectedProjectId: expectedProjectId,
+    expectedWorkflowSheet: expectedSheet,
+  );
+
+  WorkflowSheet _validatedWorkflowSheet(
+    ProjectManifest project,
+    WorkflowSheet sheet,
+  ) {
+    final validated = WorkflowSheet.fromJson(sheet.json);
+    final stages = project.workflowStages.map((s) => s.id).toSet();
+    final parts = project.roles.map((p) => 'part:${p.id}').toSet();
+    bool groupExists(String group) =>
+        group.isEmpty || group == 'role:owner' || parts.contains(group);
+    if (validated.nodes.any((n) => !stages.contains(n.stageId))) {
+      throw const GitHubFailure('삭제된 작업 단계는 워크플로에 사용할 수 없습니다.');
+    }
+    final unique = <String>{};
+    for (final route in validated.routes) {
+      final from = validated.stageFor(route.from);
+      final to = validated.stageFor(route.to);
+      if (from == null || to == null) {
+        throw const GitHubFailure('전환의 출발 단계와 도착 단계를 확인하세요.');
+      }
+      if (!groupExists(route.source) || !groupExists(route.destination)) {
+        throw const GitHubFailure('삭제된 파트를 사용한 전달 조건은 저장할 수 없습니다.');
+      }
+      final required = route.requiredFields.toList()..sort();
+      if (!unique.add(
+        jsonEncode([
+          from,
+          to,
+          route.effectiveOperation,
+          route.name,
+          route.source,
+          route.destination,
+          route.person,
+          route.assignment,
+          route.requiresComment,
+          required,
+          route.trigger,
+          route.purpose,
+          route.requiredPurpose,
+        ]),
+      )) {
+        throw const GitHubFailure('같은 작업 단계의 전환 조건이 중복되어 있습니다.');
+      }
+      if (const {'target', 'select'}.contains(route.assignment) &&
+          route.person.isNotEmpty) {
+        final target = project.people
+            .where((p) => p.id == route.person && p.active)
+            .firstOrNull;
+        final part = project.roles
+            .where((p) => 'part:${p.id}' == route.destination)
+            .firstOrNull;
+        if (target == null ||
+            route.destination == 'role:owner' && target.id != project.ownerId ||
+            part != null && !target.parts.contains(part.name)) {
+          throw const GitHubFailure('받는 작업자는 활성 참여자이며 받는 파트에 소속되어야 합니다.');
+        }
+      }
+    }
+    return validated;
+  }
+
+  Future<ProjectManifest> applyDefaultWorkflow(
+    GitHubConfig config, {
+    required String expectedProjectId,
+    required List<WorkflowStage> expectedStages,
+    required WorkflowAutomation expectedAutomation,
+  }) async => throw const GitHubFailure('자동화 시트 기능이 제거되어 프로젝트에 적용할 수 없습니다.');
+
+  Future<ProjectManifest> saveWorkflowAutomation(
+    GitHubConfig config,
+    WorkflowAutomation automation, {
+    required String expectedProjectId,
+    required WorkflowAutomation expectedAutomation,
+  }) async => throw const GitHubFailure('자동화 시트 기능이 제거되어 프로젝트에 적용할 수 없습니다.');
   Future<ProjectManifest> deleteRole(
     GitHubConfig config,
     String roleId, {
@@ -551,6 +954,9 @@ class GitHubSession {
     current,
     actor,
   ) async {
+    if (current.unifiedParts) {
+      throw const GitHubFailure('통합된 파트는 권한 화면에서 삭제하세요.');
+    }
     final role = current.roles.where((r) => r.id == roleId).firstOrNull;
     if (!actor.has('role.manage') ||
         role == null ||
@@ -662,24 +1068,21 @@ class GitHubSession {
     }
     final existing = await readJson(config, '.ieum/project.json');
     if (existing != null) {
-      final current = ProjectManifest.fromJson(existing['data']);
+      final current = ProjectManifest.fromJson(existing['data'])
+          .partWorkflowView;
       if (current.ownerId == user!.id && current.name == name.trim()) {
         return current;
       }
       throw const GitHubFailure('이미 프로젝트가 있습니다. 프로젝트 참여를 선택하세요.');
     }
-    final owner = named(
-      nickname,
-      role: 'owner',
-      parts: rules.map((r) => r.part).toList(),
-    );
+    final owner = named(nickname, role: 'owner', parts: const []);
     final project = ProjectManifest.fromJson({
       'schemaVersion': 1,
       'projectId': 'project-${const Uuid().v4()}',
       'name': name.trim(),
       'ownerId': owner.id,
       'members': [owner.json],
-    });
+    }).partWorkflowView;
     try {
       await writeJson(
         config,
@@ -692,7 +1095,8 @@ class GitHubSession {
       if (!transient(e) && e.status != 409 && e.status != 422) rethrow;
       final recovered = await readJson(config, '.ieum/project.json');
       if (recovered == null) rethrow;
-      final current = ProjectManifest.fromJson(recovered['data']);
+      final current = ProjectManifest.fromJson(recovered['data'])
+          .partWorkflowView;
       if (current.ownerId != user!.id || current.name != name.trim()) rethrow;
       return current;
     }
@@ -862,17 +1266,43 @@ class GitHubSession {
     Map<String, dynamic>? request,
     String? expectedProjectId,
     Person? expectedMember,
+    bool unifyParts = false,
   }) async {
     final next = await changeManifest(config, 'Update IEUM member role', (
       current,
       executor,
     ) async {
+      var expected = expectedMember;
+      if (unifyParts && !current.unifiedParts) {
+        final old = current.people.where((p) => p.id == member.id).firstOrNull;
+        if (expected != null &&
+            (old == null ||
+                jsonEncode(old.json) != jsonEncode(expected.json))) {
+          throw const GitHubFailure('참여자 정보가 원격에서 변경되었습니다. 최신 값을 확인하세요.');
+        }
+        current = current.unifiedView;
+        if (expected != null) {
+          expected = current.people.firstWhere((p) => p.id == member.id);
+        }
+      }
       final target = current.people.where((p) => p.id == member.id);
-      final resolved = member.resolved(current.roles);
-      if (expectedMember != null &&
+      if (member.parts.any((part) => !current.parts.contains(part))) {
+        throw const GitHubFailure('등록된 파트만 참여자에게 배정할 수 있습니다.');
+      }
+      final ownerTarget = member.id == current.ownerId;
+      if (ownerTarget) {
+        if (request != null ||
+            target.isEmpty ||
+            jsonEncode({...member.json, 'parts': target.single.parts}) !=
+                jsonEncode(target.single.json)) {
+          throw const GitHubFailure('소유자는 관리자 권한과 활성 상태를 유지하며 파트만 변경할 수 있습니다.');
+        }
+      } else if (member.role != 'unassigned') {
+        throw const GitHubFailure('일반 참여자는 파트로 배정합니다. 관리자 변경은 권한 이전을 사용하세요.');
+      }
+      if (expected != null &&
           (target.isEmpty ||
-              jsonEncode(target.single.json) !=
-                  jsonEncode(expectedMember.json))) {
+              jsonEncode(target.single.json) != jsonEncode(expected.json))) {
         throw const GitHubFailure(
           '참여자 정보가 원격에서 변경되었습니다. 초안을 유지하고 최신 값을 다시 확인하세요.',
         );
@@ -881,23 +1311,30 @@ class GitHubSession {
           !canAssignMember(executor, target.single, current.ownerId)) {
         throw const GitHubFailure('이 참여자의 역할을 변경할 권한이 없습니다.');
       }
-      if (!executor.has('member.manage') ||
-          member.id == current.ownerId ||
-          (!roleLabels.containsKey(member.role) &&
-              resolved.customRole == null) ||
-          member.role == 'pending' ||
-          !executor.permissions.containsAll(resolved.permissions) ||
-          target.any((p) => !executor.permissions.containsAll(p.permissions)) ||
-          executor.role != 'owner' &&
-              (member.role == 'manager' ||
-                  target.any((p) => p.role == 'manager'))) {
-        throw const GitHubFailure(
-          '참여자 관리 권한이 필요합니다. 본인보다 높은 권한을 부여하거나 변경할 수 없습니다.',
-        );
+      if (!executor.has('member.manage')) {
+        throw const GitHubFailure('참여자 관리 권한이 필요합니다.');
+      }
+      final nextMember = member.resolved(
+        current.roles,
+        unifiedParts: true,
+        workflowParticipant: true,
+      );
+      if (executor.id != current.ownerId &&
+          nextMember.permissions
+              .where(managementPermissionLabels.containsKey)
+              .toSet()
+              .difference(target.firstOrNull?.permissions ?? {})
+              .any((permission) => !executor.has(permission))) {
+        throw const GitHubFailure('보유하지 않은 관리 권한의 파트를 새로 배정할 수 없습니다.');
       }
       final wasEnabled = target.isEmpty ? true : target.single.enabled;
-      if ((member.enabled != wasEnabled || member.role == 'disabled') &&
-          !executor.has('member.status')) {
+      if (member.enabled != wasEnabled &&
+          (target.isEmpty ||
+              !canManageMemberStatus(
+                executor,
+                target.single,
+                current.ownerId,
+              ))) {
         throw const GitHubFailure(
           '활성화·비활성화는 참여자 상태 관리 권한이 있는 관리자만 변경할 수 있습니다.',
         );
@@ -928,11 +1365,15 @@ class GitHubSession {
       if (target.any(
         (p) =>
             p.active &&
-            (!member.enabled ||
-                !resolved.permissions.containsAll(p.permissions)),
+            (!member.enabled || !member.parts.toSet().containsAll(p.parts)),
       )) {
-        final blockers = await GitHubPublisher(api)
-            .memberBlockers(config, current, member.id);
+        final blockers = await GitHubPublisher(api).memberBlockers(
+          config,
+          current,
+          member.id,
+          remainingParts: member.parts,
+          removingMember: !member.enabled,
+        );
         if (blockers.isNotEmpty) {
           throw GitHubFailure(
             '진행 중인 작업과 PR을 먼저 인수인계하세요: ${blockers.take(5).join(', ')}',
@@ -1077,7 +1518,9 @@ class GitHubSession {
             'role': person.id == targetId
                 ? 'owner'
                 : person.id == current.ownerId
-                ? 'manager'
+                ? current.unifiedParts
+                      ? 'unassigned'
+                      : 'manager'
                 : person.role,
           },
       ],

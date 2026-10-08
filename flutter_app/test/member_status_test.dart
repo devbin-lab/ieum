@@ -26,11 +26,13 @@ void main() {
     session = GitHubSession(api: api);
     await session.signIn(token: 'test-only');
     project = await session.createProject(config, '상태 관리', '개설자');
-    project = ProjectManifest(project.id, project.name, project.ownerId, [
-      ...project.people,
-      member(2, 'worker'),
-      member(3, 'manager'),
-    ]);
+    project = ProjectManifest(
+      project.id,
+      project.name,
+      project.ownerId,
+      [...project.people, member(2, 'worker'), member(3, 'manager')],
+      parts: const ['기획', 'QA'],
+    );
     final file = await session.readJson(config, '.ieum/project.json');
     await session.writeJson(
       config,
@@ -71,13 +73,10 @@ void main() {
     },
   );
 
-  test('manager can deactivate and reactivate without losing role; workers cannot and owner stays active', () async {
-    api.identityId = 3;
-    api.identityLogin = 'guest';
-    await session.signIn(token: 'manager');
+  test('owner can deactivate and reactivate while retaining parts; other members cannot and owner stays active', () async {
     project = await session.setMemberEnabled(config, 'gh-2', false);
     final worker = project.people.firstWhere((p) => p.id == 'gh-2');
-    expect(worker.role, 'worker');
+    expect(worker.role, 'unassigned');
     expect(worker.active, isFalse);
     expect(worker.parts, ['기획']);
     await expectLater(
@@ -107,6 +106,7 @@ void main() {
         project.name,
         project.ownerId,
         [project.people.first, member(2, 'worker'), member(3, delegate.id)],
+        parts: const ['기획'],
         roles: [delegate],
       );
       final file = await session.readJson(config, '.ieum/project.json');
@@ -154,35 +154,43 @@ void main() {
     },
   );
 
-  test('delegated status administrator manages workers without task editing permissions', () async {
-    const statusRole = ProjectRole('role-status', '참여자 상태 관리자', {
-      'member.status',
-    });
-    project = ProjectManifest(
-      project.id,
-      project.name,
-      project.ownerId,
-      [project.people.first, member(2, 'worker'), member(3, statusRole.id)],
-      roles: [statusRole],
-    );
-    final file = await session.readJson(config, '.ieum/project.json');
-    await session.writeJson(
-      config,
-      '.ieum/project.json',
-      project.json,
-      sha: file!['sha'],
-      message: 'fixture',
-    );
-    api.identityId = 3;
-    await session.signIn(token: 'status-admin');
-    final changed = await session.setMemberEnabled(config, 'gh-2', false);
-    expect(changed.people.firstWhere((p) => p.id == 'gh-2').active, isFalse);
-    expect(changed.people.firstWhere((p) => p.id == 'gh-3').canWork, isFalse);
-    await expectLater(
-      session.setMemberEnabled(config, 'gh-1', false),
-      throwsA(isA<GitHubFailure>()),
-    );
-  });
+  test(
+    'legacy delegated status grants no longer allow participation management',
+    () async {
+      const statusRole = ProjectRole('role-status', '참여자 상태 관리자', {
+        'member.status',
+      });
+      project = ProjectManifest(
+        project.id,
+        project.name,
+        project.ownerId,
+        [project.people.first, member(2, 'worker'), member(3, statusRole.id)],
+        parts: const ['기획'],
+        roles: [statusRole],
+      );
+      final file = await session.readJson(config, '.ieum/project.json');
+      await session.writeJson(
+        config,
+        '.ieum/project.json',
+        project.json,
+        sha: file!['sha'],
+        message: 'fixture',
+      );
+      api.identityId = 3;
+      await session.signIn(token: 'status-admin');
+      await expectLater(
+        session.setMemberEnabled(config, 'gh-2', false),
+        throwsA(isA<GitHubFailure>()),
+      );
+      final changed = await session.loadProject(config);
+      expect(changed.people.firstWhere((p) => p.id == 'gh-2').active, isTrue);
+      expect(changed.people.firstWhere((p) => p.id == 'gh-3').canWork, isTrue);
+      await expectLater(
+        session.setMemberEnabled(config, 'gh-1', false),
+        throwsA(isA<GitHubFailure>()),
+      );
+    },
+  );
 
   test('queued work from stale active client cannot upload after remote deactivation and can resume after activation', () async {
     final owner = TaskStore(
@@ -369,7 +377,110 @@ void main() {
   );
 
   testWidgets(
-    'member editor uses vertical roles, adds role inline and saves independent inactive state',
+    'member editor saves multiple parts and applies workflow participant status',
+    (tester) async {
+      tester.view.physicalSize = const Size(480, 620);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(
+            const MethodChannel('window_manager'),
+            (call) async => false,
+          );
+      final store = TaskStore(
+        ':memory:',
+        project: project,
+        identity: member(1, 'owner'),
+      );
+      store.setMeta('github.config', jsonEncode(config.toJson()));
+      final sync = GitHubSync(store, publisher: GitHubPublisher(api));
+      addTearDown(() {
+        sync.dispose();
+        store.dispose();
+      });
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: TeamPanel(store: store, sync: sync, session: session),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.byKey(const Key('member-actions-gh-2')));
+      await tester.tap(find.byKey(const Key('member-actions-gh-2')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('파트 배정').first);
+      await tester.pumpAndSettle();
+      expect(
+        tester
+            .widget<FilterChip>(find.byKey(const Key('member-part-기획')))
+            .selected,
+        isTrue,
+      );
+      expect(
+        tester
+            .widget<FilledButton>(find.byKey(const Key('save-member')))
+            .onPressed,
+        isNull,
+      );
+
+      await tester.ensureVisible(find.byKey(const Key('member-part-QA')));
+      await tester.tap(find.byKey(const Key('member-part-QA')));
+      await tester.pumpAndSettle();
+      expect(
+        tester
+            .widget<FilterChip>(find.byKey(const Key('member-part-QA')))
+            .selected,
+        isTrue,
+      );
+      expect(
+        tester
+            .widget<FilledButton>(find.byKey(const Key('save-member')))
+            .onPressed,
+        isNotNull,
+      );
+      await tester.tap(find.byKey(const Key('save-member')));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('배정 파트: 기획 → 기획, QA'), findsOneWidget);
+      await tester.tap(find.widgetWithText(TextButton, '취소').last);
+      await tester.pumpAndSettle();
+      expect(store.member('gh-2').parts, ['기획']);
+      expect(
+        tester
+            .widget<FilterChip>(find.byKey(const Key('member-part-QA')))
+            .selected,
+        isTrue,
+      );
+
+      await tester.ensureVisible(find.byKey(const Key('member-part-기획')));
+      await tester.tap(find.byKey(const Key('member-part-기획')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('save-member')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, '확인'));
+      await tester.pumpAndSettle();
+      final saved = store.member('gh-2');
+      expect(saved.parts, ['QA']);
+      expect(saved.role, 'unassigned');
+      expect(saved.permissions, containsAll(workerPermissions));
+      expect(saved.enabled, isTrue);
+      expect(
+        (await session.loadProject(config)).people
+            .firstWhere((p) => p.id == 'gh-2')
+            .parts,
+        ['QA'],
+      );
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpAndSettle();
+    },
+  );
+
+  testWidgets(
+    'member editor adds a name-only part inline and preserves inactive state',
     (tester) async {
       tester.view.physicalSize = const Size(480, 620);
       tester.view.devicePixelRatio = 1;
@@ -405,8 +516,8 @@ void main() {
       await tester.ensureVisible(find.byKey(const Key('member-actions-gh-2')));
       await tester.tap(find.byKey(const Key('member-actions-gh-2')));
       await tester.pumpAndSettle();
-      await tester.ensureVisible(find.text('역할 변경').first);
-      await tester.tap(find.text('역할 변경').first);
+      await tester.ensureVisible(find.text('파트 배정').first);
+      await tester.tap(find.text('파트 배정').first);
       await tester.pumpAndSettle();
       expect(find.text('담당 파트'), findsNothing);
       expect(find.byKey(const Key('member-role')), findsNothing);
@@ -417,21 +528,13 @@ void main() {
         ),
         findsNothing,
       );
-      final manager = tester.getRect(
-        find.byKey(const Key('member-role-manager')),
-      );
-      final worker = tester.getRect(
-        find.byKey(const Key('member-role-worker')),
-      );
-      expect(worker.top, greaterThanOrEqualTo(manager.bottom));
+      expect(find.byKey(const Key('member-role-unassigned')), findsNothing);
+      expect(find.byKey(const Key('member-role-worker')), findsNothing);
       await tester.ensureVisible(find.byKey(const Key('member-add-role')));
       await tester.tap(find.byKey(const Key('member-add-role')));
       await tester.pumpAndSettle();
       await tester.enterText(find.byKey(const Key('role-name')), 'QA 검토');
-      await tester.ensureVisible(
-        find.byKey(const Key('permission-task.review')),
-      );
-      await tester.tap(find.byKey(const Key('permission-task.review')));
+      expect(find.byKey(const Key('permission-task.review')), findsNothing);
       await tester.pump();
       await tester.tap(find.byKey(const Key('save-role')));
       await tester.pumpAndSettle();
@@ -440,7 +543,7 @@ void main() {
         await Future<void>.delayed(const Duration(milliseconds: 300));
       });
       await tester.pumpAndSettle();
-      expect(store.project!.roles.single.name, 'QA 검토');
+      expect(store.project!.roles.any((r) => r.name == 'QA 검토'), isTrue);
       await tester.ensureVisible(find.byKey(const Key('member-disabled')));
       await tester.tap(find.byKey(const Key('member-disabled')));
       await tester.pump();
@@ -448,7 +551,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.widgetWithText(FilledButton, '확인'));
       await tester.pumpAndSettle();
-      expect(store.member('gh-2').role, store.project!.roles.single.id);
+      expect(store.member('gh-2').parts, contains('QA 검토'));
       expect(store.member('gh-2').enabled, isFalse);
       expect(store.member('gh-2').active, isFalse);
       expect(tester.takeException(), isNull);

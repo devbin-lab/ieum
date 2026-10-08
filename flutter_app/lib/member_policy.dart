@@ -20,19 +20,18 @@ String memberRoleLabel(Person person) => person.role == 'disabled'
     : person.roleLabel;
 
 bool canAssignMember(Person actor, Person target, String ownerId) =>
+    actor.active &&
     actor.has('member.manage') &&
-    target.id != ownerId &&
-    target.role != 'owner' &&
-    actor.permissions.containsAll(target.permissions) &&
-    (actor.role == 'owner' || target.role != 'manager');
+    (target.id == ownerId
+        ? actor.id == ownerId && target.role == 'owner'
+        : target.role != 'owner' &&
+              (!target.has('role.manage') || actor.has('role.manage')));
 
 String memberReadOnlyReason(Person actor, Person target, String ownerId) =>
-    target.id == ownerId
-    ? '관리자의 역할은 전용 관리자 권한 이전으로 변경합니다.'
-    : !actor.has('member.manage')
+    !actor.has('member.manage')
     ? '읽기 전용 · 참여자 관리 권한이 필요합니다.'
     : !canAssignMember(actor, target, ownerId)
-    ? '본인보다 높은 권한의 참여자는 변경할 수 없습니다.'
+    ? '이 참여자의 배정은 변경할 수 없습니다.'
     : '';
 
 List<Person> filterMembers(

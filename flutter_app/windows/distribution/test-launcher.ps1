@@ -27,7 +27,7 @@ class Fixture {
     if ($LASTEXITCODE -ne 0) { throw 'Fallback fixture compilation failed.' }
     Compress-Archive -Path "$taskPayload\*" -DestinationPath "$taskRoot\payload.zip"
     $taskLauncher = Join-Path $taskRoot 'launcher.cs'
-    [IO.File]::WriteAllText($taskLauncher, [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'portable_launcher.cs')).Replace('__BUILD_ID__','fixture-020').Replace('__APP_VERSION__','0.2.0+5'))
+    [IO.File]::WriteAllText($taskLauncher, [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'portable_launcher.cs')).Replace('__BUILD_ID__','fixture-020').Replace('__APP_VERSION__.0','0.2.0.5').Replace('__APP_VERSION__','0.2.0+5'))
     & $taskCompiler /nologo /target:exe /main:LauncherTests ("/out:$taskRoot\tests.exe") ("/resource:$taskRoot\payload.zip,Ieum.Payload.zip") ("/reference:$taskFramework\System.IO.Compression.dll") ("/reference:$taskFramework\System.IO.Compression.FileSystem.dll") ("/reference:$taskFramework\System.Windows.Forms.dll") ("/reference:$taskFramework\System.Runtime.Serialization.dll") $taskLauncher (Join-Path $PSScriptRoot 'launcher_test.cs')
     if ($LASTEXITCODE -ne 0) { throw 'Launcher test compilation failed.' }
     & "$taskRoot\tests.exe" (Join-Path $taskRoot 'Ieum') (Join-Path $taskRoot 'fallback.exe')

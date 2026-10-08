@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 
@@ -44,6 +45,8 @@ class _TeamPanelState extends State<TeamPanel> {
   DateTime? checkedAt;
   bool offline = false;
   Timer? timer;
+  String participantKind(Person person) =>
+      person.role == 'owner' ? '관리자' : '일반 참여자';
   @override
   void initState() {
     super.initState();
@@ -139,7 +142,7 @@ class _TeamPanelState extends State<TeamPanel> {
                     ),
                   ),
                   const SizedBox(height: 12),
-                  const Text('저장소 협업자 초대를 보냅니다. 이음의 역할 배정·가입 승인과 별개의 단계입니다.'),
+                  const Text('저장소 협업자 초대를 보냅니다. 이음의 파트 배정·가입 승인과 별개의 단계입니다.'),
                   if (message.isNotEmpty)
                     Text(message, style: const TextStyle(color: Colors.red)),
                 ],
@@ -189,7 +192,7 @@ class _TeamPanelState extends State<TeamPanel> {
             update(() => saving = true);
             if (!await confirm(
               '관리자 권한 이전 확인',
-              '${chosen.name}이 이음 프로젝트 관리자가 되고, 내 역할은 운영자가 됩니다. GitHub 저장소 소유권·협업자 권한은 이전되지 않습니다.',
+              '${chosen.name}이 이음 프로젝트 관리자가 됩니다. 나는 일반 참여자로 변경되며 작업 단계 자동화의 조건에 따라 작업할 수 있습니다. GitHub 저장소 소유권·협업자 권한은 이전되지 않습니다.',
             )) {
               if (ctx.mounted) update(() => saving = false);
               return;
@@ -298,37 +301,19 @@ class _TeamPanelState extends State<TeamPanel> {
     }
   }
 
-  List<String> get assignableRoles =>
-      [
-            if (widget.store.people.any((p) => p.role == 'manager')) 'manager',
-            'worker',
-            'viewer',
-            ...widget.store.project!.roles.map((r) => r.id),
-          ]
-          .where(
-            (id) =>
-                (widget.store.owns || id != 'manager') &&
-                widget.store.actor.permissions.containsAll(
-                  rolePerson(id).permissions,
-                ),
-          )
-          .toList();
-  Person rolePerson(String id) =>
-      Person('', '', '', id, 0).resolved(widget.store.project!.roles);
-
   Future<ProjectRole?> addRole() async {
     try {
       final latest = await widget.session.loadProject(widget.sync.config);
       if (!mounted) return null;
       widget.store.updateProject(latest);
       if (!widget.store.actor.has('role.manage')) {
-        throw StateError('역할 관리 권한이 필요합니다.');
+        throw StateError('파트 관리는 역할 관리 권한이 필요합니다.');
       }
       final role = await showProjectRoleDialog(
         context,
         widget.store.actor,
         onSave: (draft) async {
-          final next = await widget.session.saveRole(
+          final next = await widget.session.savePermissionPart(
             widget.sync.config,
             draft,
             expectedProjectId: latest.id,
@@ -414,7 +399,7 @@ class _TeamPanelState extends State<TeamPanel> {
     }
     if (!await confirm(
       enabled ? '참여자 활성화' : '참여자 비활성화',
-      '${person.name} · ${memberRoleLabel(person)}\n${enabled ? '보존된 역할로 작업과 업로드를 다시 허용합니다.' : '작업·업로드가 차단됩니다. 남은 업무와 PR이 있으면 인수인계 후 다시 시도해야 합니다.'}',
+      '${person.name} · ${participantKind(person)}\n${enabled ? '작업 단계 자동화의 조건에 따라 작업과 업로드를 다시 허용합니다.' : '작업·업로드가 차단됩니다. 남은 업무와 PR이 있으면 인수인계 후 다시 시도해야 합니다.'}',
     )) {
       return;
     }
@@ -440,29 +425,38 @@ class _TeamPanelState extends State<TeamPanel> {
   }
 
   Future<void> assign(Person person, {Map<String, dynamic>? request}) async {
-    if (busy || offline || assignableRoles.isEmpty) return;
-    var role = assignableRoles.contains(person.role) ? person.role : '';
+    if (busy || offline) return;
+    final ownerTarget = person.id == widget.store.project!.ownerId;
+    final role = ownerTarget ? 'owner' : 'unassigned';
     var enabled = request != null ? true : person.enabled;
+    final parts =
+        widget.store.project!.partWorkflowView.people
+            .where((p) => p.id == person.id)
+            .firstOrNull
+            ?.parts
+            .toSet() ??
+        <String>{};
+    final initialParts = {...parts};
     var adding = false, saving = false, saved = false;
     var dialogMessage = '';
     var base = person;
     final projectId = widget.store.project!.id;
     bool dirty() =>
         !saved &&
-        (request != null || role != base.role || enabled != base.enabled);
+        (request != null ||
+            enabled != base.enabled ||
+            parts.length != initialParts.length ||
+            !parts.containsAll(initialParts));
     await showDialog<void>(
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, update) {
           Future<void> save() async {
-            if (saving || adding || role.isEmpty) {
-              update(() => dialogMessage = '역할을 선택하세요.');
-              return;
-            }
+            if (saving || adding) return;
             update(() => saving = true);
             if (!await confirm(
-              request == null ? '역할·상태 변경 확인' : '가입 승인 확인',
-              '${base.name} · @${base.login}\n역할: ${memberRoleLabel(base)} → ${rolePerson(role).roleLabel}\n상태: ${memberStateLabels[memberState(base)]} → ${enabled ? '활성화' : '비활성화'}\n새 권한: ${rolePerson(role).permissions.map((p) => permissionLabels[p]).join(', ')}\n완료 업무와 검토 본문의 잠금은 유지됩니다.',
+              request == null ? '파트·상태 변경 확인' : '가입 승인 확인',
+              '${base.name} · @${base.login}\n배정 파트: ${initialParts.isEmpty ? '미배정' : initialParts.join(', ')} → ${parts.isEmpty ? '미배정' : widget.store.partRules.where((r) => parts.contains(r.part)).map((r) => r.part).join(', ')}\n상태: ${enabled ? '활성화' : '비활성화'}\n작업 수정·전달·검토는 작업 단계 자동화의 조건에 따라 처리됩니다.',
             )) {
               if (ctx.mounted) {
                 update(() => saving = false);
@@ -478,6 +472,10 @@ class _TeamPanelState extends State<TeamPanel> {
               final draft = Person.fromJson({
                 ...base.json,
                 'role': role,
+                'parts': [
+                  for (final rule in widget.store.partRules)
+                    if (parts.contains(rule.part)) rule.part,
+                ],
                 'enabled': enabled,
                 'assignedRole': role,
               });
@@ -487,6 +485,7 @@ class _TeamPanelState extends State<TeamPanel> {
                 request: request,
                 expectedProjectId: projectId,
                 expectedMember: request == null ? base : null,
+                unifyParts: true,
               );
               if (!ctx.mounted || !mounted) return;
               widget.store.updateProject(next);
@@ -511,7 +510,7 @@ class _TeamPanelState extends State<TeamPanel> {
             busy: saving || adding,
             onSave: save,
             child: IeumDialog(
-              title: Text('${person.name} · 역할과 상태'),
+              title: Text('${person.name} · 파트·상태'),
               content: SizedBox(
                 width: 480,
                 child: Column(
@@ -520,7 +519,7 @@ class _TeamPanelState extends State<TeamPanel> {
                   children: [
                     Text('@${person.login} · ${widget.store.project!.name}'),
                     Text(
-                      '저장된 역할: ${memberRoleLabel(base)} · ${memberStateLabels[memberState(base)]}',
+                      '${participantKind(base)} · ${memberStateLabels[memberState(base)]}',
                     ),
                     const SizedBox(height: 16),
                     const Text('상태'),
@@ -533,6 +532,7 @@ class _TeamPanelState extends State<TeamPanel> {
                           onPressed:
                               !saving &&
                                   !adding &&
+                                  !ownerTarget &&
                                   widget.store.actor.has('member.status')
                               ? () => update(() => enabled = true)
                               : null,
@@ -549,6 +549,7 @@ class _TeamPanelState extends State<TeamPanel> {
                           onPressed:
                               !saving &&
                                   !adding &&
+                                  !ownerTarget &&
                                   widget.store.actor.has('member.status')
                               ? () => update(() => enabled = false)
                               : null,
@@ -562,59 +563,83 @@ class _TeamPanelState extends State<TeamPanel> {
                         ),
                       ],
                     ),
-                    const Text(
-                      '비활성화 전 남은 업무·검토·PR을 인수인계해야 합니다. 상태 변경은 관리자 권한이 필요합니다.',
-                      style: TextStyle(fontSize: 11, height: 1.6),
+                    Text(
+                      ownerTarget ? '소유자는 활성 상태와 관리자 권한을 유지하며 파트를 배정할 수 있습니다.' : '비활성화 전 남은 업무·검토·PR을 인수인계해야 합니다. 상태 변경은 참여자 관리 권한이 필요합니다.',
+                      style: const TextStyle(fontSize: 11, height: 1.6),
                     ),
                     const SizedBox(height: 16),
-                    Row(
+                    const Text('배정 파트 · 여러 개 선택 가능'),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
                       children: [
-                        const Expanded(child: Text('역할 · 단일 선택')),
-                        if (widget.store.actor.has('role.manage'))
-                          TextButton.icon(
-                            key: const Key('member-add-role'),
-                            onPressed: saving || adding
+                        for (final rule in widget.store.partRules)
+                          FilterChip(
+                            key: Key('member-part-${rule.part}'),
+                            label: Text(rule.part),
+                            selected: parts.contains(rule.part),
+                            onSelected: saving || adding
                                 ? null
-                                : () async {
-                                    update(() => adding = true);
-                                    final created = await addRole();
-                                    if (ctx.mounted) {
-                                      update(() {
-                                        adding = false;
-                                        if (created != null) {
-                                          role = created.id;
-                                        } else {
-                                          dialogMessage = error;
-                                        }
-                                      });
+                                : (selected) => update(() {
+                                    if (selected) {
+                                      parts.add(rule.part);
+                                    } else {
+                                      parts.remove(rule.part);
                                     }
-                                  },
-                            icon: const Icon(Icons.add, size: 16),
-                            label: const Text('역할 추가'),
+                                  }),
                           ),
                       ],
                     ),
-                    for (final id in assignableRoles)
-                      ListTile(
-                        key: Key('member-role-$id'),
-                        dense: true,
-                        leading: Icon(
-                          role == id
-                              ? Icons.radio_button_checked
-                              : Icons.radio_button_off,
-                        ),
-                        title: Text(rolePerson(id).roleLabel),
-                        subtitle: Text(
-                          rolePerson(id).permissions.isEmpty
-                              ? '목록 조회'
-                              : rolePerson(id).permissions
-                                    .map((p) => permissionLabels[p])
-                                    .join(' · '),
-                          style: const TextStyle(fontSize: 11),
-                        ),
-                        onTap: saving || adding
+                    const SizedBox(height: 8),
+                    const Text(
+                      '작업 단계 자동화에서 이 파트를 기준으로 전달 대상과 처리 조건을 설정합니다.',
+                      style: TextStyle(fontSize: 11, height: 1.6),
+                    ),
+                    const SizedBox(height: 16),
+                    if (widget.store.actor.has('role.manage'))
+                      TextButton.icon(
+                        key: const Key('member-add-role'),
+                        onPressed: saving || adding
                             ? null
-                            : () => update(() => role = id),
+                            : () async {
+                                update(() => adding = true);
+                                final before = widget.store.project!;
+                                final expectedBase = before.unifiedParts
+                                    ? base
+                                    : ProjectManifest(
+                                        before.id,
+                                        before.name,
+                                        before.ownerId,
+                                        [base],
+                                        roles: before.roles,
+                                        parts: before.parts,
+                                      ).partWorkflowView.people.single;
+                                final created = await addRole();
+                                if (ctx.mounted) {
+                                  update(() {
+                                    adding = false;
+                                    if (created != null) {
+                                      final latestBase = widget.store.people
+                                          .where((p) => p.id == base.id)
+                                          .firstOrNull;
+                                      if (latestBase != null &&
+                                          jsonEncode(latestBase.json) ==
+                                              jsonEncode(expectedBase.json)) {
+                                        base = latestBase;
+                                        initialParts
+                                          ..clear()
+                                          ..addAll(base.parts);
+                                      }
+                                      parts.add(created.name);
+                                    } else {
+                                      dialogMessage = error;
+                                    }
+                                  });
+                                }
+                              },
+                        icon: const Icon(Icons.add, size: 16),
+                        label: const Text('파트 추가'),
                       ),
                     if (dirty()) const Text('저장하지 않은 변경사항'),
                     if (dialogMessage.isNotEmpty) ...[
@@ -667,9 +692,7 @@ class _TeamPanelState extends State<TeamPanel> {
                 ),
                 FilledButton(
                   key: const Key('save-member'),
-                  onPressed: saving || adding || !dirty() || role.isEmpty
-                      ? null
-                      : save,
+                  onPressed: saving || adding || !dirty() ? null : save,
                   child: Text(
                     saving
                         ? '저장소 반영 중…'
@@ -690,7 +713,7 @@ class _TeamPanelState extends State<TeamPanel> {
   Future<void> reject(Map<String, dynamic> request) async {
     if (!await confirm(
       '참여 요청 거절',
-      '${request['member']['name']}의 가입 요청 PR을 닫습니다. 이미 승인된 참여자의 권한은 제거하지 않습니다.',
+      '${request['member']['name']}의 가입 요청 PR을 닫습니다. 이미 승인된 참여자의 배정과 참여 상태는 유지됩니다.',
     )) {
       return;
     }
@@ -785,7 +808,7 @@ class _TeamPanelState extends State<TeamPanel> {
         ),
         SelectableText('@${person.login}'),
         const SizedBox(height: 12),
-        Text('역할: ${memberRoleLabel(person)}'),
+        Text('구분: ${participantKind(person)}'),
         Text('참여 상태: ${memberStateLabels[memberState(person)]}'),
         Text('파트: ${person.parts.isEmpty ? '미배정' : person.parts.join(', ')}'),
         if (person.id == widget.store.profileId) const Text('본인'),
@@ -798,7 +821,7 @@ class _TeamPanelState extends State<TeamPanel> {
           spacing: 8,
           runSpacing: 8,
           children: [
-            for (final status in statuses.entries)
+            for (final status in widget.store.workflowStatuses.entries)
               Container(
                 padding: const EdgeInsets.symmetric(
                   horizontal: 10,
@@ -847,7 +870,7 @@ class _TeamPanelState extends State<TeamPanel> {
             person.role != 'pending')
           OutlinedButton(
             onPressed: busy || offline ? null : () => assign(person),
-            child: const Text('역할·상태 변경'),
+            child: const Text('파트 배정'),
           ),
       ],
     );
@@ -906,7 +929,7 @@ class _TeamPanelState extends State<TeamPanel> {
                     Expanded(
                       flex: 2,
                       child: Text(
-                        memberRoleLabel(person),
+                        participantKind(person),
                         style: const TextStyle(fontSize: 12),
                       ),
                     ),
@@ -932,7 +955,7 @@ class _TeamPanelState extends State<TeamPanel> {
           subtitle: columns
               ? null
               : Text(
-                  '${memberRoleLabel(person)} · ${memberStateLabels[memberState(person)]} · ${person.parts.isEmpty ? '파트 미배정' : person.parts.join(', ')}',
+                  '${participantKind(person)} · ${memberStateLabels[memberState(person)]} · ${person.parts.isEmpty ? '파트 미배정' : person.parts.join(', ')}',
                   style: const TextStyle(fontSize: 11, height: 1.7),
                 ),
           trailing: MenuAnchor(
@@ -949,7 +972,7 @@ class _TeamPanelState extends State<TeamPanel> {
                   person.role != 'pending')
                 MenuItemButton(
                   onPressed: busy || offline ? null : () => assign(person),
-                  child: const Text('역할 변경'),
+                  child: const Text('파트 배정'),
                 ),
               if (canManageMemberStatus(
                     widget.store.actor,
@@ -1022,7 +1045,7 @@ class _TeamPanelState extends State<TeamPanel> {
                         key: const Key('team-add-role'),
                         leadingIcon: const Icon(Icons.add, size: 18),
                         onPressed: busy || offline ? null : addRole,
-                        child: const Text('역할 추가'),
+                        child: const Text('파트 추가'),
                       ),
                     if (widget.store.owns)
                       MenuItemButton(
@@ -1055,7 +1078,7 @@ class _TeamPanelState extends State<TeamPanel> {
             ),
           if (!widget.store.actor.has('member.manage'))
             const Text(
-              '읽기 전용 · 참여자 관리 권한이 있어야 역할과 요청을 변경할 수 있습니다.',
+              '읽기 전용 · 파트 배정과 참여 요청 변경은 참여자 관리 권한이 필요합니다.',
               style: TextStyle(fontSize: 12),
             ),
           const SizedBox(height: 16),
@@ -1073,19 +1096,6 @@ class _TeamPanelState extends State<TeamPanel> {
             spacing: 8,
             runSpacing: 8,
             children: [
-              SizedBox(
-                width: 170,
-                child: IeumSelect(
-                  key: const Key('participant-role-filter'),
-                  value: roleFilter,
-                  values: {
-                    '': '모든 역할',
-                    for (final p in widget.store.people)
-                      p.role: memberRoleLabel(p),
-                  },
-                  onChanged: (value) => updateFilters(() => roleFilter = value),
-                ),
-              ),
               SizedBox(
                 width: 150,
                 child: IeumSelect(
@@ -1158,7 +1168,7 @@ class _TeamPanelState extends State<TeamPanel> {
                               const Expanded(
                                 flex: 2,
                                 child: Text(
-                                  '역할',
+                                  '구분',
                                   style: TextStyle(fontSize: 11),
                                 ),
                               ),
@@ -1248,7 +1258,7 @@ class _TeamPanelState extends State<TeamPanel> {
                               ),
                               request: request,
                             ),
-                      child: const Text('역할 지정 / 승인'),
+                      child: const Text('파트 지정 / 승인'),
                     ),
                     TextButton(
                       onPressed: busy || offline ? null : () => reject(request),

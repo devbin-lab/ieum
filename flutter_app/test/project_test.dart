@@ -14,6 +14,7 @@ import 'package:ieum_flutter/store.dart';
 import 'github_sync_test.dart' show FakeGitHubApi, idle;
 import 'github_auto_merge_test.dart' show AutoMergeApi;
 import 'github_oauth_test.dart' show MemoryVault;
+import 'v020_store_test.dart' show legacyFourStages;
 
 import 'package:ieum_flutter/github_oauth.dart';
 
@@ -22,6 +23,69 @@ const config = GitHubConfig(
   enabled: true,
   autoMerge: false,
 );
+const assignedReviewFlow = WorkflowAutomation(
+  reviewEnabled: true,
+  connections: [
+    WorkflowConnection('todo', 'doing', assignedOnly: true),
+    WorkflowConnection('doing', 'review', assignedOnly: true),
+    WorkflowConnection(
+      'review',
+      'done',
+      action: 'approve',
+      actor: 'reviewer',
+      assignedOnly: true,
+    ),
+    WorkflowConnection(
+      'review',
+      'todo',
+      action: 'reject',
+      actor: 'reviewer',
+      assignedOnly: true,
+    ),
+  ],
+);
+WorkflowSheet assignedReviewSheet(String workerId, String ownerId) =>
+    WorkflowSheet(
+      nodes: const [
+        WorkflowSheetNode('todo', 'todo'),
+        WorkflowSheetNode('doing', 'doing'),
+        WorkflowSheetNode('review', 'review'),
+        WorkflowSheetNode('done', 'done'),
+      ],
+      routes: [
+        WorkflowSheetRoute(
+          id: 'start',
+          from: 'todo',
+          to: 'doing',
+          destination: 'part:role-plan',
+          person: workerId,
+        ),
+        WorkflowSheetRoute(
+          id: 'submit',
+          from: 'doing',
+          to: 'review',
+          source: 'part:role-plan',
+          destination: 'role:owner',
+          person: ownerId,
+        ),
+        const WorkflowSheetRoute(
+          id: 'approve',
+          from: 'review',
+          to: 'done',
+          source: 'role:owner',
+          action: 'approve',
+        ),
+        WorkflowSheetRoute(
+          id: 'reject',
+          from: 'review',
+          to: 'todo',
+          source: 'role:owner',
+          destination: 'part:role-plan',
+          person: workerId,
+          action: 'reject',
+        ),
+      ],
+    );
 Person member(int id, String role) => Person.fromJson({
   'id': 'gh-$id',
   'login': id == 1 ? 'tester' : 'guest',
@@ -131,7 +195,7 @@ void main() {
     expect(requests.single['member']['id'], 'gh-2');
     final worker = Person.fromJson({
       ...requests.single['member'] as Map,
-      'role': 'worker',
+      'role': 'unassigned',
     });
     await expectLater(
       session.assign(config, worker, request: requests.single),
@@ -141,10 +205,13 @@ void main() {
     api.identityLogin = 'tester';
     await session.signIn();
     final next = await session.assign(config, worker, request: requests.single);
-    expect(next.people.last.role, 'worker');
+    expect(next.people.last.role, 'unassigned');
     expect(api.prs.single['state'], 'closed');
     final viewer = Person.fromJson({...worker.json, 'role': 'viewer'});
-    expect((await session.assign(config, viewer)).people.last.role, 'viewer');
+    await expectLater(
+      session.assign(config, viewer),
+      throwsA(isA<GitHubFailure>()),
+    );
     await expectLater(
       session.assign(config, member(1, 'worker')),
       throwsA(isA<GitHubFailure>()),
@@ -199,13 +266,19 @@ void main() {
     expect(api.invitations, ['guest']);
   });
 
-  test('role permissions cover creation, assignment, review, viewer and pending accounts', () {
+  test('part routing controls assigned work and review while pending and disabled members cannot mutate', () {
     final owner = member(1, 'owner');
     final worker = member(2, 'worker');
-    final project = ProjectManifest('project-test', '작품', owner.id, [
-      owner,
-      worker,
-    ]);
+    final project = ProjectManifest(
+      'project-test',
+      '작품',
+      owner.id,
+      [owner, worker],
+      parts: const ['기획'],
+      roles: const [ProjectRole('role-plan', '기획', {})],
+      workflowSheet: assignedReviewSheet(worker.id, owner.id),
+      workflowStages: legacyFourStages,
+    );
     final store = TaskStore(':memory:', project: project, identity: owner);
     final registered = store.save(task(worker, owner));
     store.setMeta(
@@ -213,35 +286,45 @@ void main() {
       worker.id,
     ); // Simulates a separately authenticated test client.
     expect(() => store.setProfile(owner.id), throwsStateError);
-    expect(() => store.save(task(worker, owner)), throwsStateError);
+    expect(store.save(task(worker, owner)).status, 'todo');
+    final reassigned = store.save({
+      ...registered.data,
+      'assigneeId': owner.id,
+    }, expectedVersion: registered.version);
+    expect(reassigned.assigneeId, owner.id);
     expect(
-      () => store.save({
-        ...registered.data,
-        'assigneeId': owner.id,
-      }, expectedVersion: registered.version),
-      throwsStateError,
+      reassigned.workflowPerson,
+      worker.id,
+      reason:
+          'Metadata changes must not bypass the confirmed current recipient.',
     );
     final changed = store.save({
-      ...registered.data,
+      ...reassigned.data,
       'description': '작업 결과',
-    }, expectedVersion: registered.version);
+    }, expectedVersion: reassigned.version);
     store.transition(changed.id, 'doing', expectedVersion: changed.version);
     store.transition(
       changed.id,
       'review',
       expectedVersion: store.find(changed.id).version,
     );
-    expect(store.canMove(store.find(changed.id), 'done'), isFalse);
+    expect(store.canMove(store.find(changed.id), 'done'), isTrue);
     store.setMeta('profile', owner.id);
     store.transition(
       changed.id,
       'done',
       expectedVersion: store.find(changed.id).version,
     );
-    for (final role in ['viewer', 'pending', 'disabled']) {
+    for (final role in ['pending', 'disabled']) {
       final limited = member(2, role);
       store.updateProject(
-        ProjectManifest(project.id, project.name, owner.id, [owner, limited]),
+        ProjectManifest(
+          project.id,
+          project.name,
+          owner.id,
+          [owner, limited],
+          parts: const ['기획'],
+        ),
       );
       store.setMeta('profile', limited.id);
       expect(() => store.save(task(limited, owner)), throwsStateError);
@@ -255,10 +338,13 @@ void main() {
     await session.signIn();
     final project = await session.createProject(config, '작품', '개설자');
     final manager = member(2, 'manager');
-    final cached = ProjectManifest(project.id, project.name, project.ownerId, [
-      ...project.people,
-      manager,
-    ]);
+    final cached = ProjectManifest(
+      project.id,
+      project.name,
+      project.ownerId,
+      [...project.people, manager],
+      parts: const ['기획'],
+    );
     final store = TaskStore(':memory:', project: cached, identity: manager);
     store.setMeta('github.config', jsonEncode(config.toJson()));
     store.setMeta('github.login', 'guest');
@@ -280,7 +366,11 @@ void main() {
       oauth: GitHubOAuth(vault: MemoryVault()),
     );
     await session.signIn();
-    final initial = await session.createProject(config, '작품', '개설자');
+    var initial = await session.createProject(config, '작품', '개설자');
+    initial = await session.savePermissionPart(
+      config,
+      const ProjectRole('role-plan', '기획', {}),
+    );
     api.identityId = 2;
     api.identityLogin = 'guest';
     await session.signIn();
@@ -291,11 +381,19 @@ void main() {
     await session.signIn();
     final worker = Person.fromJson({
       ...request['member'] as Map,
-      'role': 'worker',
+      'role': 'unassigned',
       'parts': ['기획'],
     });
-    final project = await session.assign(config, worker, request: request);
+    var project = await session.assign(config, worker, request: request);
     final owner = project.people.first;
+    project = await session.saveWorkflowDefinition(
+      config,
+      legacyFourStages,
+      assignedReviewSheet(worker.id, owner.id),
+      expectedProjectId: project.id,
+      expectedStages: project.workflowStages,
+      expectedSheet: project.workflowSheet,
+    );
     final ownerStore = TaskStore(':memory:', project: project, identity: owner);
     final guestStore = TaskStore(
       ':memory:',
@@ -332,7 +430,7 @@ void main() {
         expectedVersion: guestStore.find(created.id).version,
       );
       await idle(guestSync);
-      expect(guestStore.canMove(guestStore.find(created.id), 'done'), isFalse);
+      expect(guestStore.canMove(guestStore.find(created.id), 'done'), isTrue);
       api.identityId = 1;
       api.identityLogin = 'tester';
       await ownerSync.approve(
@@ -405,6 +503,10 @@ void main() {
       });
       await tester.pumpAndSettle();
       expect(session.user, isNotNull);
+      tester.view.physicalSize = const Size(480, 420);
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      expect(find.byKey(const Key('project-folder')), findsNothing);
       await tester.ensureVisible(find.byKey(const Key('project-name')));
       await tester.enterText(
         find.byKey(const Key('project-name')),
@@ -415,10 +517,21 @@ void main() {
         'team/data',
       );
       await tester.enterText(find.byKey(const Key('project-nickname')), '개설자');
-      await tester.enterText(
-        find.byKey(const Key('project-folder')),
-        directory.path,
+      await tester.ensureVisible(
+        find.byKey(const Key('project-storage-options')),
       );
+      await tester.tap(find.byKey(const Key('project-storage-options')));
+      await tester.pumpAndSettle();
+      final storageField = tester.widget<TextField>(
+        find.byKey(const Key('project-folder')),
+      );
+      expect(
+        Directory(storageField.controller!.text).absolute.uri.normalizePath(),
+        Directory('${directory.path}/projects').absolute.uri.normalizePath(),
+      );
+      expect(tester.takeException(), isNull);
+      tester.view.physicalSize = const Size(1160, 740);
+      await tester.pumpAndSettle();
       await tester.ensureVisible(find.byKey(const Key('project-submit')));
       await tester.runAsync(() async {
         await tester.tap(find.byKey(const Key('project-submit')));
@@ -428,6 +541,13 @@ void main() {
         }
       });
       await tester.pumpAndSettle();
+      expect(
+        Directory('${directory.path}/projects')
+            .listSync()
+            .whereType<File>()
+            .where((file) => file.path.endsWith('.sqlite')),
+        hasLength(1),
+      );
       expect(find.byKey(const Key('task-list')), findsOneWidget);
       expect(find.byKey(const Key('card-IE-101')), findsNothing);
       expect(find.byKey(const Key('profile')), findsNothing);

@@ -122,16 +122,39 @@ void main() {
       expect(bell.center.dx, closeTo(picker.center.dx, 1));
       expect(
         tester.getSize(find.byKey(const Key('workspace-sidebar'))).width,
-        64,
+        56,
       );
       expect(picker.top - titlebar.bottom, lessThan(20));
-      expect(
-        bell.top - picker.bottom,
-        lessThan(20),
+      final toggle = tester.getRect(
+        find.byKey(const Key('titlebar-sidebar-toggle')),
       );
+      final back = tester.getRect(find.byKey(const Key('titlebar-back')));
+      final forward = tester.getRect(find.byKey(const Key('titlebar-forward')));
+      expect(toggle.top, titlebar.top);
+      expect(back.left, titlebar.left);
+      expect(forward.left, back.right);
+      expect(toggle.left, forward.right);
+      if (Platform.environment['IEUM_CAPTURE_UI'] == '1') {
+        final mouse = await tester.createGesture(
+          kind: ui.PointerDeviceKind.mouse,
+        );
+        await mouse.addPointer(location: const Offset(400, 18));
+        for (final button in ['back', 'forward', 'sidebar-toggle']) {
+          final key = button == 'sidebar-toggle'
+              ? 'titlebar-sidebar-toggle'
+              : 'titlebar-$button';
+          await mouse.moveTo(tester.getCenter(find.byKey(Key(key))));
+          await tester.pumpAndSettle();
+          await capture('titlebar-hover-$button');
+        }
+        await mouse.removePointer();
+        await tester.pumpAndSettle();
+      }
+      expect(find.byKey(const Key('workspace-sidebar')), findsOneWidget);
       expect(find.byKey(const Key('nav-1')), findsNothing);
       expect(find.byKey(const Key('nav-2')), findsNothing);
-      expect(find.text('프로젝트 설정'), findsNothing);
+      expect(find.byKey(const Key('project-view-settings')), findsNothing);
+      expect(find.byKey(const Key('titlebar-sidebar-toggle')), findsOneWidget);
       expect(find.text('내 변경내역'), findsNothing);
       await tester.tapAt(
         tester.getTopLeft(find.byKey(const Key('sidebar-account'))) +
@@ -162,24 +185,23 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('settings-shell')), findsOneWidget);
       expect(find.byKey(const Key('new-task')), findsNothing);
-      final navigation = tester.getRect(
-        find.byKey(const Key('settings-navigation')),
-      );
+      expect(find.byKey(const Key('settings-navigation')), findsOneWidget);
+      expect(find.byKey(const Key('titlebar-sidebar-toggle')), findsNothing);
       final content = tester.getRect(
         find.byKey(const Key('settings-content-scroll')),
       );
-      expect(content.left, navigation.right);
+      expect(content.left, 266);
       await capture('settings-general');
       await tester.tap(find.byKey(const Key('sidebar-account')));
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('project-settings')));
       await tester.pumpAndSettle();
-      await tester.enterText(find.byKey(const Key('settings-search')), '배정');
+      await tester.enterText(find.byKey(const Key('settings-search')), '파트');
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('settings-team')), findsNothing);
-      await tester.tap(find.byKey(const Key('settings-assignments')));
+      await tester.tap(find.byKey(const Key('settings-roles')));
       await tester.pumpAndSettle();
-      expect(find.text('담당 파트'), findsOneWidget);
+      expect(find.text('파트'), findsWidgets);
       await capture('settings-assignments');
       await tester.enterText(find.byKey(const Key('settings-search')), '없는설정');
       await tester.pumpAndSettle();
@@ -187,10 +209,14 @@ void main() {
       await tester.tap(find.byTooltip('검색 지우기'));
       await tester.pumpAndSettle();
       for (final section in ['team', 'github', 'notifications']) {
+        await tester.ensureVisible(find.byKey(Key('settings-$section')));
+        await tester.pumpAndSettle();
         await tester.tap(find.byKey(Key('settings-$section')));
         await tester.pumpAndSettle();
         expect(tester.takeException(), isNull);
       }
+      await tester.ensureVisible(find.byKey(const Key('settings-changes')));
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('settings-changes')));
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('manual-transfer')), findsOneWidget);
@@ -210,8 +236,9 @@ void main() {
       }
       await tester.tap(find.byKey(const Key('sidebar-notifications')));
       await tester.pumpAndSettle();
-      expect(find.text('알림 미리보기'), findsOneWidget);
-      await tester.tap(find.text('닫기'));
+      expect(find.byKey(const Key('notification-filter-bar')), findsOneWidget);
+      expect(find.byKey(const Key('titlebar-sidebar-toggle')), findsNothing);
+      await tester.tap(find.byKey(const Key('project-home')));
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('view-kanban')));
       await tester.pumpAndSettle();
@@ -221,10 +248,8 @@ void main() {
       expect(find.byKey(const Key('card-IE-101')), findsOneWidget);
       expect(tester.takeException(), isNull);
       await capture('sidebar-cleanup-kanban');
-      if (find.byKey(const Key('project-picker')).evaluate().isEmpty) {
-        await tester.tap(find.byKey(const Key('sidebar-account')));
-        await tester.pumpAndSettle();
-        await tester.tap(find.byKey(const Key('project-settings')));
+      if (find.byKey(const Key('project-view-sidebar')).evaluate().isEmpty) {
+        await tester.tap(find.byKey(const Key('titlebar-sidebar-toggle')));
         await tester.pumpAndSettle();
       }
       await tester.tap(find.byKey(const Key('project-picker')));
@@ -235,10 +260,8 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('project-option-b.sqlite')));
       await tester.pumpAndSettle();
       expect(selected, 'b');
-      if (find.byKey(const Key('project-picker')).evaluate().isEmpty) {
-        await tester.tap(find.byKey(const Key('sidebar-account')));
-        await tester.pumpAndSettle();
-        await tester.tap(find.byKey(const Key('project-settings')));
+      if (find.byKey(const Key('project-view-sidebar')).evaluate().isEmpty) {
+        await tester.tap(find.byKey(const Key('titlebar-sidebar-toggle')));
         await tester.pumpAndSettle();
       }
       await tester.tap(find.byKey(const Key('project-picker')));

@@ -56,11 +56,6 @@ void main() {
       await tester.pumpWidget(IeumApp(store: store, sync: sync));
 
       Future<void> section(String id) async {
-        final menu = find.byKey(const Key('settings-category-menu'));
-        if (menu.evaluate().isNotEmpty) {
-          await tester.tap(menu);
-          await tester.pumpAndSettle();
-        }
         final target = find.byKey(Key('settings-$id'));
         final list = find.descendant(
           of: find.byKey(const Key('settings-navigation')),
@@ -68,11 +63,14 @@ void main() {
         );
         tester.widget<ListView>(list).controller!.jumpTo(0);
         await tester.pumpAndSettle();
-        final scrollable = find.descendant(
-          of: list,
-          matching: find.byType(Scrollable),
+        await tester.scrollUntilVisible(
+          target,
+          80,
+          scrollable: find.descendant(
+            of: list,
+            matching: find.byType(Scrollable),
+          ),
         );
-        await tester.scrollUntilVisible(target, 80, scrollable: scrollable);
         await tester.ensureVisible(target);
         await tester.pumpAndSettle();
         await tester.tap(target);
@@ -111,7 +109,7 @@ void main() {
           }
         }
         for (final id in [
-          'assignments',
+          'roles',
           'github',
           'notifications',
           'changes',
@@ -155,8 +153,6 @@ void main() {
       await tester.tap(find.byKey(const Key('project-settings')));
       await tester.pumpAndSettle();
       await section('notifications');
-      await tester.tap(find.byKey(const Key('settings-category-menu')));
-      await tester.pumpAndSettle();
       tester.view.physicalSize = const Size(1480, 940);
       await tester.pumpAndSettle();
       expect(
@@ -165,10 +161,10 @@ void main() {
             .data,
         '알림',
       );
-      expect(find.byKey(const Key('settings-category-menu')), findsNothing);
+      expect(find.byKey(const Key('settings-navigation')), findsOneWidget);
       tester.view.physicalSize = const Size(540, 940);
       await tester.pumpAndSettle();
-      expect(find.byKey(const Key('settings-category-menu')), findsOneWidget);
+      expect(find.byKey(const Key('titlebar-sidebar-toggle')), findsNothing);
       expect(tester.takeException(), isNull);
       await tester.tap(find.byKey(const Key('project-home')));
       await tester.pumpAndSettle();

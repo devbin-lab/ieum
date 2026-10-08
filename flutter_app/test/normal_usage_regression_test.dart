@@ -105,7 +105,11 @@ Future<(GitHubSession, TaskStore, GitHubSync)> setup(
 ) async {
   final session = GitHubSession(api: api);
   await session.signIn(token: 'audit-fake-token');
-  final manifest = await session.createProject(config, '정상 사용 시험', '개설자');
+  await session.createProject(config, '정상 사용 시험', '개설자');
+  final manifest = await session.savePermissionPart(
+    config,
+    const ProjectRole('role-plan', '기획', {}),
+  );
   final store = TaskStore(
     ':memory:',
     project: manifest,
@@ -335,50 +339,72 @@ void main() {
     },
   );
 
-  test(
-    'ordinary complete rework workflow and offline content editing converge',
-    () async {
-      final api = CountingApi();
-      final (session, store, sync) = await setup(api, normal);
-      addTearDown(() {
-        sync.dispose();
-        store.dispose();
-        session.signOut();
-      });
-      final saved = store.save(input('재작업 흐름'));
-      await idle(sync);
-      void move(String status, {String reason = ''}) => store.transition(
-        saved.id,
+  test('same-status delivery return and offline shared editing converge before final completion', () async {
+    final api = CountingApi();
+    final (session, store, sync) = await setup(api, normal);
+    addTearDown(() {
+      sync.dispose();
+      store.dispose();
+      session.signOut();
+    });
+    final initial = store.project!;
+    store.updateProject(
+      await session.saveWorkflowSheet(
+        normal,
+        initial.workflowSheet!,
+        expectedProjectId: initial.id,
+        expectedSheet: initial.workflowSheet,
+      ),
+    );
+    expect(store.customWorkflowStageIds, ['todo', 'doing', 'done']);
+    expect(store.workflowStatuses.containsKey('rework'), isFalse);
+    final saved = store.save(input('검토·반려 흐름'));
+    await idle(sync);
+    void move(
+      String status, {
+      String reason = '',
+      String? route,
+      String purpose = '',
+    }) {
+      var plan = store.planHandoff(
+        store.find(saved.id),
         status,
-        reason: reason,
-        expectedVersion: store.find(saved.id).version,
+        routeId: route,
+        purpose: purpose,
       );
-      move('doing');
-      await idle(sync);
-      move('review');
-      await idle(sync);
-      move('rework', reason: '일반 검토 의견');
-      await idle(sync);
-      store.setMeta(
-        'github.config',
-        jsonEncode({...normal.toJson(), 'enabled': false}),
-      );
-      move('doing');
-      final current = store.find(saved.id);
-      store.save({
-        ...current.data,
-        'description': '오프라인에서 정상 수정',
-      }, expectedVersion: current.version);
-      move('review');
-      await sync.connect(normal);
-      await idle(sync);
-      move('done');
-      await idle(sync);
-      expect(store.baseline[saved.id]!.status, 'done');
-      expect(store.baseline[saved.id]!.description, '오프라인에서 정상 수정');
-      expect(sync.jobs.single['state'], 'merged');
-    },
-  );
+      if (plan.requiresRecipient) plan = plan.withReceiver('role:owner', '');
+      store.confirmHandoff(plan, reason: reason);
+    }
+
+    move('doing', route: 'manual-start');
+    await idle(sync);
+    move('doing', route: 'manual-handoff', purpose: 'review');
+    await idle(sync);
+    expect(store.find(saved.id).workflowPurpose, 'review');
+    expect(store.find(saved.id).status, 'doing');
+    expect(() => move('doing', route: 'manual-return'), throwsStateError);
+    move('doing', route: 'manual-return', reason: '일반 검토 의견');
+    await idle(sync);
+    expect(store.find(saved.id).reworkReason, '일반 검토 의견');
+    store.setMeta(
+      'github.config',
+      jsonEncode({...normal.toJson(), 'enabled': false}),
+    );
+    final current = store.find(saved.id);
+    store.save({
+      ...current.data,
+      'description': '오프라인에서 정상 수정',
+    }, expectedVersion: current.version);
+    move('doing', route: 'manual-handoff', purpose: 'review');
+    await sync.connect(normal);
+    await idle(sync);
+    expect(store.find(saved.id).status, 'doing');
+    move('done', route: 'manual-finish');
+    await idle(sync);
+    expect(store.baseline[saved.id]!.status, 'done');
+    expect(store.baseline[saved.id]!.description, '오프라인에서 정상 수정');
+    expect(sync.jobs.single['state'], 'merged');
+  });
 
   test(
     'same GitHub account can integrate its PR opened before a username change',
@@ -426,7 +452,7 @@ void main() {
     expect(requests.single['member']['login'], 'new-worker');
     final person = Person.fromJson({
       ...requests.single['member'] as Map<String, dynamic>,
-      'role': 'worker',
+      'role': 'unassigned',
     });
     final updated = await session.assign(
       normal,

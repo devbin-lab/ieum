@@ -120,8 +120,8 @@ class ProjectPicker extends StatelessWidget {
                     controller.isOpen ? controller.close() : controller.open(),
           style: TextButton.styleFrom(
             foregroundColor: const Color(0xff302b3c),
-            minimumSize: const Size(0, 44),
-            padding: const EdgeInsets.symmetric(horizontal: 10),
+            minimumSize: const Size(0, 60),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
             backgroundColor: const Color(0xffecefee),
           ),
           child: Row(
@@ -136,10 +136,30 @@ class ProjectPicker extends StatelessWidget {
                 const Icon(Icons.folder_outlined, size: 18),
               const SizedBox(width: 8),
               Expanded(
-                child: Text(
-                  active?.name ?? '프로젝트 선택',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      active?.name ?? '프로젝트 선택',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    if (active != null)
+                      Text(
+                        active.config.slug,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 10,
+                          color: Color(0xff6e687b),
+                        ),
+                      ),
+                  ],
                 ),
               ),
               const SizedBox(width: 4),

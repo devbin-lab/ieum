@@ -271,21 +271,18 @@ void main() {
       }
       state.selectSettings(SettingsSection.projectGeneral);
       await tester.pumpAndSettle();
-      if (find
-          .byKey(const Key('settings-category-menu'))
-          .evaluate()
-          .isNotEmpty) {
-        await tap('settings-category-menu');
-        await shot('${width.toInt()}-settings-drawer');
+      await shot('${width.toInt()}-settings-sidebar');
+      if (find.byKey(const Key('project-view-sidebar')).evaluate().isEmpty) {
+        await tap('project-home');
+        await tap('titlebar-sidebar-toggle');
       }
       await tap('project-picker');
-      await shot('${width.toInt()}-project-picker');
+      await shot('${width.toInt()}-project-dropdown');
       await tester.sendKeyEvent(LogicalKeyboardKey.escape);
       await tester.pumpAndSettle();
-      if (width == 540) {
-        await tester.sendKeyEvent(LogicalKeyboardKey.escape);
-        await tester.pumpAndSettle();
-      }
+      await shot('${width.toInt()}-project-view-open');
+      await tap('titlebar-sidebar-toggle');
+      await shot('${width.toInt()}-project-view-closed');
       await tap('project-home');
       await tap('sidebar-notifications');
       await shot('${width.toInt()}-inbox');

@@ -1,4 +1,4 @@
-const appVersion = '0.7.1';
+const appVersion = '0.8.0';
 const updateRepository = String.fromEnvironment(
   'IEUM_UPDATE_REPOSITORY',
   defaultValue: 'devbin-lab/ieum',

@@ -81,7 +81,7 @@ internal static class LauncherTests
         File.WriteAllText(workingMarker, fallback);
         try
         {
-            foreach (var mode in new[] { "early-crash", "late-crash" })
+            foreach (var mode in new[] { "early-crash" })
             {
                 File.Delete(restoredMarker);
                 Pointer(root, "0.2.0+5", Hash(asset));
@@ -91,6 +91,14 @@ internal static class LauncherTests
                 Check(File.ReadAllText(workingMarker) == fallback, mode + " preserves last known working build");
                 Check(!File.Exists(Path.Combine(root, "pending-update.json")), mode + " cannot repeat pending update");
             }
+            File.Delete(restoredMarker);
+            Pointer(root, "0.2.0+5", Hash(asset));
+            Environment.SetEnvironmentVariable("IEUM_TEST_STARTUP_MODE", "late-crash");
+            code = (int)Call("Run", new string[] { "--wait-for", "2147483647" }, root);
+            Check(code == 1 && !File.Exists(restoredMarker), "runtime crash never downgrades a started app");
+            Check(File.ReadAllText(workingMarker) == executable, "runtime crash keeps the current build pointer");
+            Check(File.Exists(Path.Combine(root, "pending-update.json")), "runtime crash does not misclassify the package as startup failure");
+            Check(File.ReadAllText(Path.Combine(root, "last-launch-error.txt")).Contains("0x0000002A"), "runtime exit code is recorded without task data");
             File.Delete(restoredMarker);
             Pointer(root, "0.2.0+5", Hash(asset));
             Environment.SetEnvironmentVariable("IEUM_TEST_STARTUP_MODE", "early-close");

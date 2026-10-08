@@ -40,6 +40,7 @@ internal static class PortableLauncher
         string previousWorking = null;
         string recordedWorkingPath = null;
         bool recordedWorking = false;
+        bool startupCompleted = false;
         bool previousStillRunning = false;
         try
         {
@@ -133,6 +134,7 @@ internal static class PortableLauncher
                     if (app.ExitCode != 0) throw new IOException("The updated application failed during startup.");
                     return 0; // An ordinary early user close is not a failed update.
                 }
+                startupCompleted = true;
                 try
                 {
                     File.WriteAllText(Path.Combine(appRoot, "last-working-app.txt"), start.FileName);
@@ -141,7 +143,7 @@ internal static class PortableLauncher
                 }
                 catch { }
                 app.WaitForExit();
-                if (app.ExitCode != 0) throw new IOException("The application exited unexpectedly.");
+                if (app.ExitCode != 0) throw new IOException("The application exited unexpectedly (0x" + unchecked((uint)app.ExitCode).ToString("X8") + ").");
                 return 0;
             }
         }
@@ -149,7 +151,17 @@ internal static class PortableLauncher
         {
             // A delayed close must not launch a second instance of the old app.
             if (previousStillRunning) return 1;
-            if (!(args.Length == 2 && args[0] == "--extract-only"))
+            try
+            {
+                Directory.CreateDirectory(appRoot);
+                // One bounded report; no credentials or task contents are captured.
+                File.WriteAllText(Path.Combine(appRoot, "last-launch-error.txt"),
+                    DateTime.UtcNow.ToString("o") + "\nBuild: " + BuildId + "\nStartup completed: " + startupCompleted + "\n" + error.Message);
+            }
+            catch { }
+            // Once the app has started it may have written a newer task format.
+            // A runtime crash must never silently downgrade and reopen that data.
+            if (!startupCompleted && !(args.Length == 2 && args[0] == "--extract-only"))
             {
                 Quarantine(appRoot, AppVersion);
                 if (recordedWorking)
@@ -190,7 +202,9 @@ internal static class PortableLauncher
                 Console.Error.WriteLine(error.ToString());
                 return 1;
             }
-            MessageBox.Show("이음을 실행하지 못했습니다.\n\n" + error.Message,
+            MessageBox.Show((startupCompleted
+                    ? "이음이 예기치 않게 종료되었습니다.\n데이터 호환성을 위해 이전 버전을 자동 실행하지 않았습니다. 최신 실행 파일로 다시 열어주세요.\n\n"
+                    : "이음을 실행하지 못했습니다.\n\n") + error.Message,
                 "이음", MessageBoxButtons.OK, MessageBoxIcon.Error);
             return 1;
         }

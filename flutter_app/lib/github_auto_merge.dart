@@ -32,7 +32,9 @@ extension AutoTaskIntegration on GitHubPublisher {
       throw const GitHubFailure('PR 작성자의 참여 승인을 받거나 현재 역할을 확인하세요.');
     }
     final author = authors.single;
-    if (!executor.has('task.integrate') && executor.id != author.id) {
+    if (manifest.workflowSheet == null &&
+        executor.id != manifest.ownerId &&
+        executor.id != author.id) {
       throw const GitHubFailure('내 작업 PR만 자동 통합할 수 있습니다.');
     }
     final diff = await api.call('GET', '$root/compare/$revision...$head');
@@ -103,17 +105,18 @@ extension AutoTaskIntegration on GitHubPublisher {
         next: task,
         current: current,
         allowCollapsedTransitions: true,
+        customStages: manifest.workflowStages.map((stage) => stage.id).toList(),
+        workflowConnections: manifest.activeWorkflowConnections,
+        manualWorkflow: manifest.usesManualWorkflow,
+        projectParts: manifest.unifiedView.parts,
+        workflowProject: manifest,
+        revisions: parseWorkflowRevisions(change['steps']),
       );
     } on StateError catch (e) {
       throw GitHubFailure(e.message.toString());
     }
-    for (final (id, reviewer) in [
-      (task.assigneeId, false),
-      (task.reviewerId, true),
-    ]) {
-      if (!manifest.people.any(
-        (p) => p.id == id && (reviewer ? p.canReview : p.canWork),
-      )) {
+    for (final id in _changedTaskRecipientIds(task, current, manifest)) {
+      if (!manifest.people.any((p) => p.id == id && p.active)) {
         throw const GitHubFailure('작업 담당자의 현재 참여 권한을 확인하세요.');
       }
     }
@@ -170,6 +173,14 @@ extension AutoTaskIntegration on GitHubPublisher {
         throw const GitHubFailure(
           '통합 중 PR 또는 main이 변경되었습니다. 다음 동기화 때 다시 검사합니다.',
         );
+      }
+      final committingExecutor = await projectActor(config, manifest);
+      if (committingExecutor.id != executor.id ||
+          !committingExecutor.canMutate ||
+          manifest.workflowSheet == null &&
+              committingExecutor.id != manifest.ownerId &&
+              committingExecutor.id != author.id) {
+        throw const GitHubFailure('통합 중 로그인 계정이 변경되었습니다. 다시 확인하세요.');
       }
       await api.call(
         'PATCH',

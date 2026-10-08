@@ -1,12 +1,15 @@
 import 'package:flutter/material.dart';
 
+import 'models.dart';
+
 enum SettingsSection {
   general('일반', '개인', Icons.tune_rounded, '버전 계정 이름'),
   projectGeneral('일반', '프로젝트', Icons.folder_outlined, '저장 폴더 저장소'),
   notifications('알림', '프로젝트', Icons.notifications_none_rounded, '앱 알림함 작업 배정'),
   team('참여자 관리', '프로젝트', Icons.people_outline_rounded, '팀원 역할 가입 승인'),
-  roles('역할 · 권한', '프로젝트', Icons.admin_panel_settings_outlined, '역할 추가 생성 권한'),
-  assignments('파트별 배정', '프로젝트', Icons.account_tree_outlined, '담당자 검토자 작업'),
+  roles('파트', '프로젝트', Icons.admin_panel_settings_outlined, '파트 추가 수정 삭제 배정'),
+  assignments('파트', '프로젝트', Icons.account_tree_outlined, '파트 추가 수정 삭제 배정'),
+  workflow('작업 단계', '프로젝트', Icons.view_kanban_outlined, '칸반 상태 단계 추가 삭제'),
   github('GitHub 동기화', '통합', Icons.sync_rounded, '저장소 브랜치 PR 전송'),
   changes('내 변경내역', '통합', Icons.history_rounded, '변경안 가져오기 내보내기');
 
@@ -25,21 +28,38 @@ class SettingsShell extends StatefulWidget {
     this.personal,
     this.projectName,
     this.projectSelector,
+    this.navigationOnly = false,
+    this.contentOnly = false,
+    this.workflowAutomationBuilder,
+    this.workflowDefinitionBuilder,
+    this.workflowStages = defaultWorkflowStages,
+    this.workflowProjectId,
+    this.workflowRoles = const [],
+    this.workflowPeople = const [],
+    this.workflowParts = const [],
   });
 
   final bool? personal;
   final String? projectName;
   final Widget? projectSelector;
+  final bool navigationOnly;
+  final bool contentOnly;
   final SettingsSection selected;
   final ValueChanged<SettingsSection> onSelected;
   final Widget Function(SettingsSection) contentBuilder;
+  final Widget Function()? workflowAutomationBuilder;
+  final Widget Function()? workflowDefinitionBuilder;
+  final List<WorkflowStage> workflowStages;
+  final String? workflowProjectId;
+  final List<ProjectRole> workflowRoles;
+  final List<Person> workflowPeople;
+  final List<String> workflowParts;
 
   @override
   State<SettingsShell> createState() => _SettingsShellState();
 }
 
 class _SettingsShellState extends State<SettingsShell> {
-  final drawerKey = GlobalKey<ScaffoldState>();
   final search = TextEditingController();
   final navigationScroll = ScrollController();
   final contentScroll = ScrollController();
@@ -47,6 +67,9 @@ class _SettingsShellState extends State<SettingsShell> {
   @override
   void didUpdateWidget(covariant SettingsShell oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.personal != widget.personal) {
+      search.clear();
+    }
     if (oldWidget.selected != widget.selected && contentScroll.hasClients) {
       contentScroll.jumpTo(0);
     }
@@ -66,6 +89,8 @@ class _SettingsShellState extends State<SettingsShell> {
     final sections = SettingsSection.values
         .where(
           (s) =>
+              s != SettingsSection.assignments &&
+              s != SettingsSection.workflow &&
               (widget.personal == null ||
                   (s == SettingsSection.general) == widget.personal) &&
               '${s.title} ${s.group} ${s.keywords}'.toLowerCase().contains(
@@ -73,75 +98,42 @@ class _SettingsShellState extends State<SettingsShell> {
               ),
         )
         .toList();
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final compact = constraints.maxWidth < 760;
-        final navigationWidth = constraints.maxWidth < 960 ? 208.0 : 240.0;
-        return Scaffold(
-          key: drawerKey,
-          backgroundColor: Colors.white,
-          drawer: compact
-              ? Drawer(
-                  width: constraints.maxWidth.clamp(200.0, 280.0),
-                  child: navigation(sections, 280),
-                )
-              : null,
-          body: compact
-              ? Column(
-                  key: const Key('settings-shell'),
-                  children: [
-                    Container(
-                      height: 52,
-                      padding: const EdgeInsets.symmetric(horizontal: 12),
-                      decoration: const BoxDecoration(
-                        color: Color(0xfff8f9f8),
-                        border: Border(
-                          bottom: BorderSide(color: Color(0xffe1e4e3)),
-                        ),
-                      ),
-                      child: Row(
-                        children: [
-                          TextButton.icon(
-                            key: const Key('settings-category-menu'),
-                            onPressed: () =>
-                                drawerKey.currentState?.openDrawer(),
-                            icon: const Icon(Icons.menu_rounded, size: 19),
-                            label: const Text('설정 항목'),
-                          ),
-                          const Spacer(),
-                          Flexible(
-                            child: Text(
-                              widget.personal == true ? '개인 설정' : '프로젝트 설정',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(fontSize: 12),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    Expanded(child: content(compact: true)),
-                  ],
-                )
-              : Row(
-                  key: const Key('settings-shell'),
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    navigation(sections, navigationWidth),
-                    Expanded(child: content()),
-                  ],
-                ),
-        );
-      },
+    if (widget.navigationOnly) {
+      return navigation(sections, 210);
+    }
+    if (widget.contentOnly) {
+      return KeyedSubtree(
+        key: const Key('settings-shell'),
+        child: detailView(),
+      );
+    }
+    return Row(
+      key: const Key('settings-shell'),
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        navigation(sections, 210),
+        Expanded(child: detailView()),
+      ],
     );
   }
 
-  Widget navigation(List<SettingsSection> sections, double width) => Container(
+  Widget detailView() => LayoutBuilder(
+    builder: (context, constraints) =>
+        content(compact: constraints.maxWidth < 760),
+  );
+
+  Widget navigation(List<SettingsSection> sections, double width) =>
+      Material(color: Colors.white, child: navigationPane(sections, width));
+
+  Widget navigationPane(
+    List<SettingsSection> sections,
+    double width,
+  ) => Container(
     key: const Key('settings-navigation'),
     width: width,
     padding: const EdgeInsets.fromLTRB(12, 18, 12, 12),
     decoration: const BoxDecoration(
-      color: Color(0xfff8f9f8),
+      color: Colors.white,
       border: Border(right: BorderSide(color: Color(0xffe1e4e3))),
     ),
     child: Column(
@@ -163,7 +155,7 @@ class _SettingsShellState extends State<SettingsShell> {
                 : widget.personal!
                 ? '개인 설정'
                 : '프로젝트 설정',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
           ),
         ),
         if (widget.personal != true)
@@ -230,7 +222,6 @@ class _SettingsShellState extends State<SettingsShell> {
                             key: Key('settings-${section.name}'),
                             borderRadius: BorderRadius.circular(8),
                             onTap: () {
-                              drawerKey.currentState?.closeDrawer();
                               widget.onSelected(section);
                             },
                             child: Padding(
@@ -273,7 +264,9 @@ class _SettingsShellState extends State<SettingsShell> {
     ),
   );
 
-  Widget content({bool compact = false}) => Material(
+  Widget content({bool compact = false}) => contentPane(compact: compact);
+
+  Widget contentPane({bool compact = false}) => Material(
     color: Colors.white,
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,

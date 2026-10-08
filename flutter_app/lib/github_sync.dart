@@ -7,9 +7,47 @@ import 'package:uuid/uuid.dart';
 
 import 'store.dart';
 import 'models.dart';
+import 'github_http.dart';
 
 part 'github_auto_merge.dart';
 part 'sync_payload.dart';
+
+/// Assignment availability is checked when assigning work, rather than acting
+/// as an edit lock when a previously assigned participant leaves the project.
+/// Local edits, upload admission and integration still use the shared mutation
+/// validator to authorize the author and prove every workflow change.
+Iterable<String> _changedTaskRecipientIds(
+  WorkTask task,
+  WorkTask? current,
+  ProjectManifest manifest,
+) {
+  if (task.isDeleted ||
+      task.isArchived ||
+      manifest.isCompleteStatus(task.status)) {
+    return const [];
+  }
+  if (manifest.workflowSheet == null) {
+    return [task.assigneeId, task.reviewerId];
+  }
+  final sameExplicitRecipient =
+      current != null &&
+      task.workflowTarget == current.workflowTarget &&
+      task.workflowPerson == current.workflowPerson &&
+      (task.workflowTarget != 'legacy' || task.currentId == current.currentId);
+  // Editing legacy registration fields snapshots the old effective recipient
+  // into explicit metadata. This conversion does not assign work to someone
+  // new; the shared mutation validator proves the allowed normalization.
+  final normalizedLegacyRecipient =
+      current != null &&
+      current.workflowTarget == 'legacy' &&
+      task.workflowTarget.isEmpty &&
+      task.workflowPerson == current.currentId;
+  if (sameExplicitRecipient || normalizedLegacyRecipient) {
+    return const [];
+  }
+  if (task.workflowTarget == 'legacy') return [task.currentId];
+  return task.workflowPerson.isEmpty ? const [] : [task.workflowPerson];
+}
 
 class GitHubConfig {
   const GitHubConfig({
@@ -87,16 +125,14 @@ abstract interface class GitHubApi {
 
 class HttpGitHubApi implements GitHubApi {
   HttpGitHubApi(this.token, {HttpClient Function()? createClient})
-    : _createClient = createClient ?? HttpClient.new;
+    : _http = GitHubHttpTransport(createClient: createClient);
   final Future<String> Function() token;
-  final HttpClient Function() _createClient;
-  HttpClient? _client;
+  final GitHubHttpTransport _http;
 
   // Keep TLS connections alive across the sequential commit/PR requests.
   // Credentials are still retrieved and set separately for every request.
   void close() {
-    _client?.close();
-    _client = null;
+    _http.close();
   }
 
   @override
@@ -108,66 +144,58 @@ class HttpGitHubApi implements GitHubApi {
   }) async {
     final credential = await token();
     if (credential.isEmpty) throw const GitHubFailure('GitHub 인증이 필요합니다.');
-    final client = _client ??= _createClient()
-      ..connectionTimeout = const Duration(seconds: 15)
-      ..idleTimeout = const Duration(seconds: 15);
     try {
       final uri = Uri.https('api.github.com', path, query);
-      final request = await client
-          .openUrl(method, uri)
-          .timeout(const Duration(seconds: 20));
-      request.followRedirects = false;
-      request.headers.set('Authorization', 'Bearer $credential');
-      request.headers.set('Accept', 'application/vnd.github+json');
-      request.headers.set('User-Agent', 'IEUM-Desktop');
-      request.headers.set('X-GitHub-Api-Version', '2022-11-28');
-      if (body != null) {
-        request.headers.contentType = ContentType.json;
-        request.write(jsonEncode(body));
-      }
-      final response = await request.close().timeout(
-        const Duration(seconds: 30),
+      final response = await _http.send(
+        method,
+        uri,
+        headers: {
+          'Authorization': 'Bearer $credential',
+          'Accept': 'application/vnd.github+json',
+          'User-Agent': 'IEUM-Desktop',
+          'X-GitHub-Api-Version': '2022-11-28',
+          if (body != null) 'Content-Type': 'application/json',
+        },
+        body: body == null ? '' : jsonEncode(body),
       );
-      final raw = await utf8.decoder
-          .bind(response)
-          .join()
-          .timeout(const Duration(seconds: 30));
-      if (response.statusCode < 200 || response.statusCode >= 300) {
+      final raw = response.text;
+      if (response.status < 200 || response.status >= 300) {
         var serverMessage = '';
         try {
           serverMessage = '${jsonDecode(raw)['message']}'.toLowerCase();
         } catch (_) {}
         final limited =
-            response.statusCode == 429 ||
-            response.headers.value('retry-after') != null ||
-            response.headers.value('x-ratelimit-remaining') == '0' ||
+            response.status == 429 ||
+            response.headers['retry-after'] != null ||
+            response.headers['x-ratelimit-remaining'] == '0' ||
             serverMessage.contains('rate limit') ||
             serverMessage.contains('abuse detection');
-        final explanation = switch (response.statusCode) {
+        final explanation = switch (response.status) {
           401 => 'GitHub 인증이 만료되었거나 토큰이 올바르지 않습니다.',
           403 => '저장소 쓰기·PR 권한 또는 GitHub 요청 한도를 확인하세요.',
           404 => '저장소·브랜치가 없거나 접근 권한이 없습니다.',
+          407 => 'GitHub 연결에 프록시 로그인이 필요합니다. Windows 프록시 설정을 확인하세요.',
           409 => '브랜치 변경이 충돌했습니다. 통합 상태를 확인 후 재시도하세요.',
           422 => 'GitHub가 변경을 거부했습니다. 브랜치·PR 상태를 확인하세요.',
-          _ => 'GitHub 요청에 실패했습니다. HTTP ${response.statusCode}',
+          _ => 'GitHub 요청에 실패했습니다. HTTP ${response.status}',
         };
         throw GitHubFailure(
           explanation,
-          response.statusCode,
+          response.status,
           githubRetryDelay(
-            response.statusCode,
-            response.headers.value('retry-after'),
-            response.headers.value('x-ratelimit-remaining'),
-            response.headers.value('x-ratelimit-reset'),
+            response.status,
+            response.headers['retry-after'],
+            response.headers['x-ratelimit-remaining'],
+            response.headers['x-ratelimit-reset'],
             rateLimited: limited,
           ),
         );
       }
       return raw.isEmpty ? null : jsonDecode(raw);
-    } on SocketException {
-      throw const GitHubFailure('네트워크에 연결할 수 없습니다. 작업은 로컬에 보관됩니다.');
-    } on TimeoutException {
-      throw const GitHubFailure('GitHub 응답 시간이 초과되었습니다. 재시도할 수 있습니다.');
+    } on GitHubFailure {
+      rethrow;
+    } catch (error) {
+      throw GitHubFailure(githubNetworkMessage(error));
     }
   }
 }
@@ -186,11 +214,34 @@ class SyncReceipt {
 }
 
 class GitHubPublisher {
-  GitHubPublisher(this.api);
+  GitHubPublisher(this.api, {this.blobCacheByteLimit = 8 * 1024 * 1024})
+    : assert(blobCacheByteLimit > 0);
   final GitHubApi api;
-  final Map<String, Map<String, dynamic>> _blobCache = {};
+  final int blobCacheByteLimit;
+  final _blobCache = <String, ({Map<String, dynamic> data, int bytes})>{};
+  int _blobCacheBytes = 0;
   final Map<String, String> _badBlobs = {};
   final Map<String, Map<String, dynamic>> _snapshots = {};
+
+  Map<String, dynamic>? _cachedBlob(String key) {
+    final cached = _blobCache.remove(key);
+    if (cached == null) return null;
+    _blobCache[key] = cached;
+    return cached.data;
+  }
+
+  void _cacheBlob(String key, Map<String, dynamic> value) {
+    if (_blobCache.containsKey(key)) return;
+    // Account for decoded strings and map/list overhead, not just wire bytes.
+    final cost = utf8.encode(jsonEncode(value)).length * 3;
+    if (cost > blobCacheByteLimit) return;
+    while (_blobCacheBytes + cost > blobCacheByteLimit &&
+        _blobCache.isNotEmpty) {
+      _blobCacheBytes -= _blobCache.remove(_blobCache.keys.first)!.bytes;
+    }
+    _blobCache[key] = (data: value, bytes: cost);
+    _blobCacheBytes += cost;
+  }
 
   Future<String> head(GitHubConfig config) async {
     final ref = await api.call(
@@ -214,7 +265,8 @@ class GitHubPublisher {
         base64Decode((file['content'] as String).replaceAll(RegExp(r'\s'), '')),
       ),
     );
-    return ProjectManifest.fromJson(Map<String, dynamic>.from(raw));
+    return ProjectManifest.fromJson(Map<String, dynamic>.from(raw))
+        .partWorkflowView;
   }
 
   Future<Person> projectActor(
@@ -223,7 +275,9 @@ class GitHubPublisher {
     Map<String, dynamic>? checkedIdentity,
   }) async {
     final identity = checkedIdentity ?? await api.call('GET', '/user');
-    final people = manifest.people.where((p) => p.id == 'gh-${identity['id']}');
+    final people = manifest.partWorkflowView.people.where(
+      (p) => p.id == 'gh-${identity['id']}',
+    );
     if (people.isNotEmpty && !people.first.enabled) {
       throw const GitHubFailure(
         '비활성화된 참여자는 작업을 업로드하거나 통합할 수 없습니다. 관리자에게 활성화를 요청하세요.',
@@ -267,7 +321,7 @@ class GitHubPublisher {
   ) async {
     final access = await _checkAccess(config, readBase: true);
     final login = access.login;
-    final proposal = job['proposal'] as Map;
+    final proposal = Map<String, dynamic>.from(job['proposal'] as Map);
     final sameAccount = proposal['authorId'] == 'gh-${access.identity['id']}';
     if (job['githubLogin'] != null &&
         job['githubLogin'] != login &&
@@ -296,17 +350,46 @@ class GitHubPublisher {
           next: task,
           current: base,
           allowCollapsedTransitions: true,
+          customStages: manifest.workflowStages
+              .map((stage) => stage.id)
+              .toList(),
+          workflowConnections: manifest.activeWorkflowConnections,
+          manualWorkflow: manifest.usesManualWorkflow,
+          projectParts: manifest.unifiedView.parts,
+          workflowProject: manifest,
+          revisions: parseWorkflowRevisions(change['steps']),
         );
       } on StateError catch (e) {
         throw GitHubFailure(e.message.toString());
       }
-      for (final (id, reviewer) in [
-        (task.assigneeId, false),
-        (task.reviewerId, true),
-      ]) {
-        if (!manifest.people.any(
-          (p) => p.id == id && (reviewer ? p.canReview : p.canWork),
-        )) {
+      if (change['steps'] != null &&
+          utf8.encode(jsonEncode(proposal)).length > _maxTaskJsonBytes ~/ 2) {
+        // Repeated offline content edits can carry hundreds of identical large
+        // snapshots. Use the existing collapsed-mutation proof only when it
+        // independently establishes the same actor's complete change.
+        try {
+          validateTaskMutation(
+            actor: actor,
+            next: task,
+            current: base,
+            allowCollapsedTransitions: true,
+            customStages: manifest.workflowStages
+                .map((stage) => stage.id)
+                .toList(),
+            workflowConnections: manifest.activeWorkflowConnections,
+            manualWorkflow: manifest.usesManualWorkflow,
+            projectParts: manifest.unifiedView.parts,
+            workflowProject: manifest,
+          );
+          proposal['changes'] = [
+            Map<String, dynamic>.from(change)..remove('steps'),
+          ];
+        } on StateError {
+          // Exact intermediate evidence remains mandatory for this mutation.
+        }
+      }
+      for (final id in _changedTaskRecipientIds(task, base, manifest)) {
+        if (!manifest.people.any((p) => p.id == id && p.active)) {
           throw const GitHubFailure('작업 담당자의 현재 참여 권한을 확인하세요.');
         }
       }
@@ -372,14 +455,13 @@ class GitHubPublisher {
     final path = '$root/contents/.ieum/changes/$login/$taskId.json';
     // Keep payload deterministic: retry after an uncertain network response
     // must reuse the same file, commit and PR instead of creating duplicates.
-    final payload = {
-      ...Map<String, dynamic>.from(job['proposal'] as Map),
-      'githubLogin': login,
-    };
+    final payload = {...proposal, 'githubLogin': login};
     final content = '${const JsonEncoder.withIndent('  ').convert(payload)}\n';
     _validateTaskProposal(payload);
     if (utf8.encode(content).length > _maxTaskJsonBytes) {
-      throw const GitHubFailure('작업 JSON은 1MB 이하만 지원합니다.');
+      throw const GitHubFailure(
+        '작업 변경 이력이 1MB를 초과했습니다. 필요한 전환 증명은 로컬에 보존되어 있으며 전송을 보류했습니다. 변경 이력을 줄이지 않고는 안전하게 전송할 수 없습니다.',
+      );
     }
     String? fileSha;
     bool unchanged = false;
@@ -576,7 +658,7 @@ class GitHubPublisher {
       final sha = file['sha'] as String;
       final path = file['path'] as String;
       String? error = _badBlobs['$sha:$path'];
-      var proposal = _blobCache['$sha:$path'];
+      var proposal = _cachedBlob('$sha:$path');
       if (error == null && proposal == null) {
         if ((file['size'] as int? ?? 0) > _maxTaskJsonBytes) {
           error = '작업 JSON은 1MB 이하만 지원합니다.';
@@ -595,19 +677,18 @@ class GitHubPublisher {
       }
       if (error != null) {
         _badBlobs['$sha:$path'] = error;
+        if (_badBlobs.length > 500) _badBlobs.remove(_badBlobs.keys.first);
         quarantined.add({
           'path': path,
           'taskId': _quarantineTaskId(path),
           'error': error,
         });
       } else if (proposal != null) {
-        _blobCache['$sha:$path'] = proposal;
+        _cacheBlob('$sha:$path', proposal);
         proposals.add(proposal);
       }
     }
-    if (_blobCache.length > 20000) _blobCache.clear();
-    if (_badBlobs.length > 20000) _badBlobs.clear();
-    if (_snapshots.length >= 4) _snapshots.remove(_snapshots.keys.first);
+    _snapshots.clear();
     return _snapshots[key] = {
       'revision': revision,
       'proposals': proposals,
@@ -618,23 +699,132 @@ class GitHubPublisher {
   Future<List<String>> memberBlockers(
     GitHubConfig config,
     ProjectManifest project,
-    String memberId,
-  ) async {
+    String memberId, {
+    List<String> remainingParts = const [],
+    bool removingMember = true,
+  }) async {
     final snapshot = (await pull(config, ''))!;
     final remote = _RemoteTasks(snapshot, project.id);
-    if (remote.blocked.isNotEmpty) {
+    if (remote.blocked.isNotEmpty || remote.uncertain) {
       throw const GitHubFailure('손상된 작업을 복구한 뒤 참여자 권한을 변경하세요.');
     }
+    String? partName(String group) => project.roles
+        .where((part) => 'part:${part.id}' == group)
+        .firstOrNull
+        ?.name;
+    bool losesGroup(String group) {
+      final name = partName(group);
+      return name != null && !remainingParts.contains(name);
+    }
+
+    bool taskBlocked(WorkTask task) {
+      if (project.isCompleteStatus(task.status)) return false;
+      if (task.workflowTarget == 'legacy') {
+        return removingMember && task.currentId == memberId;
+      }
+      if (task.workflowPerson == memberId) {
+        return removingMember || losesGroup(task.workflowTarget);
+      }
+      final name = partName(task.workflowTarget);
+      if (task.workflowPerson.isNotEmpty ||
+          name == null ||
+          !losesGroup(task.workflowTarget)) {
+        return false;
+      }
+      final member = project.people.where((p) => p.id == memberId).firstOrNull;
+      return member?.parts.contains(name) == true &&
+          !project.people.any(
+            (p) => p.id != memberId && p.active && p.parts.contains(name),
+          );
+    }
+
     return [
+      for (final route in project.workflowSheet?.routes ?? const [])
+        if (route.assignment == 'target' &&
+            route.person == memberId &&
+            (removingMember || losesGroup(route.destination)))
+          '자동화 전달 담당자 (${project.workflowSheet!.stageFor(route.from)} → ${project.workflowSheet!.stageFor(route.to)})',
       for (final task in remote.tasks.values)
-        if (task.status != 'done' &&
-            (task.assigneeId == memberId || task.reviewerId == memberId))
-          task.title,
+        if (!task.isDeleted && taskBlocked(task)) task.title,
       for (final pr in await openRequests(config))
         if ('gh-${pr['user']?['id']}' == memberId &&
             (pr['head']['ref'] as String).startsWith('ieum/tasks/'))
           '통합 대기 PR #${pr['number']}',
     ];
+  }
+
+  /// A part cannot disappear while it is the persisted receiver of active work.
+  Future<List<String>> partBlockers(
+    GitHubConfig config,
+    ProjectManifest project,
+    String partId,
+  ) async {
+    final snapshot = (await pull(config, ''))!;
+    final remote = _RemoteTasks(snapshot, project.id);
+    if (remote.blocked.isNotEmpty || remote.uncertain) {
+      throw const GitHubFailure('손상된 작업을 복구한 뒤 파트를 삭제하세요.');
+    }
+    return [
+      for (final task in remote.tasks.values)
+        if (!task.isDeleted &&
+            !project.isCompleteStatus(task.status) &&
+            task.workflowTarget == 'part:$partId')
+          task.title,
+    ];
+  }
+
+  /// Removing or reclassifying a status must not reinterpret existing issues.
+  Future<List<String>> workflowStageBlockers(
+    GitHubConfig config,
+    ProjectManifest project,
+    Set<String> stageIds,
+  ) async {
+    if (stageIds.isEmpty) return const [];
+    final snapshot = (await pull(config, ''))!;
+    final remote = _RemoteTasks(snapshot, project.id);
+    if (remote.blocked.isNotEmpty || remote.uncertain) {
+      throw const GitHubFailure('손상된 작업을 복구한 뒤 작업 단계를 삭제하세요.');
+    }
+    final blockers = <String>{
+      for (final task in remote.tasks.values)
+        if (!task.isDeleted && stageIds.contains(task.status)) task.title,
+    };
+    for (final pr in await openRequests(config)) {
+      if (!(pr['head']['ref'] as String).startsWith('ieum/tasks/')) continue;
+      try {
+        final reviewed = await review(config, pr['html_url'] as String);
+        for (final file in reviewed['files'] as List) {
+          final path = file['filename'] as String;
+          final blob = await api.call(
+            'GET',
+            '/repos/${config.slug}/contents/$path',
+            query: {'ref': reviewed['sha'] as String},
+          );
+          final proposal = _decodeTaskProposal(blob, path: path);
+          if (proposal['projectId'] != project.id) continue;
+          final change = (proposal['changes'] as List).single as Map;
+          final task = WorkTask.fromJson(
+            Map<String, dynamic>.from(change['task']),
+          );
+          final base = change['base'] == null
+              ? null
+              : WorkTask.fromJson(Map<String, dynamic>.from(change['base']));
+          final steps = parseWorkflowRevisions(change['steps']) ?? const [];
+          if (stageIds.contains(task.status) ||
+              base != null && stageIds.contains(base.status) ||
+              steps.any((step) => stageIds.contains(step.status))) {
+            blockers.add('통합 대기 PR #${pr['number']} · ${task.title}');
+          }
+        }
+      } on GitHubFailure catch (_) {
+        blockers.add('확인할 수 없는 대기 PR #${pr['number']}');
+      } on StateError catch (_) {
+        blockers.add('확인할 수 없는 대기 PR #${pr['number']}');
+      } on FormatException catch (_) {
+        blockers.add('확인할 수 없는 대기 PR #${pr['number']}');
+      }
+    }
+    return blockers.toList();
   }
 
   Future<List<Map<String, dynamic>>> openRequests(GitHubConfig config) async {
@@ -1082,7 +1272,8 @@ class GitHubSync extends ChangeNotifier {
           break;
         }
         if (!(pr['head']['ref'] as String).startsWith('ieum/tasks/')) continue;
-        if (!executor.has('task.integrate') &&
+        if (store.project!.workflowSheet == null &&
+            executor.id != store.project!.ownerId &&
             pr['user']?['id'].toString() !=
                 executor.id.replaceFirst('gh-', '')) {
           continue;
@@ -1391,6 +1582,11 @@ class GitHubSync extends ChangeNotifier {
       }
       if (data == null) {
         await _reconcileRequests(settings, store.baseline);
+        store.setMeta(
+          'github.lastPullAt',
+          DateTime.now().toUtc().toIso8601String(),
+        );
+        store.setMeta('github.lastPullError', '');
         return;
       }
       final remote = _RemoteTasks(data, store.meta('projectId'));
@@ -1401,6 +1597,7 @@ class GitHubSync extends ChangeNotifier {
       if (remote.uncertain) {
         pullMessage =
             '작업 ID를 확인할 수 없는 손상 파일이 있습니다. 해당 파일을 복구해 주세요. ${remote.warnings.join(' / ')}';
+        store.setMeta('github.lastPullError', pullMessage);
         return;
       }
       await _reconcileRequests(settings, remote.tasks);
@@ -1490,7 +1687,7 @@ class GitHubSync extends ChangeNotifier {
               remote.blocked.contains(job['taskId'])) {
             continue;
           }
-          final local = store.tasks.where((t) => t.id == job['taskId']);
+          final local = store.storedTasks.where((t) => t.id == job['taskId']);
           final current = remote.tasks[job['taskId']];
           if (local.isEmpty || current == null || local.single.same(current)) {
             continue;
@@ -1505,12 +1702,18 @@ class GitHubSync extends ChangeNotifier {
           }
         }
       }
+      store.setMeta(
+        'github.lastPullAt',
+        DateTime.now().toUtc().toIso8601String(),
+      );
+      store.setMeta('github.lastPullError', '');
     } catch (e) {
       _recordFailure(e);
       if (e is _SyncInterrupted) return;
       pullMessage = e is GitHubFailure
           ? e.message
           : '통합본을 가져오지 못했습니다. 개인 데이터는 보존했습니다.';
+      store.setMeta('github.lastPullError', pullMessage);
     } finally {
       pulling = false;
       _notify();
@@ -1644,7 +1847,7 @@ class GitHubSync extends ChangeNotifier {
         store.updateProject(manifest);
         final actor = await publisher.projectActor(config, manifest);
         if (_disposed) return;
-        if (!actor.has('task.integrate')) {
+        if (actor.id != manifest.ownerId || actor.role != 'owner') {
           throw const GitHubFailure('다른 참여자의 PR 통합 권한이 필요합니다.');
         }
       }

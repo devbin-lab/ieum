@@ -23,6 +23,7 @@ import 'github_oauth_test.dart' show MemoryVault;
 import 'package:ieum_flutter/github_oauth.dart';
 
 import 'app_update_test.dart' show FakeUpdates;
+import 'v020_store_test.dart' show legacyFourStages;
 
 const config = GitHubConfig(repository: 'team/data', enabled: true);
 const reviewerRole = ProjectRole('role-reviewer', '검토 전담', {'task.review'});
@@ -86,74 +87,42 @@ void main() {
     ProjectManifest project, {
     String role = 'worker',
     List<ProjectRole> roles = const [],
-  }) => ProjectManifest(project.id, project.name, project.ownerId, [
-    ...project.people,
-    member(2, role),
-  ], roles: roles);
-
-  test(
-    'custom reviewer can review but cannot edit, progress or register tasks',
-    () {
-      final project = ProjectManifest(
-        'p',
-        '팀',
-        'gh-1',
-        [member(1, 'owner'), member(2, reviewerRole.id)],
-        roles: [reviewerRole],
-      );
-      final store = TaskStore(
-        ':memory:',
-        project: project,
-        identity: member(1, 'owner'),
-      );
-      addTearDown(store.dispose);
-      final created = store.save(
-        task(member(1, 'owner'), member(2, reviewerRole.id)),
-      );
-      store.setMeta('profile', 'gh-2');
-      expect(store.actor.roleLabel, '검토 전담');
-      expect(store.canCreate, isFalse);
-      expect(store.canEditContent(created), isFalse);
-      expect(
-        () => store.transition(
-          created.id,
-          'doing',
-          expectedVersion: store.find(created.id).version,
-        ),
-        throwsStateError,
-      );
-      store.setMeta('profile', 'gh-1');
-      store.transition(
-        created.id,
-        'doing',
-        expectedVersion: store.find(created.id).version,
-      );
-      store.transition(
-        created.id,
-        'review',
-        expectedVersion: store.find(created.id).version,
-      );
-      store.setMeta('profile', 'gh-2');
-      expect(store.canEditContent(store.find(created.id)), isFalse);
-      store.transition(
-        created.id,
-        'done',
-        expectedVersion: store.find(created.id).version,
-      );
-      expect(store.canEdit(store.find(created.id)), isFalse);
-      store.setMeta('profile', 'gh-1');
-      expect(store.canEdit(store.find(created.id)), isFalse);
-    },
+  }) => ProjectManifest(
+    project.id,
+    project.name,
+    project.ownerId,
+    [
+      ...project.people,
+      Person.fromJson({
+        ...member(
+          2,
+          const {'pending', 'disabled'}.contains(role) ? role : 'unassigned',
+        ).json,
+        'parts': [
+          if (project.parts.contains('기획')) '기획',
+          for (final part in roles)
+            if (part.id == role && project.parts.contains(part.name)) part.name,
+        ],
+      }),
+    ],
+    roles: roles,
+    parts: project.parts,
+    unifiedParts: project.unifiedParts,
+    workflowSheet: project.workflowSheet,
+    workflowStages: project.workflowStages,
+    workflowAutomation: project.workflowAutomation,
   );
 
-  test('same assignee and reviewer must have both abilities', () {
-    const onlyWork = ProjectRole('role-work', '진행 전담', {'task.work'});
+  test('legacy fine grants and review do not restrict shared work while completion locks content', () {
     final project = ProjectManifest(
       'p',
       '팀',
       'gh-1',
-      [member(1, 'owner'), member(2, onlyWork.id)],
-      roles: [onlyWork],
+      [member(1, 'owner'), member(2, reviewerRole.id)],
+      roles: [reviewerRole],
+      parts: const ['기획'],
+      workflowAutomation: const WorkflowAutomation(reviewEnabled: true),
+      workflowStages: legacyFourStages,
     );
     final store = TaskStore(
       ':memory:',
@@ -161,10 +130,61 @@ void main() {
       identity: member(1, 'owner'),
     );
     addTearDown(store.dispose);
-    expect(
-      () => store.save(task(member(2, onlyWork.id), member(2, onlyWork.id))),
-      throwsStateError,
+    final created = store.save(
+      task(member(1, 'owner'), member(2, reviewerRole.id)),
     );
+    store.setMeta('profile', 'gh-2');
+    expect(store.actor.parts, containsAll(['검토 전담', '기획']));
+    expect(store.actor.role, 'unassigned');
+    expect(store.canCreate, isTrue);
+    expect(store.canEditContent(created), isTrue);
+    expect(store.actor.has('role.manage'), isFalse);
+    expect(store.actor.has('member.manage'), isFalse);
+    store.transition(
+      created.id,
+      'doing',
+      expectedVersion: store.find(created.id).version,
+    );
+    store.transition(
+      created.id,
+      'review',
+      expectedVersion: store.find(created.id).version,
+    );
+    store.setMeta('profile', 'gh-2');
+    expect(store.canEditContent(store.find(created.id)), isTrue);
+    store.transition(
+      created.id,
+      'done',
+      expectedVersion: store.find(created.id).version,
+    );
+    expect(store.canEdit(store.find(created.id)), isFalse);
+    store.setMeta('profile', 'gh-1');
+    expect(store.canEdit(store.find(created.id)), isFalse);
+  });
+
+  test('same active member may work and review independently of historical fine grants', () {
+    const onlyWork = ProjectRole('role-work', '진행 전담', {'task.work'});
+    final project = ProjectManifest(
+      'p',
+      '팀',
+      'gh-1',
+      [member(1, 'owner'), member(2, onlyWork.id)],
+      roles: [onlyWork],
+      parts: const ['기획'],
+    );
+    final store = TaskStore(
+      ':memory:',
+      project: project,
+      identity: member(1, 'owner'),
+    );
+    addTearDown(store.dispose);
+    final saved = store.save(
+      task(member(2, onlyWork.id), member(2, onlyWork.id)),
+    );
+    expect(saved.assigneeId, saved.reviewerId);
+    expect(store.member('gh-2').canWork, isTrue);
+    expect(store.member('gh-2').canReview, isTrue);
+    expect(store.member('gh-2').has('role.manage'), isFalse);
   });
 
   test('role definitions round-trip without trusting standalone member permissions', () {
@@ -198,7 +218,7 @@ void main() {
     );
   });
 
-  test('owner adds roles, delegates role management, and delegates cannot grant more than they hold', () async {
+  test('explicit management grants delegate part operations without owner promotion', () async {
     final api = FakeGitHubApi();
     final session = sessionFor(api);
     addTearDown(session.signOut);
@@ -209,8 +229,8 @@ void main() {
       'member.manage',
       'task.review',
     });
-    project = await session.saveRole(config, delegate);
-    project = await session.saveRole(config, reviewerRole);
+    project = await session.savePermissionPart(config, delegate);
+    project = await session.savePermissionPart(config, reviewerRole);
     await write(
       session,
       withGuest(project, role: delegate.id, roles: project.roles),
@@ -218,29 +238,39 @@ void main() {
     api.identityId = 2;
     api.identityLogin = 'guest';
     await session.signIn();
-    expect(
-      (await session.saveRole(
-        config,
-        const ProjectRole('role-second', '추가 검토', {'task.review'}),
-      )).roles.length,
-      3,
+    final actor = (await session.loadProject(config)).people.last;
+    expect(actor.has('role.manage'), isTrue);
+    expect(actor.has('member.manage'), isTrue);
+    expect(actor.role, 'unassigned');
+    project = await session.savePermissionPart(
+      config,
+      const ProjectRole('role-second', '추가 검토', {'task.review'}),
     );
-    await expectLater(
-      session.saveRole(
-        config,
-        const ProjectRole('role-admin', '관리자 사칭', {'task.create'}),
-      ),
-      throwsA(isA<GitHubFailure>()),
+    expect(project.roles.last.permissions, isEmpty);
+    project = await session.savePermissionPart(
+      config,
+      const ProjectRole('role-admin', '관리자 사칭', {'task.create'}),
     );
+    expect(project.roles.last.permissions, isEmpty);
+    expect(project.ownerId, 'gh-1');
     await expectLater(
       session.assign(config, member(2, 'manager')),
       throwsA(isA<GitHubFailure>()),
     );
+    await session.deletePermissionPart(config, delegate.id);
     await expectLater(
-      session.deleteRole(config, delegate.id),
+      session.savePermissionPart(config, delegate),
       throwsA(isA<GitHubFailure>()),
     );
-    await session.deleteRole(config, 'role-second');
+    api.identityId = 1;
+    api.identityLogin = 'tester';
+    await session.signIn();
+    project = await session.savePermissionPart(
+      config,
+      const ProjectRole('role-second', '추가 검토', {'member.manage'}),
+    );
+    expect(project.roles.last.permissions, {'member.manage'});
+    await session.deletePermissionPart(config, 'role-second');
     expect(
       (await session.loadProject(config)).roles
           .any((r) => r.id == 'role-second'),
@@ -248,35 +278,51 @@ void main() {
     );
   });
 
-  test('role assignment preserves name and roles; queued work blocks a permission downgrade', () async {
-    final api = FakeGitHubApi();
-    final session = sessionFor(api);
-    addTearDown(session.signOut);
-    await session.signIn();
-    var project = await session.createProject(config, '팀', '개설자');
-    project = await session.saveRole(config, reviewerRole);
-    await write(session, withGuest(project, roles: project.roles));
-    final assigned = await session.assign(config, member(2, reviewerRole.id));
-    expect(assigned.roles.single.id, reviewerRole.id);
-    // PR ownership alone is enough to block loss of workflow rights.
-    api.prs.add({
-      'number': 1,
-      'state': 'open',
-      'base': {'ref': 'main'},
-      'head': {'ref': 'ieum/tasks/guest/TASK-1'},
-      'user': {'id': 2},
-    });
-    await expectLater(
-      session.saveRole(config, const ProjectRole('role-reviewer', '검토 전담', {})),
-      throwsA(isA<GitHubFailure>()),
-    );
-    await expectLater(
-      session.assign(config, member(2, 'viewer')),
-      throwsA(isA<GitHubFailure>()),
-    );
-    api.prs.clear();
-    await session.assign(config, member(2, 'viewer'));
-  });
+  test(
+    'part assignment preserves identity and queued work blocks deactivation',
+    () async {
+      final api = FakeGitHubApi();
+      final session = sessionFor(api);
+      addTearDown(session.signOut);
+      await session.signIn();
+      var project = await session.createProject(config, '팀', '개설자');
+      project = await session.savePermissionPart(config, reviewerRole);
+      await write(session, withGuest(project, roles: project.roles));
+      final original = (await session.loadProject(config)).people.last;
+      final assigned = await session.assign(
+        config,
+        Person.fromJson({
+          ...original.json,
+          'parts': [reviewerRole.name],
+        }),
+        expectedMember: original,
+      );
+      expect(assigned.roles.single.id, reviewerRole.id);
+      expect(assigned.people.last.parts, [reviewerRole.name]);
+      expect(assigned.people.last.name, original.name);
+      expect(assigned.people.last.id, original.id);
+      // PR ownership alone is enough to block loss of workflow rights.
+      api.prs.add({
+        'number': 1,
+        'state': 'open',
+        'base': {'ref': 'main'},
+        'head': {'ref': 'ieum/tasks/guest/TASK-1'},
+        'user': {'id': 2},
+      });
+      await expectLater(
+        session.setMemberEnabled(config, original.id, false),
+        throwsA(isA<GitHubFailure>()),
+      );
+      api.prs.clear();
+      final inactive = await session.setMemberEnabled(
+        config,
+        original.id,
+        false,
+      );
+      expect(inactive.people.last.enabled, isFalse);
+      expect(inactive.people.last.parts, [reviewerRole.name]);
+    },
+  );
 
   test('rename retries SHA races and preserves identity, role, parts and other edits', () async {
     final api = RacingApi();
@@ -298,7 +344,7 @@ void main() {
     expect(project.people.first.name, '바뀐 이름');
     expect(project.people.first.id, 'gh-1');
     expect(project.people.first.role, 'owner');
-    expect(project.people.first.parts, rules.map((r) => r.part));
+    expect(project.people.first.parts, isEmpty);
     expect(project.people.last.name, '참여자');
     expect(api.refs.keys.toSet(), originalRefs);
     await expectLater(
@@ -402,13 +448,48 @@ void main() {
     expect((await session.loadProject(second)).people.first.name, '동일 이름');
   });
 
-  test('custom reviewer completes a real task PR with current manifest permissions', () async {
+  test('part recipient completes a simulated task PR using the current saved workflow', () async {
     final api = AutoMergeApi();
     final session = sessionFor(api);
     addTearDown(session.signOut);
     await session.signIn();
     var project = await session.createProject(config, '검토 흐름', '개설자');
-    project = await session.saveRole(config, reviewerRole);
+    project = await session.savePermissionPart(
+      config,
+      const ProjectRole('role-plan', '기획', {}),
+    );
+    project = await session.savePermissionPart(config, reviewerRole);
+    project = await session.saveWorkflowDefinition(
+      config,
+      legacyFourStages,
+      const WorkflowSheet(
+        nodes: [
+          WorkflowSheetNode('todo', 'todo'),
+          WorkflowSheetNode('doing', 'doing'),
+          WorkflowSheetNode('review', 'review'),
+          WorkflowSheetNode('done', 'done'),
+        ],
+        routes: [
+          WorkflowSheetRoute(id: 'start', from: 'todo', to: 'doing'),
+          WorkflowSheetRoute(
+            id: 'submit',
+            from: 'doing',
+            to: 'review',
+            destination: 'part:role-reviewer',
+          ),
+          WorkflowSheetRoute(
+            id: 'approve',
+            from: 'review',
+            to: 'done',
+            source: 'part:role-reviewer',
+            action: 'approve',
+          ),
+        ],
+      ),
+      expectedProjectId: project.id,
+      expectedStages: project.workflowStages,
+      expectedSheet: project.workflowSheet,
+    );
     project = withGuest(project, role: reviewerRole.id, roles: project.roles);
     await write(session, project);
     final owner = TaskStore(
@@ -457,7 +538,7 @@ void main() {
     await guestSync.connect(config);
     await idle(guestSync);
     expect(guest.find(created.id).status, 'review');
-    expect(guest.canEditContent(guest.find(created.id)), isFalse);
+    expect(guest.canEditContent(guest.find(created.id)), isTrue);
     guest.transition(
       created.id,
       'done',
@@ -547,7 +628,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(store.actor.name, '새 이름');
       expect(tester.takeException(), isNull);
-      // Role permission editor remains scrollable in a short/narrow window.
+      // Name-only part editor stays usable in a short/narrow window.
       await tester.pumpWidget(
         MaterialApp(
           home: Scaffold(
@@ -562,10 +643,7 @@ void main() {
       expect(find.byKey(const Key('role-name')), findsOneWidget);
       expect(tester.takeException(), isNull);
       await tester.enterText(find.byKey(const Key('role-name')), 'QA');
-      await tester.ensureVisible(
-        find.byKey(const Key('permission-task.review')),
-      );
-      await tester.tap(find.byKey(const Key('permission-task.review')));
+      expect(find.byKey(const Key('permission-task.review')), findsNothing);
       await tester.pump();
       await tester.tap(find.byKey(const Key('save-role')));
       await tester.pumpAndSettle();

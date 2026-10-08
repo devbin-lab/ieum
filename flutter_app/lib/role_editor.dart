@@ -3,37 +3,47 @@ import 'package:uuid/uuid.dart';
 
 import 'models.dart';
 import 'popup_ui.dart';
-import 'permission_ui.dart';
 import 'draft_guard.dart';
+import 'permission_ui.dart';
 
 Future<ProjectRole?> showProjectRoleDialog(
   BuildContext context,
   Person actor, {
   ProjectRole? role,
+  String initialName = '',
   Future<void> Function(ProjectRole)? onSave,
   Future<ProjectRole?> Function()? onReload,
 }) async {
-  final name = TextEditingController(text: role?.name ?? '');
-  final permissions = {...?role?.permissions};
+  final name = TextEditingController(text: role?.name ?? initialName);
   final id = role?.id ?? 'role-${const Uuid().v4()}';
   var busy = false, saved = false;
   var error = '';
   var base = role;
+  final permissions =
+      role?.permissions.where(managementPermissionLabels.containsKey).toSet() ??
+      <String>{};
   bool dirty() =>
       !saved &&
       (name.text.trim() != (base?.name ?? '') ||
-          permissions.length != (base?.permissions.length ?? 0) ||
-          !permissions.containsAll(base?.permissions ?? {}));
+          permissions.length !=
+              (base?.permissions
+                      .where(managementPermissionLabels.containsKey)
+                      .length ??
+                  0) ||
+          !permissions.containsAll(
+            base?.permissions.where(managementPermissionLabels.containsKey) ??
+                const <String>[],
+          ));
   final result = await showDialog<ProjectRole>(
     context: context,
     builder: (ctx) => StatefulBuilder(
       builder: (ctx, update) {
         Future<void> save() async {
           if (busy || name.text.trim().isEmpty) {
-            update(() => error = '역할 이름을 입력하세요.');
+            update(() => error = '파트 이름을 입력하세요.');
             return;
           }
-          final draft = ProjectRole(id, name.text.trim(), {...permissions});
+          final draft = ProjectRole(id, name.text.trim(), Set.of(permissions));
           update(() {
             busy = true;
             error = '';
@@ -62,8 +72,8 @@ Future<ProjectRole?> showProjectRoleDialog(
           busy: busy,
           onSave: save,
           child: IeumDialog(
-            title: Text(role == null ? '역할 추가' : '역할 수정'),
-            icon: Icons.admin_panel_settings_outlined,
+            title: Text(role == null ? '파트 추가' : '파트 수정'),
+            icon: Icons.groups_outlined,
             content: SizedBox(
               width: 480,
               child: Column(
@@ -76,21 +86,45 @@ Future<ProjectRole?> showProjectRoleDialog(
                     maxLength: 40,
                     enabled: !busy,
                     onChanged: (_) => update(() {}),
-                    decoration: const InputDecoration(labelText: '역할 이름'),
+                    decoration: const InputDecoration(
+                      labelText: '파트 이름',
+                      hintText: '예: 기획, PD, 검토 담당',
+                    ),
                   ),
                   const SizedBox(height: 12),
                   const Text(
-                    '보유한 권한 안에서 부여할 수 있습니다. 역할 관리 권한을 부여하면 다른 역할도 만들 수 있습니다.',
+                    '작업 등록·진행·검토·통합은 기본 허용됩니다. 작업 전달 조건은 자동화 시트에서 설정합니다.',
                     style: TextStyle(fontSize: 12),
                   ),
-                  const SizedBox(height: 18),
+                  const SizedBox(height: 14),
+                  const Text(
+                    '관리 권한',
+                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                  ),
+                  RolePermissionGroups(
+                    permissions: permissions,
+                    actor: actor,
+                    grantable: {
+                      for (final id in managementPermissionLabels.keys)
+                        if (actor.has(id) ||
+                            (base?.permissions.contains(id) ?? false))
+                          id,
+                    },
+                    onChanged: busy
+                        ? null
+                        : (id, selected) => update(() {
+                            if (selected) {
+                              permissions.add(id);
+                            } else {
+                              permissions.remove(id);
+                            }
+                          }),
+                  ),
+                  const SizedBox(height: 14),
                   if (dirty()) const Text('저장하지 않은 변경사항'),
                   if (error.isNotEmpty)
                     Text(error, style: const TextStyle(color: Colors.red)),
-                  if (base != null)
-                    Text(
-                      '저장된 역할: ${base!.name} · ${base!.permissions.length}개 권한',
-                    ),
+                  if (base != null) Text('저장된 파트: ${base!.name}'),
                   if (error.isNotEmpty && onReload != null)
                     TextButton(
                       onPressed: busy
@@ -114,19 +148,6 @@ Future<ProjectRole?> showProjectRoleDialog(
                             },
                       child: const Text('최신 값 확인 · 초안 유지'),
                     ),
-                  RolePermissionGroups(
-                    permissions: permissions,
-                    actor: actor,
-                    onChanged: busy
-                        ? null
-                        : (id, value) => update(() {
-                            if (value) {
-                              permissions.add(id);
-                            } else {
-                              permissions.remove(id);
-                            }
-                          }),
-                  ),
                 ],
               ),
             ),

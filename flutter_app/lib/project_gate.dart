@@ -41,7 +41,7 @@ class _ProjectGateState extends State<ProjectGate> {
   final folder = TextEditingController();
   bool busy = false, creating = true, booting = true, showingSetup = false;
   late final ProjectCatalog catalog;
-  bool rememberLogin = true, advancedLogin = false;
+  bool rememberLogin = true, advancedLogin = false, advancedStorage = false;
   DeviceGrant? grant;
   String error = '';
   SavedProject? get recent =>
@@ -53,6 +53,8 @@ class _ProjectGateState extends State<ProjectGate> {
   void initState() {
     super.initState();
     catalog = ProjectCatalog(widget.preferences);
+    folder.text =
+        '${widget.preferences.absolute.parent.path}${Platform.pathSeparator}projects';
     session.connectionNotice.addListener(connectionChanged);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) restoreLogin();
@@ -165,6 +167,7 @@ class _ProjectGateState extends State<ProjectGate> {
     }
     if (recent != null) {
       repo.text = recent!.config.slug;
+      folder.text = File(recent!.path).parent.path;
       await openSaved(recent!);
     }
   }
@@ -404,7 +407,6 @@ class _ProjectGateState extends State<ProjectGate> {
         showingSetup = true;
         projectName.clear();
         repo.clear();
-        folder.clear();
       });
     }
   });
@@ -466,6 +468,7 @@ class _ProjectGateState extends State<ProjectGate> {
             onCreate: () => showSetup(true),
             onJoin: () => showSetup(false),
           ),
+          notificationProjects: catalog.forAccount(session.user!.id),
         ),
       );
     }
@@ -473,11 +476,15 @@ class _ProjectGateState extends State<ProjectGate> {
     return Scaffold(
       body: Center(
         child: SingleChildScrollView(
-          padding: const EdgeInsets.all(36),
+          padding: EdgeInsets.all(
+            MediaQuery.sizeOf(context).width < 600 ? 16 : 36,
+          ),
           child: SizedBox(
             width: 680,
             child: Container(
-              padding: const EdgeInsets.all(32),
+              padding: EdgeInsets.all(
+                MediaQuery.sizeOf(context).width < 600 ? 20 : 32,
+              ),
               decoration: BoxDecoration(
                 color: Colors.white,
                 border: Border.all(color: border),
@@ -707,37 +714,86 @@ class _ProjectGateState extends State<ProjectGate> {
                       ),
                     ),
                     const SizedBox(height: 16),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: TextField(
-                            key: const Key('project-folder'),
-                            enabled: !busy,
-                            controller: folder,
-                            decoration: const InputDecoration(
-                              labelText: '개인 DB 저장 폴더',
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: const Color(0xfff6f7f9),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            '이 컴퓨터에 안전하게 저장',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
                             ),
                           ),
-                        ),
-                        const SizedBox(width: 12),
-                        OutlinedButton(
-                          onPressed: busy
-                              ? null
-                              : () async {
-                                  final value = await getDirectoryPath(
-                                    confirmButtonText: 'DB 저장 위치 선택',
-                                  );
-                                  if (value != null && mounted) {
-                                    setState(() => folder.text = value);
-                                  }
-                                },
-                          child: const Text('폴더 선택'),
-                        ),
-                      ],
+                          const SizedBox(height: 5),
+                          const Text(
+                            '작업은 자동 저장되고 GitHub와 동기화됩니다.\n인터넷이 끊겨도 저장된 프로젝트에서 작업할 수 있습니다.',
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: muted,
+                              height: 1.6,
+                            ),
+                          ),
+                          TextButton.icon(
+                            key: const Key('project-storage-options'),
+                            onPressed: busy
+                                ? null
+                                : () => setState(
+                                    () => advancedStorage = !advancedStorage,
+                                  ),
+                            icon: Icon(
+                              advancedStorage
+                                  ? Icons.expand_less
+                                  : Icons.expand_more,
+                              size: 16,
+                            ),
+                            label: Text(
+                              advancedStorage ? '저장 위치 닫기' : '저장 위치 변경',
+                            ),
+                          ),
+                          if (advancedStorage) ...[
+                            const SizedBox(height: 8),
+                            TextField(
+                              key: const Key('project-folder'),
+                              enabled: !busy,
+                              controller: folder,
+                              decoration: const InputDecoration(
+                                labelText: '로컬 저장 폴더',
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            OutlinedButton.icon(
+                              onPressed: busy
+                                  ? null
+                                  : () async {
+                                      final value = await getDirectoryPath(
+                                        confirmButtonText: '저장 위치 선택',
+                                      );
+                                      if (value != null && mounted) {
+                                        setState(() => folder.text = value);
+                                      }
+                                    },
+                              icon: const Icon(
+                                Icons.folder_open_outlined,
+                                size: 16,
+                              ),
+                              label: const Text('폴더 선택'),
+                            ),
+                          ],
+                        ],
+                      ),
                     ),
                     const SizedBox(height: 16),
                     Text(
-                      creating ? '새 프로젝트와 빈 DB를 만들고 관리자 권한을 받습니다.' : '닉네임과 GitHub 계정 ID로 개인 브랜치를 만듭니다. 가입 요청 후 관리자가 역할을 부여하면 작업할 수 있습니다.',
+                      creating
+                          ? '저장소 관리자 계정으로 빈 프로젝트를 만듭니다. 파트와 작업 흐름은 프로젝트 설정에서 구성하세요.'
+                          : '먼저 GitHub 저장소 초대를 수락해 주세요. 참여 요청을 관리자가 승인하면 작업을 시작할 수 있습니다.',
                       style: const TextStyle(
                         fontSize: 11,
                         color: muted,
@@ -745,7 +801,9 @@ class _ProjectGateState extends State<ProjectGate> {
                       ),
                     ),
                     const SizedBox(height: 24),
-                    Row(
+                    Wrap(
+                      spacing: 12,
+                      runSpacing: 8,
                       children: [
                         FilledButton(
                           key: const Key('project-submit'),
@@ -758,7 +816,6 @@ class _ProjectGateState extends State<ProjectGate> {
                                 : '참여 요청',
                           ),
                         ),
-                        const SizedBox(width: 12),
                         TextButton(
                           onPressed: busy ? null : signOut,
                           child: const Text('로그아웃'),

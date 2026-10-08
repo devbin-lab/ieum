@@ -197,7 +197,11 @@ void main() {
     api = ReliabilityApi();
     session = GitHubSession(api: api);
     await session.signIn(token: 'test-only');
-    final project = await session.createProject(config, '복구 검증', '개설자');
+    await session.createProject(config, '복구 검증', '개설자');
+    final project = await session.savePermissionPart(
+      config,
+      const ProjectRole('role-plan', '기획', {}),
+    );
     store = TaskStore(
       ':memory:',
       project: project,
@@ -346,7 +350,7 @@ void main() {
     expect(sync.jobs.single['state'], 'merged');
     expect(store.baseline[saved.id], isNotNull);
     expect(api.prs, hasLength(1));
-    expect(api.writes, 2); // Initial project manifest plus one task payload.
+    expect(api.writes, 3); // Project, part catalogue and one task payload.
   });
 
   test('paused saves and legacy unqueued edits submit after synchronization resumes', () async {

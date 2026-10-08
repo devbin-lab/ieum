@@ -8,6 +8,9 @@ import 'package:ieum_flutter/app.dart';
 import 'package:ieum_flutter/github_sync.dart';
 import 'package:ieum_flutter/store.dart';
 
+import 'v020_store_test.dart' as workflow_fixtures;
+import 'part_workflow_test_fixtures.dart' show personalReviewProject;
+
 void main() {
   final seed =
       jsonDecode(File('assets/demo-snapshot.json').readAsStringSync())['tasks']
@@ -135,7 +138,7 @@ void main() {
     await tester.tap(find.text('프로그래밍').last);
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('task-assignee-dev')), findsOneWidget);
-    expect(find.byKey(const ValueKey('task-reviewer-pm')), findsOneWidget);
+    expect(find.byKey(const ValueKey('task-reviewer-pm')), findsNothing);
     await tester.enterText(find.byKey(const Key('task-due')), '2026-10-12');
     await tester.enterText(find.byKey(const Key('task-description')), '동작 검증');
     await tester.tap(find.byKey(const Key('task-save')));
@@ -156,40 +159,75 @@ void main() {
     expect(tester.takeException(), isNull);
   });
   testWidgets(
-    'kanban drag, review, rework and approval work without native desktop input',
+    'project Kanban uses manual progress and locked handoff with comments',
     (tester) async {
+      const project = personalReviewProject;
+      store.dispose();
+      store = TaskStore(
+        ':memory:',
+        project: project,
+        identity: workflow_fixtures.worker,
+      );
+      final task = store.save({
+        ...workflow_fixtures.draft(),
+        'lockedBy': workflow_fixtures.worker.id,
+      });
       await setup(tester, const Size(1480, 940));
-      store.setProfile('pm');
-      await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('view-kanban')));
       await tester.pumpAndSettle();
-      final start = tester.getCenter(find.byKey(const Key('card-IE-101')));
+      final card = find.byKey(Key('card-${task.id}'));
+      final start = tester.getCenter(card);
       final target =
           tester.getTopLeft(find.byKey(const Key('column-doing'))) +
           const Offset(80, 60);
       await tester.dragFrom(start, target - start);
       await tester.pumpAndSettle();
-      expect(store.find('IE-101').status, 'doing');
-      await tester.tap(find.byKey(const Key('card-IE-101')));
+      expect(store.find(task.id).status, 'todo');
+      await tester.tap(find.byKey(const Key('task-handoff-confirm')));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('검토 요청').last);
+      expect(store.find(task.id).status, 'doing');
+      expect(find.byKey(const Key('column-review')), findsNothing);
+      expect(find.byKey(const Key('column-rework')), findsNothing);
+      final current = store.find(task.id);
+      store.confirmHandoff(
+        store.planHandoff(
+          current,
+          current.status,
+          routeId: 'manual-handoff',
+          receiverPerson: workflow_fixtures.reviewer.id,
+        ),
+      );
       await tester.pumpAndSettle();
-      expect(store.find('IE-101').currentId, 'pm');
-      await tester.tap(find.text('재작업 요청').last);
+      await tester.tap(card);
       await tester.pumpAndSettle();
-      await tester.enterText(find.byKey(const Key('rework-reason')), '검토 의견');
+      expect(find.text('작업 수정'), findsNothing);
+      expect(find.text('반려하여 전달'), findsNothing);
+      store.setMeta('profile', workflow_fixtures.reviewer.id);
+      store.updateProject(project);
       await tester.pumpAndSettle();
-      await tester.tap(find.widgetWithText(FilledButton, '재작업 요청'));
+      expect(find.text('작업 수정'), findsOneWidget);
+      store.addTaskComment(
+        task.id,
+        '검토 의견',
+        expectedVersion: store.find(task.id).version,
+      );
       await tester.pumpAndSettle();
-      expect(store.find('IE-101').status, 'rework');
-      await tester.tap(find.text('작업 시작').last);
+      final complete = find.byKey(
+        Key('task-handoff-detail-${task.id}-approve-done-manual-finish'),
+      );
+      await tester.scrollUntilVisible(
+        complete,
+        150,
+        scrollable: find.byType(Scrollable).last,
+      );
+      await tester.tap(complete);
       await tester.pumpAndSettle();
-      await tester.tap(find.text('검토 요청').last);
+      expect(store.find(task.id).status, 'doing');
+      await tester.tap(find.byKey(const Key('task-handoff-confirm')));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('완료 승인').last);
-      await tester.pumpAndSettle();
-      expect(store.find('IE-101').status, 'done');
-      expect(store.find('IE-101').completedDate, isNotEmpty);
+      expect(store.find(task.id).status, 'done');
+      expect(store.find(task.id).completedDate, isNotEmpty);
+      expect(store.find(task.id).comments.single['text'], '검토 의견');
       expect(tester.takeException(), isNull);
     },
   );
@@ -212,13 +250,16 @@ void main() {
         const Offset(80, 60);
     await tester.dragFrom(start, target - start);
     await tester.pumpAndSettle();
+    expect(store.find('IE-101').status, 'todo');
+    await tester.tap(find.byKey(const Key('task-handoff-confirm')));
+    await tester.pumpAndSettle();
     expect(store.find('IE-101').status, 'doing');
     await tester.tap(find.byKey(const Key('view-list')));
     await tester.pumpAndSettle();
     final table = tester.widget<DataTable>(find.byType(DataTable));
     expect(table.rows, hasLength(1));
     expect(
-      find.descendant(of: find.byType(DataTable), matching: find.text('진행 중')),
+      find.descendant(of: find.byType(DataTable), matching: find.text('진행중')),
       findsOneWidget,
     );
     expect(find.text('1개 작업 · 자동 저장'), findsOneWidget);
@@ -251,16 +292,22 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byKey(const ValueKey('filter-QA')), findsOneWidget);
       final expected = store.tasks.where((t) => t.part == 'QA').length;
-      expect(
-        tester.widget<DataTable>(find.byType(DataTable)).rows,
-        hasLength(expected),
-      );
+      if (expected == 0) {
+        expect(find.text('표시할 작업이 없습니다'), findsOneWidget);
+        expect(find.byType(DataTable), findsNothing);
+      } else {
+        expect(
+          tester.widget<DataTable>(find.byType(DataTable)).rows,
+          hasLength(expected),
+        );
+      }
 
       await tester.tap(find.byTooltip('알림 미리보기'));
       await tester.pumpAndSettle();
-      expect(find.text('알림 미리보기'), findsOneWidget);
+      expect(find.byKey(const Key('notification-filter-bar')), findsOneWidget);
+      expect(find.byType(AlertDialog), findsNothing);
       expect(tester.takeException(), isNull);
-      await tester.tap(find.text('닫기'));
+      await tester.tap(find.byKey(const Key('project-home')));
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('new-task')));
       await tester.pumpAndSettle();
