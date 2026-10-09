@@ -107,7 +107,7 @@ Windows 앱의 **프로젝트 설정 → 알림**에서 Incoming Webhook으로 �
 
 기기를 해제하려면 일시 중지한 채널까지 포함해 Discord의 기존 웹훅을 삭제하고 새 URL을 등록해야 이미 전달한 토큰을 차단할 수 있습니다. 이음에서 채널 연결을 해제하는 것만으로 Discord 웹훅·채널·메시지를 삭제하지는 않습니다.
 
-현재 Discord 자격 증명 보관과 기기 전송 잠금의 네이티브 구현 범위는 **Windows**입니다. Linux에서 같은 연결 기능을 지원한다고 보장하지 않습니다. 자세한 운영·보존 정책은 [Discord 채널 알림 설계](../docs/discord-webhook-design.md)를 참고하세요.
+현재 Discord 자격 증명 보관과 기기 전송 잠금의 네이티브 구현 범위는 **Windows**입니다. 이 항목은 로컬 개발본에 구현된 기능이며, 공개 소스와 새 배포본 반영은 별도로 진행합니다. Linux에서 같은 연결 기능을 지원한다고 보장하지 않습니다. 자세한 운영·보존 정책은 [Discord 채널 알림 설계](../docs/discord-webhook-design.md)를 참고하세요.
 
 ## 동기화와 로컬 데이터
 
@@ -138,7 +138,7 @@ Windows EXE 런처는 GitHub의 정식 Releases에서 업데이트를 확인합�
 ```powershell
 flutter pub get
 flutter analyze
-flutter test test/retired_settings_migration_test.dart test/task_resources_test.dart
+flutter test test/task_resources_test.dart
 .\build-windows.ps1
 .\package-windows.ps1
 ```
