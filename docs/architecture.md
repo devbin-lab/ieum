@@ -1,4 +1,6 @@
-# 이음 기본 구조
+# Electron 프로토타입 구조 (보관용)
+
+이 문서는 기존 Electron 예시 버전의 구조를 보관합니다. 현재 개발 대상은 Flutter Windows 앱이며, 아래 상태·파트·데이터 구조는 현재 앱과 다를 수 있습니다. 기존 Discord 봇·서버·Actions 계획은 폐기했습니다. 현재 [Discord 웹훅 설계](discord-webhook-design.md)와 [철거 현황](discord-bot-retirement.md)을 참고하세요.
 
 ```mermaid
 flowchart LR
@@ -67,4 +69,4 @@ renderer는 Node와 파일 시스템에 직접 접근하지 않습니다. contex
 
 ## 다음 구현 경계
 
-GitHub 인증·개인 브랜치·PR 작성·CI 검증, 프로젝트/사용자 설정, 충돌 해결 UI, 삭제 정책, 후속 작업 생성, Discord 전송기를 순서대로 추가합니다. AI는 변경 해석과 충돌 해결안 제시에 사용할 수 있으나 동일 항목의 충돌을 자동으로 임의 확정하지 않습니다. Discord는 main 통합 후 이벤트 ID를 기준으로 한 번 전송하며, 봇 버튼을 통한 상태 변경도 원래의 권한·전환 규칙을 따르도록 설계합니다. 서버 없이 즉시 전송을 보장하려면 실행 주체(예: GitHub Actions)의 가용성과 비용·토큰 관리가 추가로 검토되어야 합니다.
+이 절의 Electron 후속 구현 계획은 보관용입니다. GitHub 인증·개인 브랜치·PR 작성·프로젝트 설정·작업 관리의 현재 구현은 Flutter 소스를 기준으로 확인합니다. Discord 봇 버튼과 GitHub Actions를 통한 전송 계획은 사용하지 않으며, 새로운 전송 범위와 한계는 [웹훅 설계](discord-webhook-design.md)에 정의합니다.
