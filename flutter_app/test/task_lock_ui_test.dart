@@ -25,7 +25,9 @@ void main() {
     addTearDown(tester.view.resetDevicePixelRatio);
   }
 
-  testWidgets('creation checkbox locks the task to its author', (tester) async {
+  testWidgets('creation lock selection locks the task to its author', (
+    tester,
+  ) async {
     size(tester, const Size(1024, 900));
     final store = storeFor(routeWorker);
     await tester.pumpWidget(
@@ -48,6 +50,9 @@ void main() {
     await tester.enterText(find.byKey(const Key('task-title')), '잠근 작업 등록');
     await tester.ensureVisible(find.byKey(const Key('task-create-lock')));
     await tester.tap(find.byKey(const Key('task-create-lock')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('option-creator')));
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('task-save')));
     await tester.pumpAndSettle();
     expect(store.tasks.single.lockedBy, routeWorker.id);
@@ -60,10 +65,12 @@ void main() {
     (tester) async {
       size(tester, const Size(360, 540));
       final store = storeFor(routeWorker);
-      final task = store.save({...draft(), 'lockedBy': routeWorker.id});
+      var task = store.save({...draft(), 'lockedBy': routeWorker.id});
+      store.transition(task.id, 'doing', expectedVersion: task.version);
+      task = store.find(task.id);
       final plan = store.planHandoff(
         task,
-        task.status,
+        'todo',
         routeId: 'manual-handoff',
         receiverGroup: 'part:role-pd',
       );

@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ieum_flutter/models.dart';
@@ -79,7 +81,7 @@ void main() {
     await tester.enterText(find.byKey(const Key('schedule-search')), '없음');
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('schedule-agenda-TASK-dated')), findsNothing);
-    expect(find.text('이 날짜에 예정된 작업이 없습니다.'), findsOneWidget);
+    expect(find.text('예정된 작업이 없습니다.'), findsOneWidget);
     expect(store.tasks.length, originalCount);
     expect(store.changes, originalChanges);
     expect(tester.takeException(), isNull);
@@ -129,6 +131,158 @@ void main() {
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
     expect(store.tasks.length, 2);
+  });
+
+  testWidgets(
+    'schedule list and filter reset remain projections of real tasks',
+    (tester) async {
+      await size(tester, const Size(1280, 840));
+      final now = DateTime.now();
+      store.put(task('TASK-list', due: date(now), title: '이번 달 작업'));
+      store.put(task('TASK-undated', title: '마감 미정 작업'));
+      final originalChanges = store.changes;
+      WorkTask? opened;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: ProjectScheduleView(
+              store: store,
+              onOpenTask: (task) => opened = task,
+              onEditTask: (_) {},
+              onCreateTask: (_) {},
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('목록'));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('schedule-list-TASK-list')), findsOneWidget);
+      expect(
+        find.byKey(const Key('schedule-list-TASK-undated')),
+        findsOneWidget,
+      );
+      await tester.tap(find.byKey(const Key('schedule-list-TASK-list')));
+      expect(opened?.id, 'TASK-list');
+      await tester.enterText(find.byKey(const Key('schedule-search')), '없는 작업');
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('schedule-list-TASK-list')), findsNothing);
+      await tester.tap(find.byKey(const Key('schedule-reset')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('schedule-list-TASK-list')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('schedule-next-month')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('schedule-list-TASK-list')), findsNothing);
+      expect(
+        find.byKey(const Key('schedule-list-TASK-undated')),
+        findsOneWidget,
+      );
+      await tester.tap(find.byKey(const Key('schedule-today')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('schedule-list-TASK-list')), findsOneWidget);
+      expect(store.tasks.length, 2);
+      expect(store.changes, originalChanges);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('schedule restores its view and focuses a notified task', (
+    tester,
+  ) async {
+    await size(tester, const Size(1280, 840));
+    store.put(
+      WorkTask.fromJson({
+        ...task(
+          'TASK-focused',
+          assigned: '2027-03-12',
+          due: '2027-03-16',
+          title: '알림에서 연 완료 작업',
+        ).data,
+        'status': 'done',
+      }),
+    );
+    store.put(task('TASK-next', assigned: '2027-04-20', due: '2027-04-22'));
+    final originalChanges = store.changes;
+    DateTime? created;
+    Widget view({String? focusTaskId}) => MaterialApp(
+      home: Scaffold(
+        body: ProjectScheduleView(
+          key: const Key('persistent-schedule'),
+          store: store,
+          focusTaskId: focusTaskId,
+          onOpenTask: (_) {},
+          onEditTask: (_) {},
+          onCreateTask: (day) => created = day,
+        ),
+      ),
+    );
+    await tester.pumpWidget(view());
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('목록'));
+    await tester.tap(find.byKey(const Key('schedule-next-month')));
+    await tester.tap(find.byKey(const Key('schedule-mine')));
+    await tester.enterText(find.byKey(const Key('schedule-search')), '없는 작업');
+    await tester.pumpAndSettle();
+    final saved = jsonDecode(store.meta('ui.schedule')) as Map;
+    final savedMonth = DateTime.parse(saved['month'] as String);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpWidget(view());
+    await tester.pumpAndSettle();
+    expect(jsonDecode(store.meta('ui.schedule'))['mode'], 'list');
+    expect(
+      find.text('${savedMonth.year}년 ${savedMonth.month}월'),
+      findsOneWidget,
+    );
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const Key('schedule-search')))
+          .controller!
+          .text,
+      '없는 작업',
+    );
+    expect(
+      tester
+          .widget<FilterChip>(find.byKey(const Key('schedule-mine')))
+          .selected,
+      isTrue,
+    );
+
+    await tester.pumpWidget(view(focusTaskId: 'TASK-focused'));
+    await tester.pumpAndSettle();
+    expect(find.text('2027년 3월'), findsOneWidget);
+    expect(find.byKey(const Key('schedule-list-TASK-focused')), findsOneWidget);
+    expect(jsonDecode(store.meta('ui.schedule'))['mode'], 'list');
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const Key('schedule-search')))
+          .controller!
+          .text,
+      isEmpty,
+    );
+    expect(
+      tester
+          .widget<FilterChip>(find.byKey(const Key('schedule-mine')))
+          .selected,
+      isFalse,
+    );
+    expect(
+      tester
+          .widget<FilterChip>(find.byKey(const Key('schedule-completed')))
+          .selected,
+      isTrue,
+    );
+    await tester.tap(find.byKey(const Key('schedule-create')));
+    expect(date(created!), '2027-03-12');
+
+    await tester.pumpWidget(view(focusTaskId: 'TASK-next'));
+    await tester.pumpAndSettle();
+    expect(find.text('2027년 4월'), findsOneWidget);
+    expect(find.byKey(const Key('schedule-list-TASK-next')), findsOneWidget);
+    expect(jsonDecode(store.meta('ui.schedule'))['mode'], 'list');
+    expect(store.tasks.length, 2);
+    expect(store.changes, originalChanges);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('compact workflow switches state and canvas without overflow', (

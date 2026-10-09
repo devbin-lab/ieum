@@ -1,17 +1,16 @@
+import 'app_localizations.dart';
+
+import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
 import 'models.dart';
 import 'store.dart';
+import 'workspace_ui.dart';
+import 'work_status_palette.dart' as work_palette;
 
-const _ink = Color(0xff293445),
-    _muted = Color(0xff748091),
-    _line = Color(0xffe6eaf0),
-    _accent = Color(0xff7468c5),
-    _surface = Color(0xfff7f9fc);
-
-enum _ScheduleMode { calendar, timeline }
+enum _ScheduleMode { calendar, timeline, list }
 
 /// A projection of project tasks: opening the schedule never creates records.
 class ProjectScheduleView extends StatefulWidget {
@@ -21,11 +20,13 @@ class ProjectScheduleView extends StatefulWidget {
     required this.onOpenTask,
     required this.onEditTask,
     required this.onCreateTask,
+    this.focusTaskId,
   });
 
   final TaskStore store;
   final ValueChanged<WorkTask> onOpenTask, onEditTask;
   final ValueChanged<DateTime> onCreateTask;
+  final String? focusTaskId;
 
   @override
   State<ProjectScheduleView> createState() => _ProjectScheduleViewState();
@@ -38,6 +39,122 @@ class _ProjectScheduleViewState extends State<ProjectScheduleView> {
   late DateTime month = DateTime(selected.year, selected.month);
   _ScheduleMode mode = _ScheduleMode.calendar;
   bool mine = false, showCompleted = false;
+  String? _pendingTaskFocus;
+
+  @override
+  void initState() {
+    super.initState();
+    _restoreView();
+    widget.store.addListener(_onStoreChanged);
+    _requestTaskFocus();
+  }
+
+  @override
+  void didUpdateWidget(covariant ProjectScheduleView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final storeChanged = oldWidget.store != widget.store;
+    if (storeChanged) {
+      oldWidget.store.removeListener(_onStoreChanged);
+      widget.store.addListener(_onStoreChanged);
+      _restoreView();
+    }
+    if (storeChanged || oldWidget.focusTaskId != widget.focusTaskId) {
+      _requestTaskFocus();
+    }
+  }
+
+  void _restoreView() {
+    selected = _day(DateTime.now());
+    month = DateTime(selected.year, selected.month);
+    mode = _ScheduleMode.calendar;
+    mine = false;
+    showCompleted = false;
+    search.clear();
+    final raw = widget.store.meta('ui.schedule');
+    if (raw.isEmpty) return;
+    try {
+      final saved = jsonDecode(raw);
+      if (saved is! Map) return;
+      mode =
+          _ScheduleMode.values
+              .where((value) => value.name == saved['mode'])
+              .firstOrNull ??
+          _ScheduleMode.calendar;
+      final savedDay = DateTime.tryParse('${saved['selected'] ?? ''}');
+      if (savedDay != null) selected = _day(savedDay);
+      final savedMonth = DateTime.tryParse('${saved['month'] ?? ''}');
+      month = savedMonth == null
+          ? DateTime(selected.year, selected.month)
+          : DateTime(savedMonth.year, savedMonth.month);
+      mine = saved['mine'] == true;
+      showCompleted = saved['showCompleted'] == true;
+      if (saved['search'] is String) search.text = saved['search'] as String;
+    } on FormatException {
+      // A stale local preference must not prevent the schedule from opening.
+    }
+  }
+
+  void _saveView() => widget.store.setMeta(
+    'ui.schedule',
+    jsonEncode({
+      'mode': mode.name,
+      'selected': _date(selected),
+      'month': _date(month),
+      'mine': mine,
+      'showCompleted': showCompleted,
+      'search': search.text,
+    }),
+  );
+
+  void _changeView(VoidCallback change) {
+    setState(change);
+    _saveView();
+  }
+
+  void _requestTaskFocus() {
+    _pendingTaskFocus = widget.focusTaskId;
+    _focusTask();
+  }
+
+  void _onStoreChanged() {
+    if (_pendingTaskFocus == null || !mounted) return;
+    if (_focusTask()) setState(() {});
+  }
+
+  bool _focusTask() {
+    final id = _pendingTaskFocus;
+    if (id == null || id.isEmpty) return false;
+    final task = widget.store.tasks.where((task) => task.id == id).firstOrNull;
+    if (task == null) return false;
+    _pendingTaskFocus = null;
+    if (task.isDropped || task.isArchived) return false;
+    final focusDate =
+        DateTime.tryParse(task.assignedDate) ?? _due(task) ?? selected;
+    selected = _day(focusDate);
+    month = DateTime(selected.year, selected.month);
+    if (mine && !_isMine(task)) mine = false;
+    if (widget.store.isCompleted(task)) showCompleted = true;
+    final query = search.text.trim().toLowerCase();
+    if (query.isNotEmpty &&
+        !'${task.title} ${task.id} ${task.part}'.toLowerCase().contains(
+          query,
+        )) {
+      search.clear();
+    }
+    _saveView();
+    if (mode == _ScheduleMode.timeline) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || !timelineHorizontal.hasClients) return;
+        timelineHorizontal.jumpTo(
+          ((selected.day - 1) * 34.0).clamp(
+            0.0,
+            timelineHorizontal.position.maxScrollExtent,
+          ),
+        );
+      });
+    }
+    return true;
+  }
 
   static DateTime _day(DateTime value) =>
       DateTime(value.year, value.month, value.day);
@@ -45,6 +162,24 @@ class _ProjectScheduleViewState extends State<ProjectScheduleView> {
       '${value.year.toString().padLeft(4, '0')}-'
       '${value.month.toString().padLeft(2, '0')}-'
       '${value.day.toString().padLeft(2, '0')}';
+  static String _displayDate(String value) {
+    final date = DateTime.tryParse(value);
+    return date == null
+        ? value
+        : '${date.year}.${date.month.toString().padLeft(2, '0')}.'
+              '${date.day.toString().padLeft(2, '0')}';
+  }
+
+  static String _taskReference(String id) =>
+      id.startsWith('TASK-') && id.length >= 6
+      ? 'IE-${id.substring(id.length - 6).toUpperCase()}'
+      : id;
+
+  String _period(WorkTask task) => task.dueDate.isEmpty
+      ? tr('{v0} · 마감 미정', args: {'v0': _displayDate(task.assignedDate)})
+      : task.assignedDate == task.dueDate
+      ? _displayDate(task.dueDate)
+      : '${_displayDate(task.assignedDate)} – ${_displayDate(task.dueDate)}';
   bool _sameDay(DateTime a, DateTime b) =>
       a.year == b.year && a.month == b.month && a.day == b.day;
   DateTime? _due(WorkTask task) => DateTime.tryParse(task.dueDate);
@@ -55,12 +190,13 @@ class _ProjectScheduleViewState extends State<ProjectScheduleView> {
 
   @override
   void dispose() {
+    widget.store.removeListener(_onStoreChanged);
     search.dispose();
     timelineHorizontal.dispose();
     super.dispose();
   }
 
-  void _moveMonth(int step) => setState(() {
+  void _moveMonth(int step) => _changeView(() {
     month = DateTime(month.year, month.month + step);
     selected = DateTime(
       month.year,
@@ -69,7 +205,7 @@ class _ProjectScheduleViewState extends State<ProjectScheduleView> {
     );
   });
 
-  void _today() => setState(() {
+  void _today() => _changeView(() {
     selected = _day(DateTime.now());
     month = DateTime(selected.year, selected.month);
   });
@@ -81,7 +217,8 @@ class _ProjectScheduleViewState extends State<ProjectScheduleView> {
       final query = search.text.trim().toLowerCase();
       final tasks =
           widget.store.tasks.where((task) {
-            return (task.data['archivedAt'] as String? ?? '').isEmpty &&
+            return !task.isDropped &&
+                (task.data['archivedAt'] as String? ?? '').isEmpty &&
                 (showCompleted || !widget.store.isCompleted(task)) &&
                 (!mine || _isMine(task)) &&
                 (query.isEmpty ||
@@ -96,10 +233,10 @@ class _ProjectScheduleViewState extends State<ProjectScheduleView> {
           });
       return Material(
         key: const Key('schedule-content'),
-        color: Colors.white,
+        color: WorkspaceUi.colors(context).surface,
         child: LayoutBuilder(
           builder: (context, bounds) {
-            final inset = bounds.maxWidth < 700 ? 16.0 : 28.0;
+            final inset = bounds.maxWidth < 700 ? 16.0 : 24.0;
             return Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
@@ -109,16 +246,18 @@ class _ProjectScheduleViewState extends State<ProjectScheduleView> {
                   ),
                   child: SingleChildScrollView(
                     child: Padding(
-                      padding: EdgeInsets.fromLTRB(inset, 22, inset, 18),
+                      padding: EdgeInsets.fromLTRB(inset, 20, inset, 14),
                       child: _header(tasks, bounds.maxWidth - inset * 2),
                     ),
                   ),
                 ),
-                const Divider(height: 1, color: _line),
+                Divider(height: 1, color: WorkspaceUi.colors(context).line),
                 Expanded(
-                  child: mode == _ScheduleMode.calendar
-                      ? _calendar(tasks, bounds.maxWidth)
-                      : _timeline(tasks),
+                  child: switch (mode) {
+                    _ScheduleMode.calendar => _calendar(tasks, bounds.maxWidth),
+                    _ScheduleMode.timeline => _timeline(tasks),
+                    _ScheduleMode.list => _list(tasks),
+                  },
                 ),
               ],
             );
@@ -131,138 +270,218 @@ class _ProjectScheduleViewState extends State<ProjectScheduleView> {
   Widget _header(List<WorkTask> tasks, double width) => Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
-      Wrap(
-        spacing: 16,
-        runSpacing: 10,
-        crossAxisAlignment: WrapCrossAlignment.center,
-        children: [
-          const Text(
-            '일정',
-            style: TextStyle(
-              fontSize: 25,
-              fontWeight: FontWeight.w700,
-              color: _ink,
-            ),
-          ),
-          Text(
-            '${tasks.length}개 작업 · 지연 ${tasks.where(_overdue).length}개',
-            style: const TextStyle(fontSize: 12, color: _muted),
-          ),
+      WorkspacePageHeader(
+        title: tr('일정'),
+        contextLabel: widget.store.project?.name ?? tr('프로젝트'),
+        actions: [
           if (widget.store.canCreate)
             FilledButton.icon(
               key: const Key('schedule-create'),
               onPressed: () => widget.onCreateTask(selected),
               icon: const Icon(Icons.add_rounded, size: 17),
-              label: const Text('작업 등록'),
+              label: Text(tr('새 작업')),
             ),
         ],
       ),
-      const SizedBox(height: 18),
-      Wrap(
-        spacing: 14,
-        runSpacing: 12,
-        crossAxisAlignment: WrapCrossAlignment.center,
-        children: [
-          SizedBox(
-            width: math.min(width, 270),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    '${month.year}년 ${month.month}월',
-                    key: const Key('schedule-month'),
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontSize: 17,
-                      fontWeight: FontWeight.w600,
-                      color: _ink,
-                    ),
+      const SizedBox(height: 16),
+      if (width >= 740)
+        Row(children: [_dateNavigation(), const Spacer(), _viewSwitcher()])
+      else
+        Wrap(
+          spacing: 16,
+          runSpacing: 12,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [_dateNavigation(), _viewSwitcher()],
+        ),
+      const SizedBox(height: 12),
+      Divider(height: 1, color: WorkspaceUi.colors(context).line),
+      const SizedBox(height: 10),
+      _filterBar(tasks, width),
+    ],
+  );
+
+  Widget _filterBar(List<WorkTask> tasks, double width) {
+    final controls = <Widget>[
+      SizedBox(
+        width: math.min(width, 264),
+        child: TextField(
+          key: const Key('schedule-search'),
+          controller: search,
+          onChanged: (_) => _changeView(() {}),
+          style: const TextStyle(fontSize: 12),
+          decoration: InputDecoration(
+            hintText: tr('작업 검색'),
+            isDense: true,
+            prefixIcon: const Icon(Icons.search_rounded, size: 18),
+            suffixIcon: search.text.isEmpty
+                ? null
+                : IconButton(
+                    tooltip: tr('검색어 지우기'),
+                    onPressed: () => _changeView(search.clear),
+                    icon: const Icon(Icons.close_rounded, size: 16),
                   ),
-                ),
-                IconButton(
-                  key: const Key('schedule-previous-month'),
-                  tooltip: '이전 달',
-                  visualDensity: VisualDensity.compact,
-                  onPressed: () => _moveMonth(-1),
-                  icon: const Icon(Icons.chevron_left_rounded, size: 20),
-                ),
-                IconButton(
-                  key: const Key('schedule-next-month'),
-                  tooltip: '다음 달',
-                  visualDensity: VisualDensity.compact,
-                  onPressed: () => _moveMonth(1),
-                  icon: const Icon(Icons.chevron_right_rounded, size: 20),
-                ),
-                TextButton(onPressed: _today, child: const Text('오늘')),
-              ],
+          ),
+        ),
+      ),
+      _scheduleFilter(
+        key: const Key('schedule-mine'),
+        label: tr('내 일정'),
+        selected: mine,
+        onSelected: (value) => _changeView(() => mine = value),
+      ),
+      _scheduleFilter(
+        key: const Key('schedule-completed'),
+        label: tr('완료 포함'),
+        selected: showCompleted,
+        onSelected: (value) => _changeView(() => showCompleted = value),
+      ),
+      if (search.text.isNotEmpty || mine || showCompleted)
+        TextButton(
+          key: const Key('schedule-reset'),
+          onPressed: () => _changeView(() {
+            search.clear();
+            mine = false;
+            showCompleted = false;
+          }),
+          child: Text(tr('초기화')),
+        ),
+    ];
+    final overdue = tasks.where(_overdue).length;
+    final summary = Text(
+      tr(
+        '{v0}개 작업{v1}',
+        args: {
+          'v0': tasks.length,
+          'v1': overdue > 0 ? tr(' · 지연 {v0}개', args: {'v0': overdue}) : '',
+        },
+      ),
+      style: WorkspaceUi.captionStyleOf(context),
+    );
+    if (width >= 800) {
+      return Row(
+        children: [
+          Expanded(
+            child: Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: controls,
             ),
           ),
-          SegmentedButton<_ScheduleMode>(
-            key: const Key('schedule-mode'),
-            showSelectedIcon: false,
-            segments: const [
-              ButtonSegment(
-                value: _ScheduleMode.calendar,
-                icon: Icon(Icons.calendar_month_outlined, size: 17),
-                label: Text('달력'),
-              ),
-              ButtonSegment(
-                value: _ScheduleMode.timeline,
-                icon: Icon(Icons.view_timeline_outlined, size: 17),
-                label: Text('타임라인'),
-              ),
-            ],
-            selected: {mode},
-            onSelectionChanged: (value) => setState(() => mode = value.first),
-            style: SegmentedButton.styleFrom(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              textStyle: const TextStyle(fontSize: 12),
-              foregroundColor: _muted,
-              selectedForegroundColor: _accent,
-              selectedBackgroundColor: const Color(0xfff0edfb),
-              side: const BorderSide(color: _line),
-            ),
-          ),
-          SizedBox(
-            width: math.min(width, 230),
-            child: TextField(
-              key: const Key('schedule-search'),
-              controller: search,
-              onChanged: (_) => setState(() {}),
-              style: const TextStyle(fontSize: 12),
-              decoration: InputDecoration(
-                hintText: '일정 검색',
-                isDense: true,
-                prefixIcon: const Icon(Icons.search_rounded, size: 18),
-                suffixIcon: search.text.isEmpty
-                    ? null
-                    : IconButton(
-                        tooltip: '검색 초기화',
-                        onPressed: () => setState(search.clear),
-                        icon: const Icon(Icons.close_rounded, size: 16),
-                      ),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(9),
-                  borderSide: const BorderSide(color: _line),
-                ),
-              ),
-            ),
-          ),
-          FilterChip(
-            key: const Key('schedule-mine'),
-            label: const Text('내 일정'),
-            selected: mine,
-            onSelected: (value) => setState(() => mine = value),
-          ),
-          FilterChip(
-            key: const Key('schedule-completed'),
-            label: const Text('완료 포함'),
-            selected: showCompleted,
-            onSelected: (value) => setState(() => showCompleted = value),
-          ),
+          const SizedBox(width: 16),
+          summary,
         ],
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: controls,
+        ),
+        const SizedBox(height: 10),
+        summary,
+      ],
+    );
+  }
+
+  Widget _dateNavigation() => Row(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      IconButton(
+        key: const Key('schedule-previous-month'),
+        tooltip: tr('이전 달'),
+        constraints: const BoxConstraints.tightFor(width: 36, height: 36),
+        padding: EdgeInsets.zero,
+        onPressed: () => _moveMonth(-1),
+        icon: const Icon(Icons.chevron_left_rounded, size: 20),
+      ),
+      SizedBox(
+        width: 132,
+        child: Text(
+          tr('{v0}년 {v1}월', args: {'v0': month.year, 'v1': month.month}),
+          key: const Key('schedule-month'),
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            fontSize: 17,
+            fontWeight: FontWeight.w600,
+            color: WorkspaceUi.colors(context).ink,
+          ),
+        ),
+      ),
+      IconButton(
+        key: const Key('schedule-next-month'),
+        tooltip: tr('다음 달'),
+        constraints: const BoxConstraints.tightFor(width: 36, height: 36),
+        padding: EdgeInsets.zero,
+        onPressed: () => _moveMonth(1),
+        icon: const Icon(Icons.chevron_right_rounded, size: 20),
+      ),
+      const SizedBox(width: 8),
+      OutlinedButton(
+        key: const Key('schedule-today'),
+        onPressed: _today,
+        child: Text(tr('오늘')),
       ),
     ],
+  );
+
+  Widget _viewSwitcher() => SegmentedButton<_ScheduleMode>(
+    key: const Key('schedule-mode'),
+    showSelectedIcon: false,
+    segments: [
+      ButtonSegment(
+        value: _ScheduleMode.calendar,
+        icon: Icon(Icons.calendar_month_outlined, size: 16),
+        label: Text(tr('달력')),
+      ),
+      ButtonSegment(
+        value: _ScheduleMode.timeline,
+        icon: Icon(Icons.view_timeline_outlined, size: 16),
+        label: Text(tr('타임라인')),
+      ),
+      ButtonSegment(
+        value: _ScheduleMode.list,
+        icon: Icon(Icons.format_list_bulleted_rounded, size: 16),
+        label: Text(tr('목록')),
+      ),
+    ],
+    selected: {mode},
+    onSelectionChanged: (value) => _changeView(() => mode = value.first),
+    style: SegmentedButton.styleFrom(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+      textStyle: const TextStyle(fontFamily: 'Malgun Gothic', fontSize: 12),
+      foregroundColor: WorkspaceUi.colors(context).muted,
+      selectedForegroundColor: WorkspaceUi.colors(context).ink,
+      selectedBackgroundColor: WorkspaceUi.colors(context).accentSurface,
+      side: BorderSide(color: WorkspaceUi.colors(context).line),
+    ),
+  );
+
+  Widget _scheduleFilter({
+    required Key key,
+    required String label,
+    required bool selected,
+    required ValueChanged<bool> onSelected,
+  }) => FilterChip(
+    key: key,
+    label: Text(label, style: const TextStyle(fontSize: 12)),
+    selected: selected,
+    onSelected: onSelected,
+    shape: RoundedRectangleBorder(
+      side: BorderSide(
+        color: selected
+            ? WorkspaceUi.colors(context).accent.withValues(alpha: .35)
+            : WorkspaceUi.colors(context).line,
+      ),
+      borderRadius: BorderRadius.circular(8),
+    ),
+    backgroundColor: WorkspaceUi.colors(context).surface,
+    selectedColor: WorkspaceUi.colors(context).accentSurface,
+    checkmarkColor: WorkspaceUi.colors(context).accent,
   );
 
   Widget _calendar(List<WorkTask> tasks, double width) {
@@ -286,7 +505,7 @@ class _ProjectScheduleViewState extends State<ProjectScheduleView> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Expanded(child: SingleChildScrollView(child: calendar)),
-          const VerticalDivider(width: 1, color: _line),
+          VerticalDivider(width: 1, color: WorkspaceUi.colors(context).line),
           SizedBox(width: 330, child: _agenda(tasks)),
         ],
       );
@@ -309,21 +528,38 @@ class _ProjectScheduleViewState extends State<ProjectScheduleView> {
     final first = DateTime(month.year, month.month, 1);
     final start = first.subtract(Duration(days: first.weekday - 1));
     final today = _day(DateTime.now());
+    final colors = WorkspaceUi.colors(context);
+    const todayColor = Color(0xffd63b43);
+    final todaySurface = Color.alphaBlend(
+      todayColor.withValues(alpha: colors.isDark ? .14 : .07),
+      colors.surface,
+    );
     var previousLanes = <String, int>{};
     return Padding(
-      padding: EdgeInsets.all(narrow ? 12 : 20),
+      padding: EdgeInsets.fromLTRB(narrow ? 16 : 24, 14, narrow ? 16 : 24, 20),
       child: Column(
         children: [
           Row(
             children: [
-              for (final day in const ['월', '화', '수', '목', '금', '토', '일'])
+              for (final day in [
+                tr('월'),
+                tr('화'),
+                tr('수'),
+                tr('목'),
+                tr('금'),
+                tr('토'),
+                tr('일'),
+              ])
                 Expanded(
                   child: Padding(
                     padding: const EdgeInsets.symmetric(vertical: 10),
                     child: Text(
                       day,
                       textAlign: TextAlign.center,
-                      style: const TextStyle(fontSize: 11, color: _muted),
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: WorkspaceUi.colors(context).muted,
+                      ),
                     ),
                   ),
                 ),
@@ -332,8 +568,8 @@ class _ProjectScheduleViewState extends State<ProjectScheduleView> {
           Container(
             clipBehavior: Clip.antiAlias,
             decoration: BoxDecoration(
-              border: Border.all(color: _line),
-              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: WorkspaceUi.colors(context).line),
+              borderRadius: BorderRadius.circular(10),
             ),
             child: Column(
               children: List.generate(6, (week) {
@@ -381,13 +617,18 @@ class _ProjectScheduleViewState extends State<ProjectScheduleView> {
                                     .length;
                                 return Expanded(
                                   child: Semantics(
-                                    label:
-                                        '${_date(day)} 예정 ${entries.length}개',
+                                    label: tr(
+                                      '{v0} 예정 {v1}개',
+                                      args: {
+                                        'v0': _date(day),
+                                        'v1': entries.length,
+                                      },
+                                    ),
                                     selected: active,
                                     button: true,
                                     child: InkWell(
                                       key: Key('schedule-day-${_date(day)}'),
-                                      onTap: () => setState(() {
+                                      onTap: () => _changeView(() {
                                         selected = day;
                                         month = DateTime(day.year, day.month);
                                       }),
@@ -395,20 +636,28 @@ class _ProjectScheduleViewState extends State<ProjectScheduleView> {
                                         padding: EdgeInsets.all(narrow ? 3 : 7),
                                         decoration: BoxDecoration(
                                           color: active
-                                              ? const Color(0xfff2effb)
+                                              ? current
+                                                    ? todaySurface
+                                                    : colors.accentSurface
                                               : inMonth
-                                              ? Colors.white
-                                              : _surface,
+                                              ? WorkspaceUi.colors(context)
+                                                    .surface
+                                              : WorkspaceUi.colors(context)
+                                                    .background,
                                           border: Border(
                                             right: weekday == 6
                                                 ? BorderSide.none
-                                                : const BorderSide(
-                                                    color: _line,
+                                                : BorderSide(
+                                                    color: WorkspaceUi.colors(
+                                                      context,
+                                                    ).line,
                                                   ),
                                             bottom: week == 5
                                                 ? BorderSide.none
-                                                : const BorderSide(
-                                                    color: _line,
+                                                : BorderSide(
+                                                    color: WorkspaceUi.colors(
+                                                      context,
+                                                    ).line,
                                                   ),
                                           ),
                                         ),
@@ -423,10 +672,9 @@ class _ProjectScheduleViewState extends State<ProjectScheduleView> {
                                               alignment: Alignment.center,
                                               decoration: BoxDecoration(
                                                 color: current
-                                                    ? _accent
+                                                    ? todayColor
                                                     : Colors.transparent,
-                                                borderRadius:
-                                                    BorderRadius.circular(7),
+                                                shape: BoxShape.circle,
                                               ),
                                               child: Text(
                                                 '${day.day}',
@@ -438,8 +686,12 @@ class _ProjectScheduleViewState extends State<ProjectScheduleView> {
                                                   color: current
                                                       ? Colors.white
                                                       : inMonth
-                                                      ? _ink
-                                                      : _muted.withValues(
+                                                      ? WorkspaceUi.colors(
+                                                          context,
+                                                        ).ink
+                                                      : WorkspaceUi.colors(
+                                                          context,
+                                                        ).muted.withValues(
                                                           alpha: .45,
                                                         ),
                                                 ),
@@ -450,9 +702,11 @@ class _ProjectScheduleViewState extends State<ProjectScheduleView> {
                                               Text(
                                                 '+$hidden',
                                                 maxLines: 1,
-                                                style: const TextStyle(
+                                                style: TextStyle(
                                                   fontSize: 10,
-                                                  color: _muted,
+                                                  color: WorkspaceUi.colors(
+                                                    context,
+                                                  ).muted,
                                                 ),
                                               ),
                                           ],
@@ -492,14 +746,6 @@ class _ProjectScheduleViewState extends State<ProjectScheduleView> {
               }),
             ),
           ),
-          const SizedBox(height: 10),
-          const Align(
-            alignment: Alignment.centerLeft,
-            child: Text(
-              '지정일 ~ 마감일 · 날짜를 선택하면 해당 기간의 작업을 확인할 수 있습니다.',
-              style: TextStyle(fontSize: 11, color: _muted),
-            ),
-          ),
         ],
       ),
     );
@@ -519,11 +765,10 @@ class _ProjectScheduleViewState extends State<ProjectScheduleView> {
     return IgnorePointer(
       ignoring: narrow,
       child: Tooltip(
-        message:
-            '${task.title} · ${task.assignedDate} ~ ${task.dueDate.isEmpty ? '마감 미정' : task.dueDate}',
+        message: '${task.title}\n${_period(task)}',
         child: Material(
           key: Key('calendar-span-${task.id}-${_date(weekStart)}'),
-          color: Color.alphaBlend(color.withValues(alpha: .12), Colors.white),
+          color: _taskSurface(task),
           borderRadius: radius,
           clipBehavior: Clip.antiAlias,
           child: InkWell(
@@ -565,33 +810,34 @@ class _ProjectScheduleViewState extends State<ProjectScheduleView> {
     );
   }
 
-  Color _taskColor(WorkTask task) => widget.store.isCompleted(task)
-      ? const Color(0xff528d73)
-      : _overdue(task)
-      ? const Color(0xffb06a55)
-      : _accent;
+  Color _taskColor(WorkTask task) => work_palette.statusColor(
+    work_palette.workStatusKey(task, widget.store.project),
+    brightness: Theme.of(context).brightness,
+  );
+  Color _taskSurface(WorkTask task) => work_palette.stageSurfaceColor(
+    work_palette.workStatusKey(task, widget.store.project),
+    brightness: Theme.of(context).brightness,
+  );
 
   Widget _agendaHeading() => Padding(
-    padding: const EdgeInsets.fromLTRB(20, 22, 20, 12),
-    child: Row(
-      children: [
-        Expanded(
-          child: Text(
-            '${selected.month}월 ${selected.day}일',
-            style: const TextStyle(
-              fontSize: 17,
-              fontWeight: FontWeight.w600,
-              color: _ink,
-            ),
-          ),
-        ),
-        if (widget.store.canCreate)
-          IconButton(
-            tooltip: '선택한 날짜에 작업 등록',
-            onPressed: () => widget.onCreateTask(selected),
-            icon: const Icon(Icons.add_rounded, size: 19, color: _accent),
-          ),
-      ],
+    padding: const EdgeInsets.fromLTRB(24, 22, 24, 16),
+    child: WorkspaceSectionLabel(
+      title: tr(
+        '{v0}월 {v1}일 ({v2})',
+        args: {
+          'v0': selected.month,
+          'v1': selected.day,
+          'v2': [
+            tr('월'),
+            tr('화'),
+            tr('수'),
+            tr('목'),
+            tr('금'),
+            tr('토'),
+            tr('일'),
+          ][selected.weekday - 1],
+        },
+      ),
     ),
   );
 
@@ -610,12 +856,16 @@ class _ProjectScheduleViewState extends State<ProjectScheduleView> {
     final unscheduled = tasks.where((t) => t.dueDate.isEmpty).toList();
     return [
       if (dated.isEmpty)
-        const SliverToBoxAdapter(
+        SliverToBoxAdapter(
           child: Padding(
-            padding: EdgeInsets.fromLTRB(20, 8, 20, 28),
+            padding: EdgeInsets.fromLTRB(24, 4, 24, 24),
             child: Text(
-              '이 날짜에 예정된 작업이 없습니다.',
-              style: TextStyle(fontSize: 12, height: 1.6, color: _muted),
+              tr('예정된 작업이 없습니다.'),
+              style: TextStyle(
+                fontSize: 12,
+                height: 1.6,
+                color: WorkspaceUi.colors(context).muted,
+              ),
             ),
           ),
         ),
@@ -625,25 +875,28 @@ class _ProjectScheduleViewState extends State<ProjectScheduleView> {
       ),
       SliverToBoxAdapter(
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 24, 20, 12),
+          padding: const EdgeInsets.fromLTRB(24, 24, 24, 12),
           child: Text(
-            '마감 미정 · ${unscheduled.length}',
+            tr('마감 미정 · {v0}', args: {'v0': unscheduled.length}),
             key: const Key('schedule-undated-heading'),
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 12,
               fontWeight: FontWeight.w600,
-              color: _muted,
+              color: WorkspaceUi.colors(context).muted,
             ),
           ),
         ),
       ),
       if (unscheduled.isEmpty)
-        const SliverToBoxAdapter(
+        SliverToBoxAdapter(
           child: Padding(
-            padding: EdgeInsets.fromLTRB(20, 0, 20, 24),
+            padding: EdgeInsets.fromLTRB(24, 0, 24, 24),
             child: Text(
-              '마감일이 정해지지 않은 작업이 없습니다.',
-              style: TextStyle(fontSize: 12, color: _muted),
+              tr('마감 미정 작업이 없습니다.'),
+              style: TextStyle(
+                fontSize: 12,
+                color: WorkspaceUi.colors(context).muted,
+              ),
             ),
           ),
         ),
@@ -656,16 +909,16 @@ class _ProjectScheduleViewState extends State<ProjectScheduleView> {
   }
 
   Widget _agendaTask(WorkTask task) => Padding(
-    padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+    padding: const EdgeInsets.fromLTRB(24, 0, 24, 10),
     child: Material(
       key: Key('schedule-agenda-${task.id}'),
-      color: _surface,
+      color: _taskSurface(task),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
       clipBehavior: Clip.antiAlias,
       child: InkWell(
         onTap: () => widget.onOpenTask(task),
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(12, 12, 8, 12),
+          padding: const EdgeInsets.fromLTRB(14, 14, 10, 14),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -686,19 +939,29 @@ class _ProjectScheduleViewState extends State<ProjectScheduleView> {
                       task.title,
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 12,
-                        color: _ink,
-                        fontWeight: FontWeight.w500,
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: WorkspaceUi.colors(context).ink,
+                        fontWeight: FontWeight.w600,
                       ),
                     ),
                     const SizedBox(height: 6),
                     Text(
-                      '${widget.store.workflowStatusName(task.status)} · '
+                      '${trStageName(task.status, widget.store.workflowStatusName(task.status))} · '
                       '${widget.store.currentActorLabel(task)}',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontSize: 10, color: _muted),
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: WorkspaceUi.colors(context).muted,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      _period(task),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: WorkspaceUi.captionStyleOf(context),
                     ),
                   ],
                 ),
@@ -706,13 +969,190 @@ class _ProjectScheduleViewState extends State<ProjectScheduleView> {
               if (widget.store.canEdit(task))
                 IconButton(
                   key: Key('schedule-edit-${task.id}'),
-                  tooltip: '일정 수정',
+                  tooltip: tr('일정 수정'),
                   onPressed: () => widget.onEditTask(task),
                   visualDensity: VisualDensity.compact,
                   icon: const Icon(Icons.edit_calendar_outlined, size: 17),
                 ),
             ],
           ),
+        ),
+      ),
+    ),
+  );
+
+  Widget _list(List<WorkTask> tasks) {
+    final end = DateTime(month.year, month.month + 1, 0);
+    final dated = tasks.where((task) {
+      final due = _due(task);
+      if (due == null) return false;
+      final start = DateTime.tryParse(task.assignedDate) ?? due;
+      return !due.isBefore(month) && !start.isAfter(end);
+    }).toList();
+    final undated = tasks.where((task) => task.dueDate.isEmpty).toList();
+    return LayoutBuilder(
+      builder: (context, bounds) {
+        final inset = bounds.maxWidth < 700 ? 16.0 : 24.0;
+        return ListView(
+          key: const PageStorageKey('schedule-list-scroll'),
+          padding: EdgeInsets.all(inset),
+          children: [
+            WorkspaceSectionLabel(
+              title: tr('이번 달 일정'),
+              trailing: Text(
+                tr('{v0}개', args: {'v0': dated.length}),
+                style: WorkspaceUi.captionStyleOf(context),
+              ),
+            ),
+            const SizedBox(height: 14),
+            if (dated.isEmpty)
+              WorkspaceEmptyState(
+                icon: Icons.event_available_outlined,
+                title: tr('이번 달에 예정된 작업이 없습니다.'),
+              )
+            else
+              WorkspacePanel(
+                padding: EdgeInsets.zero,
+                child: Column(
+                  children: [
+                    for (var index = 0; index < dated.length; index++) ...[
+                      if (index > 0)
+                        Divider(
+                          height: 1,
+                          color: WorkspaceUi.colors(context).line,
+                        ),
+                      _scheduleListRow(dated[index]),
+                    ],
+                  ],
+                ),
+              ),
+            const SizedBox(height: 28),
+            WorkspaceSectionLabel(
+              title: tr('마감 미정'),
+              trailing: Text(
+                tr('{v0}개', args: {'v0': undated.length}),
+                style: WorkspaceUi.captionStyleOf(context),
+              ),
+            ),
+            const SizedBox(height: 14),
+            if (undated.isEmpty)
+              Padding(
+                padding: EdgeInsets.symmetric(vertical: 12),
+                child: Text(
+                  tr('마감 미정 작업이 없습니다.'),
+                  style: WorkspaceUi.captionStyleOf(context),
+                ),
+              )
+            else
+              WorkspacePanel(
+                padding: EdgeInsets.zero,
+                child: Column(
+                  children: [
+                    for (var index = 0; index < undated.length; index++) ...[
+                      if (index > 0)
+                        Divider(
+                          height: 1,
+                          color: WorkspaceUi.colors(context).line,
+                        ),
+                      _scheduleListRow(undated[index]),
+                    ],
+                  ],
+                ),
+              ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _scheduleListRow(WorkTask task) => Material(
+    key: Key('schedule-list-${task.id}'),
+    color: Colors.transparent,
+    child: InkWell(
+      onTap: () => widget.onOpenTask(task),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        child: LayoutBuilder(
+          builder: (context, bounds) {
+            final period = _period(task);
+            final title = Row(
+              children: [
+                Container(
+                  width: 7,
+                  height: 7,
+                  decoration: BoxDecoration(
+                    color: _taskColor(task),
+                    shape: BoxShape.circle,
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        task.title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w500,
+                          color: WorkspaceUi.colors(context).ink,
+                        ),
+                      ),
+                      const SizedBox(height: 5),
+                      Tooltip(
+                        message: task.id,
+                        child: Text(
+                          bounds.maxWidth >= 700
+                              ? '${_taskReference(task.id)} · ${widget.store.currentActorLabel(task)}'
+                              : '${trStageName(task.status, widget.store.workflowStatusName(task.status))} · $period',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: WorkspaceUi.captionStyleOf(context),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            );
+            return Row(
+              children: [
+                Expanded(child: title),
+                if (bounds.maxWidth >= 700) ...[
+                  const SizedBox(width: 16),
+                  SizedBox(
+                    width: 88,
+                    child: Text(
+                      trStageName(
+                        task.status,
+                        widget.store.workflowStatusName(task.status),
+                      ),
+                      style: TextStyle(fontSize: 12, color: _taskColor(task)),
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  SizedBox(
+                    width: 190,
+                    child: Text(
+                      period,
+                      style: WorkspaceUi.captionStyleOf(context),
+                    ),
+                  ),
+                ],
+                if (widget.store.canEdit(task)) ...[
+                  const SizedBox(width: 10),
+                  IconButton(
+                    key: Key('schedule-list-edit-${task.id}'),
+                    tooltip: tr('일정 수정'),
+                    onPressed: () => widget.onEditTask(task),
+                    icon: const Icon(Icons.edit_calendar_outlined, size: 17),
+                  ),
+                ],
+              ],
+            );
+          },
         ),
       ),
     ),
@@ -727,221 +1167,262 @@ class _ProjectScheduleViewState extends State<ProjectScheduleView> {
       return !due.isBefore(month) && !start.isAfter(end);
     }).toList();
     final undated = tasks.where((task) => task.dueDate.isEmpty).toList();
-    return LayoutBuilder(
-      builder: (context, bounds) {
-        const labelWidth = 230.0, dayWidth = 34.0;
-        final width = math.max(
-          bounds.maxWidth,
-          labelWidth + end.day * dayWidth,
-        );
-        return Scrollbar(
-          controller: timelineHorizontal,
-          thumbVisibility: true,
-          child: SingleChildScrollView(
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
+      child: LayoutBuilder(
+        builder: (context, bounds) {
+          const labelWidth = 230.0, dayWidth = 34.0;
+          final width = math.max(
+            bounds.maxWidth,
+            labelWidth + end.day * dayWidth,
+          );
+          return Scrollbar(
             controller: timelineHorizontal,
-            scrollDirection: Axis.horizontal,
-            child: SizedBox(
-              width: width,
-              height: bounds.maxHeight,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  SizedBox(
-                    height: 48,
-                    child: Row(
-                      children: [
-                        const SizedBox(
-                          width: labelWidth,
-                          child: Padding(
-                            padding: EdgeInsets.only(left: 20),
-                            child: Text(
-                              '작업 지정일 → 마감일',
-                              style: TextStyle(fontSize: 11, color: _muted),
-                            ),
-                          ),
-                        ),
-                        for (var day = 1; day <= end.day; day++)
-                          SizedBox(
-                            key: Key('timeline-day-$day'),
-                            width: dayWidth,
-                            child: Text(
-                              '$day',
-                              textAlign: TextAlign.center,
-                              style: const TextStyle(
-                                fontSize: 11,
-                                color: _muted,
-                              ),
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
-                  const Divider(height: 1, color: _line),
-                  Expanded(
-                    child: ListView.builder(
-                      key: const Key('schedule-timeline-rows'),
-                      padding: const EdgeInsets.only(bottom: 16),
-                      itemCount: dated.length + undated.length + 1,
-                      itemBuilder: (context, index) {
-                        if (index == dated.length) {
-                          return SizedBox(
-                            height: 54,
-                            child: Padding(
-                              padding: const EdgeInsets.fromLTRB(20, 18, 20, 0),
-                              child: Text(
-                                '${dated.isEmpty ? '이번 달에 진행하는 작업이 없습니다.  ·  ' : ''}'
-                                '마감 미정 ${undated.length}개',
-                                style: const TextStyle(
-                                  fontSize: 12,
-                                  color: _muted,
+            thumbVisibility: true,
+            child: SingleChildScrollView(
+              controller: timelineHorizontal,
+              scrollDirection: Axis.horizontal,
+              child: SizedBox(
+                width: width,
+                height: bounds.maxHeight,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    ColoredBox(
+                      color: WorkspaceUi.colors(context).subtle,
+                      child: SizedBox(
+                        height: 48,
+                        child: Row(
+                          children: [
+                            SizedBox(
+                              width: labelWidth,
+                              child: Padding(
+                                padding: EdgeInsets.only(left: 20),
+                                child: Text(
+                                  tr('작업 · 기간'),
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: WorkspaceUi.colors(context).muted,
+                                  ),
                                 ),
                               ),
                             ),
-                          );
-                        }
-                        final task = index < dated.length
-                            ? dated[index]
-                            : undated[index - dated.length - 1];
-                        final due = _due(task);
-                        final assigned = DateTime.tryParse(task.assignedDate);
-                        final startDay =
-                            assigned == null || assigned.isBefore(month)
-                            ? 1
-                            : assigned.day;
-                        final endDay = due == null
-                            ? startDay
-                            : due.isAfter(end)
-                            ? end.day
-                            : due.day;
-                        return SizedBox(
-                          key: Key('schedule-timeline-${task.id}'),
-                          height: 54,
-                          child: Row(
-                            children: [
+                            for (var day = 1; day <= end.day; day++)
                               SizedBox(
-                                width: labelWidth,
-                                child: ListTile(
-                                  dense: true,
-                                  onTap: () => widget.onOpenTask(task),
-                                  title: Text(
-                                    task.title,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
-                                      fontSize: 12,
-                                      color: _ink,
-                                    ),
-                                  ),
-                                  subtitle: Text(
-                                    widget.store.member(task.assigneeId).name,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
-                                      fontSize: 10,
-                                      color: _muted,
-                                    ),
+                                key: Key('timeline-day-$day'),
+                                width: dayWidth,
+                                child: Text(
+                                  '$day',
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    color: WorkspaceUi.colors(context).muted,
                                   ),
                                 ),
                               ),
-                              Expanded(
-                                child: due == null
-                                    ? Align(
-                                        alignment: Alignment.centerLeft,
-                                        child: widget.store.canEdit(task)
-                                            ? TextButton.icon(
-                                                onPressed: () =>
-                                                    widget.onEditTask(task),
-                                                icon: const Icon(
-                                                  Icons.edit_calendar_outlined,
-                                                  size: 16,
+                          ],
+                        ),
+                      ),
+                    ),
+                    Divider(height: 1, color: WorkspaceUi.colors(context).line),
+                    Expanded(
+                      child: ListView.builder(
+                        key: const Key('schedule-timeline-rows'),
+                        padding: const EdgeInsets.only(bottom: 16),
+                        itemCount: dated.length + undated.length + 1,
+                        itemBuilder: (context, index) {
+                          if (index == dated.length) {
+                            return SizedBox(
+                              height: 54,
+                              child: Padding(
+                                padding: const EdgeInsets.fromLTRB(
+                                  20,
+                                  18,
+                                  20,
+                                  0,
+                                ),
+                                child: Text(
+                                  tr(
+                                    '{v0}마감 미정 {v1}개',
+                                    args: {
+                                      'v0': dated.isEmpty
+                                          ? tr('이번 달에 예정된 작업이 없습니다.  ·  ')
+                                          : '',
+                                      'v1': undated.length,
+                                    },
+                                  ),
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: WorkspaceUi.colors(context).muted,
+                                  ),
+                                ),
+                              ),
+                            );
+                          }
+                          final task = index < dated.length
+                              ? dated[index]
+                              : undated[index - dated.length - 1];
+                          final due = _due(task);
+                          final assigned = DateTime.tryParse(task.assignedDate);
+                          final startDay =
+                              assigned == null || assigned.isBefore(month)
+                              ? 1
+                              : assigned.day;
+                          final endDay = due == null
+                              ? startDay
+                              : due.isAfter(end)
+                              ? end.day
+                              : due.day;
+                          return Container(
+                            key: Key('schedule-timeline-${task.id}'),
+                            height: 58,
+                            decoration: BoxDecoration(
+                              border: Border(
+                                bottom: BorderSide(
+                                  color: WorkspaceUi.colors(context).line,
+                                ),
+                              ),
+                            ),
+                            child: Row(
+                              children: [
+                                SizedBox(
+                                  width: labelWidth,
+                                  child: ListTile(
+                                    dense: true,
+                                    onTap: () => widget.onOpenTask(task),
+                                    title: Text(
+                                      task.title,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        color: WorkspaceUi.colors(context).ink,
+                                      ),
+                                    ),
+                                    subtitle: Text(
+                                      widget.store.member(task.assigneeId).name,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        fontSize: 10,
+                                        color: WorkspaceUi.colors(context)
+                                            .muted,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                Expanded(
+                                  child: due == null
+                                      ? Align(
+                                          alignment: Alignment.centerLeft,
+                                          child: widget.store.canEdit(task)
+                                              ? TextButton.icon(
+                                                  onPressed: () =>
+                                                      widget.onEditTask(task),
+                                                  icon: const Icon(
+                                                    Icons
+                                                        .edit_calendar_outlined,
+                                                    size: 16,
+                                                  ),
+                                                  label: Text(tr('마감일 설정')),
+                                                )
+                                              : Text(
+                                                  tr('마감일 미정'),
+                                                  style: TextStyle(
+                                                    color: WorkspaceUi.colors(
+                                                      context,
+                                                    ).muted,
+                                                    fontSize: 11,
+                                                  ),
                                                 ),
-                                                label: const Text('마감일 정하기'),
-                                              )
-                                            : const Text(
-                                                '마감일 미정',
-                                                style: TextStyle(
-                                                  color: _muted,
-                                                  fontSize: 11,
+                                        )
+                                      : Stack(
+                                          fit: StackFit.expand,
+                                          children: [
+                                            for (
+                                              var day = 0;
+                                              day < end.day;
+                                              day++
+                                            )
+                                              Positioned(
+                                                left: day * dayWidth,
+                                                top: 0,
+                                                bottom: 0,
+                                                width: 1,
+                                                child: ColoredBox(
+                                                  color: WorkspaceUi.colors(
+                                                    context,
+                                                  ).line,
                                                 ),
                                               ),
-                                      )
-                                    : Stack(
-                                        fit: StackFit.expand,
-                                        children: [
-                                          for (
-                                            var day = 0;
-                                            day < end.day;
-                                            day++
-                                          )
                                             Positioned(
-                                              left: day * dayWidth,
-                                              top: 0,
-                                              bottom: 0,
-                                              width: 1,
-                                              child: const ColoredBox(
-                                                color: _line,
-                                              ),
-                                            ),
-                                          Positioned(
-                                            left: (startDay - 1) * dayWidth + 3,
-                                            top: 12,
-                                            height: 30,
-                                            width:
-                                                math.max(
-                                                      1,
-                                                      endDay - startDay + 1,
-                                                    ) *
-                                                    dayWidth -
-                                                6,
-                                            child: Tooltip(
-                                              message:
-                                                  '${task.title}\n${task.assignedDate} → ${task.dueDate}',
-                                              child: Material(
-                                                color: _taskColor(task)
-                                                    .withValues(alpha: .15),
-                                                borderRadius:
-                                                    BorderRadius.circular(7),
-                                                child: InkWell(
+                                              left:
+                                                  (startDay - 1) * dayWidth + 3,
+                                              top: 14,
+                                              height: 30,
+                                              width:
+                                                  math.max(
+                                                        1,
+                                                        endDay - startDay + 1,
+                                                      ) *
+                                                      dayWidth -
+                                                  6,
+                                              child: Tooltip(
+                                                message:
+                                                    '${task.title}\n${_period(task)}',
+                                                child: Material(
+                                                  key: Key(
+                                                    'timeline-span-${task.id}',
+                                                  ),
+                                                  color: _taskSurface(task),
                                                   borderRadius:
                                                       BorderRadius.circular(7),
-                                                  onTap: () =>
-                                                      widget.onOpenTask(task),
-                                                  child: Padding(
-                                                    padding:
-                                                        const EdgeInsets.symmetric(
-                                                          horizontal: 8,
-                                                          vertical: 6,
+                                                  child: InkWell(
+                                                    borderRadius:
+                                                        BorderRadius.circular(
+                                                          7,
                                                         ),
-                                                    child: Text(
-                                                      task.title,
-                                                      overflow:
-                                                          TextOverflow.ellipsis,
-                                                      maxLines: 1,
-                                                      style: TextStyle(
-                                                        fontSize: 11,
-                                                        color: _taskColor(task),
+                                                    onTap: () =>
+                                                        widget.onOpenTask(task),
+                                                    child: Padding(
+                                                      padding:
+                                                          const EdgeInsets.symmetric(
+                                                            horizontal: 8,
+                                                            vertical: 6,
+                                                          ),
+                                                      child: Text(
+                                                        task.title,
+                                                        overflow: TextOverflow
+                                                            .ellipsis,
+                                                        maxLines: 1,
+                                                        style: TextStyle(
+                                                          fontSize: 11,
+                                                          color: _taskColor(
+                                                            task,
+                                                          ),
+                                                        ),
                                                       ),
                                                     ),
                                                   ),
                                                 ),
                                               ),
                                             ),
-                                          ),
-                                        ],
-                                      ),
-                              ),
-                            ],
-                          ),
-                        );
-                      },
+                                          ],
+                                        ),
+                                ),
+                              ],
+                            ),
+                          );
+                        },
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
-          ),
-        );
-      },
+          );
+        },
+      ),
     );
   }
 }

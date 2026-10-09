@@ -1,14 +1,13 @@
+import 'app_localizations.dart';
+
+import 'dart:async';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
 
 import 'models.dart';
 import 'popup_ui.dart';
-
-const _accent = Color(0xff7963d5),
-    _ink = Color(0xff302b3c),
-    _muted = Color(0xff6e687b),
-    _line = Color(0xffe1e3e6);
+import 'workspace_ui.dart';
 
 /// A responsive inbox surface; project data and read actions stay in Workspace.
 class NotificationInbox extends StatelessWidget {
@@ -29,6 +28,7 @@ class NotificationInbox extends StatelessWidget {
     required this.onReadVisible,
     this.onSelect,
     this.onCloseDetail,
+    this.onOpenTask,
   });
 
   final List<Map<String, dynamic>> notifications;
@@ -43,6 +43,7 @@ class NotificationInbox extends StatelessWidget {
   final ValueChanged<List<Map<String, dynamic>>> onReadVisible;
   final ValueChanged<Map<String, dynamic>>? onSelect;
   final VoidCallback? onCloseDetail;
+  final ValueChanged<Map<String, dynamic>>? onOpenTask;
 
   @override
   Widget build(BuildContext context) {
@@ -64,329 +65,349 @@ class NotificationInbox extends StatelessWidget {
     for (final notification in filtered) {
       groups.putIfAbsent(_dayLabel(notification), () => []).add(notification);
     }
-    final selected = notifications
-        .where((n) => _notificationKey(n) == selectedNotificationKey)
+    final selected = scoped
+        .where(
+          (notification) =>
+              _notificationKey(notification) == selectedNotificationKey,
+        )
         .firstOrNull;
     return LayoutBuilder(
       builder: (context, constraints) {
-        final padding = constraints.maxWidth < 700 ? 20.0 : 36.0;
         final wide = constraints.maxWidth >= 900;
+        final padding = constraints.maxWidth < 700 ? 18.0 : 24.0;
         final paneWidth = wide
             ? (constraints.maxWidth - 1) / 2
             : constraints.maxWidth;
         final width = max(0.0, paneWidth - padding * 2);
-        final compact = width < 600;
-        final actions = Row(
-          mainAxisSize: MainAxisSize.min,
+        final compact = width < 520;
+        final list = Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            IconButton(
-              key: const Key('refresh-notifications'),
-              tooltip: '알림 새로고침',
-              onPressed: onRefresh,
-              icon: const Icon(Icons.refresh_rounded, size: 20),
+            Padding(
+              padding: EdgeInsets.fromLTRB(padding, 20, padding, 12),
+              child: WorkspaceSectionLabel(
+                title: tr('내 작업 알림'),
+                trailing: Text(
+                  tr('안 읽음 {v0}개', args: {'v0': unread}),
+                  style: WorkspaceUi.captionStyleOf(context),
+                ),
+              ),
             ),
-          ],
-        );
-        final list = SingleChildScrollView(
-          key: const PageStorageKey('notification-list-scroll'),
-          padding: EdgeInsets.fromLTRB(padding, wide ? 32 : 24, padding, 36),
-          child: Align(
-            alignment: Alignment.topLeft,
-            child: SizedBox(
-              width: width,
+            Padding(
+              key: const Key('notification-filter-bar'),
+              padding: EdgeInsets.fromLTRB(padding, 16, padding, 16),
               child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Row(
-                    children: [
-                      const Expanded(
-                        child: Text(
-                          '알림',
-                          style: TextStyle(
-                            fontSize: 27,
-                            fontWeight: FontWeight.w700,
-                            letterSpacing: -1,
-                            color: _ink,
-                          ),
-                        ),
-                      ),
-                      if (!compact) actions,
-                    ],
-                  ),
-                  if (compact) ...[
-                    Align(alignment: Alignment.centerRight, child: actions),
-                  ],
-                  SizedBox(height: compact ? 14 : 24),
-                  Container(
-                    key: const Key('notification-filter-bar'),
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      border: Border.all(color: _line),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: LayoutBuilder(
-                      builder: (context, filterConstraints) {
-                        return Wrap(
-                          spacing: 8,
-                          runSpacing: 8,
-                          crossAxisAlignment: WrapCrossAlignment.center,
-                          children: [
-                            SizedBox(
-                              width: filterConstraints.maxWidth < 560
-                                  ? filterConstraints.maxWidth
-                                  : 260,
-                              child: Semantics(
-                                label: '알림 프로젝트 선택',
-                                child: IeumSelect(
-                                  key: const Key('notification-project-filter'),
-                                  icon: Icons.folder_outlined,
-                                  value: project,
-                                  values: projects,
-                                  onChanged: onProjectChanged,
-                                ),
-                              ),
-                            ),
-                            _filterButton(
-                              'notification-unread-filter',
-                              '안 읽음',
-                              Icons.mark_email_unread_outlined,
-                              unreadOnly,
-                              () => onUnreadChanged(!unreadOnly),
-                            ),
-                            _filterButton(
-                              'notification-mentions-filter',
-                              '내 멘션',
-                              Icons.alternate_email_rounded,
-                              mentionsOnly,
-                              () => onMentionsChanged(!mentionsOnly),
-                            ),
-                            if (hasFilters)
-                              TextButton.icon(
-                                key: const Key('reset-notification-filters'),
-                                onPressed: onResetFilters,
-                                icon: const Icon(
-                                  Icons.restart_alt_rounded,
-                                  size: 17,
-                                ),
-                                label: const Text('초기화'),
-                                style: TextButton.styleFrom(
-                                  foregroundColor: _muted,
-                                  minimumSize: const Size(0, 42),
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 10,
-                                  ),
-                                ),
-                              ),
-                          ],
-                        );
-                      },
+                  Semantics(
+                    label: tr('알림 프로젝트 선택'),
+                    child: IeumSelect(
+                      key: const Key('notification-project-filter'),
+                      icon: Icons.folder_outlined,
+                      value: project,
+                      values: projects,
+                      onChanged: onProjectChanged,
                     ),
                   ),
-                  const SizedBox(height: 24),
+                  const SizedBox(height: 10),
                   Wrap(
-                    spacing: 10,
+                    spacing: 6,
                     runSpacing: 6,
                     crossAxisAlignment: WrapCrossAlignment.center,
                     children: [
-                      const Text(
-                        '알림 내역',
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
-                          color: _ink,
+                      _filterButton(
+                        context,
+                        'notification-unread-filter',
+                        tr('안 읽음'),
+                        Icons.mark_email_unread_outlined,
+                        unreadOnly,
+                        () => onUnreadChanged(!unreadOnly),
+                      ),
+                      _filterButton(
+                        context,
+                        'notification-mentions-filter',
+                        tr('내 멘션'),
+                        Icons.alternate_email_rounded,
+                        mentionsOnly,
+                        () => onMentionsChanged(!mentionsOnly),
+                      ),
+                      if (hasFilters)
+                        TextButton(
+                          key: const Key('reset-notification-filters'),
+                          onPressed: onResetFilters,
+                          style: TextButton.styleFrom(
+                            foregroundColor: WorkspaceUi.colors(context).muted,
+                            minimumSize: const Size(0, 34),
+                            padding: const EdgeInsets.symmetric(horizontal: 10),
+                          ),
+                          child: Text(tr('초기화')),
                         ),
-                      ),
-                      Text(
-                        '${filtered.length}개 · 안 읽음 $unread개',
-                        style: const TextStyle(fontSize: 11, color: _muted),
-                      ),
-                      const Text(
-                        '최신순',
-                        style: TextStyle(fontSize: 11, color: _muted),
-                      ),
                     ],
                   ),
-                  const SizedBox(height: 16),
+                ],
+              ),
+            ),
+            Divider(height: 1, color: WorkspaceUi.colors(context).line),
+            Padding(
+              padding: EdgeInsets.fromLTRB(padding, 14, padding, 12),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      tr('{v0}개', args: {'v0': filtered.length}),
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: WorkspaceUi.colors(context).muted,
+                      ),
+                    ),
+                  ),
+                  Text(
+                    tr('최신순'),
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: WorkspaceUi.colors(context).muted,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Expanded(
+              child: ListView(
+                key: const PageStorageKey('notification-list-scroll'),
+                padding: EdgeInsets.fromLTRB(padding, 0, padding, 24),
+                children: [
                   if (filtered.isEmpty)
                     _emptyState(scoped.isEmpty)
                   else
                     for (final group in groups.entries) ...[
                       Padding(
-                        padding: const EdgeInsets.only(bottom: 10),
+                        padding: const EdgeInsets.symmetric(vertical: 10),
                         child: Text(
                           group.key,
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontSize: 11,
                             fontWeight: FontWeight.w600,
-                            color: _muted,
+                            color: WorkspaceUi.colors(context).muted,
                           ),
                         ),
                       ),
-                      Container(
-                        clipBehavior: Clip.antiAlias,
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(12),
+                      for (final notification in group.value) ...[
+                        _notificationRow(
+                          context,
+                          notification,
+                          compact,
+                          selectedNotificationKey ==
+                              _notificationKey(notification),
+                          wide: wide,
                         ),
-                        foregroundDecoration: BoxDecoration(
-                          border: Border.all(color: _line),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Column(
-                          children: [
-                            for (var i = 0; i < group.value.length; i++) ...[
-                              if (i > 0)
-                                const Divider(
-                                  height: 1,
-                                  thickness: 1,
-                                  color: _line,
-                                ),
-                              _notificationRow(
-                                group.value[i],
-                                compact,
-                                selectedNotificationKey ==
-                                    _notificationKey(group.value[i]),
-                              ),
-                            ],
-                          ],
-                        ),
-                      ),
-                      const SizedBox(height: 22),
+                        const SizedBox(height: 6),
+                      ],
+                      const SizedBox(height: 12),
                     ],
                 ],
               ),
             ),
-          ),
+          ],
         );
-        if (!wide) {
-          return selected == null
-              ? list
-              : _detailScroll(selected, padding, narrow: true);
-        }
-        return Row(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
+        final panes = wide
+            ? Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Expanded(child: list),
+                  Container(
+                    key: const Key('notification-center-divider'),
+                    width: 1,
+                    color: WorkspaceUi.colors(context).line,
+                  ),
+                  Expanded(
+                    child: selected == null
+                        ? _emptyDetail(context)
+                        : _detailScroll(
+                            context,
+                            selected,
+                            padding,
+                            onClose: onCloseDetail,
+                          ),
+                  ),
+                ],
+              )
+            : list;
+        return Column(
           children: [
-            Expanded(child: list),
-            Container(
-              key: const Key('notification-center-divider'),
-              width: 1,
-              color: _line,
+            Padding(
+              padding: EdgeInsets.fromLTRB(padding, 24, padding, 12),
+              child: Row(
+                children: [
+                  Expanded(child: WorkspacePageHeader(title: tr('알림'))),
+                  IconButton(
+                    key: const Key('refresh-notifications'),
+                    tooltip: tr('알림 새로고침'),
+                    onPressed: onRefresh,
+                    icon: const Icon(Icons.refresh_rounded, size: 19),
+                  ),
+                ],
+              ),
             ),
-            Expanded(child: _detailScroll(selected, padding)),
+            Expanded(child: panes),
           ],
         );
       },
     );
   }
 
+  Widget _emptyDetail(BuildContext context) => Center(
+    key: Key('notification-empty-detail'),
+    child: Padding(
+      padding: EdgeInsets.all(24),
+      child: Text(
+        tr('상세 내용을 보기 위해 알림을 선택하세요.'),
+        textAlign: TextAlign.center,
+        style: TextStyle(
+          fontSize: 13,
+          height: 1.5,
+          color: WorkspaceUi.colors(context).muted.withValues(alpha: .8),
+        ),
+      ),
+    ),
+  );
   String _notificationKey(Map<String, dynamic> notification) =>
       '${notification['projectPath']}:${notification['id']}';
 
-  (String, IconData, Color) _eventInfo(Map<String, dynamic> notification) =>
-      switch ('${notification['eventType'] ?? ''}') {
-        'task.created' => ('새 작업 등록', Icons.add_task_rounded, _accent),
-        'task.assigned' => ('작업 배정', Icons.assignment_ind_outlined, _accent),
-        'task.moved' => ('단계 변경', Icons.view_kanban_outlined, _accent),
-        'task.review' || 'task.reviewing' => (
-          '검토 요청',
-          Icons.rate_review_outlined,
-          const Color(0xff8c652d),
-        ),
-        'task.done' => (
-          '작업 완료',
-          Icons.task_alt_rounded,
-          const Color(0xff417458),
-        ),
-        'task.rework' || 'task.rejected' => (
-          '반려',
-          Icons.replay_rounded,
-          const Color(0xffa0445a),
-        ),
-        _ => (
-          statuses[notification['status']] ?? '작업 알림',
-          Icons.notifications_none_rounded,
-          _accent,
-        ),
-      };
+  (String, IconData, Color) _eventInfo(
+    BuildContext context,
+    Map<String, dynamic> notification,
+  ) => switch ('${notification['eventType'] ?? ''}') {
+    'task.created' => (
+      tr('작업 등록'),
+      Icons.add_task_rounded,
+      WorkspaceUi.colors(context).accent,
+    ),
+    'task.assigned' => (
+      tr('작업 배정'),
+      Icons.assignment_ind_outlined,
+      WorkspaceUi.colors(context).accent,
+    ),
+    'task.moved' => (
+      tr('상태 변경'),
+      Icons.view_kanban_outlined,
+      WorkspaceUi.colors(context).accent,
+    ),
+    'task.review' || 'task.reviewing' => (
+      tr('검토 요청'),
+      Icons.rate_review_outlined,
+      WorkspaceUi.colors(context).warning,
+    ),
+    'task.done' => (
+      tr('작업 완료'),
+      Icons.task_alt_rounded,
+      WorkspaceUi.colors(context).success,
+    ),
+    'task.rework' || 'task.rejected' => (
+      tr('반려'),
+      Icons.replay_rounded,
+      WorkspaceUi.colors(context).danger,
+    ),
+    _ => (
+      tr(statuses[notification['status']] ?? '작업 알림'),
+      Icons.notifications_none_rounded,
+      WorkspaceUi.colors(context).accent,
+    ),
+  };
 
   Widget _detailScroll(
-    Map<String, dynamic>? notification,
+    BuildContext context,
+    Map<String, dynamic> notification,
     double padding, {
     bool narrow = false,
+    VoidCallback? onClose,
+    VoidCallback? onOpen,
   }) {
-    if (notification == null) {
-      return Center(
-        child: Padding(
-          key: const Key('notification-detail-empty'),
-          padding: EdgeInsets.symmetric(horizontal: padding),
-          child: const Column(
-            mainAxisSize: MainAxisSize.min,
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: EdgeInsets.fromLTRB(padding, 24, padding, 18),
+          child: Row(
             children: [
-              Icon(Icons.mark_email_read_outlined, size: 30, color: _accent),
-              SizedBox(height: 16),
-              Text(
-                '상세 내용을 보기 위해 알림을 선택하세요.',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w600,
-                  color: Color(0xff5b5668),
-                ),
-              ),
-            ],
-          ),
-        ),
-      );
-    }
-    return SingleChildScrollView(
-      key: const PageStorageKey('notification-detail-scroll'),
-      padding: EdgeInsets.fromLTRB(padding, narrow ? 24 : 32, padding, 36),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              if (narrow)
+              if (narrow) ...[
                 IconButton(
                   key: const Key('notification-detail-back'),
-                  tooltip: '알림 목록으로',
-                  onPressed: onCloseDetail,
-                  icon: const Icon(Icons.arrow_back_rounded),
+                  tooltip: tr('알림 목록으로'),
+                  onPressed: onClose,
+                  icon: const Icon(Icons.arrow_back_rounded, size: 19),
                 ),
-              const Expanded(
+                const SizedBox(width: 6),
+              ],
+              Expanded(
                 child: Text(
-                  '알림 상세',
+                  tr('알림 상세'),
                   style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.w700,
-                    color: _ink,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                    color: WorkspaceUi.colors(context).ink,
                   ),
                 ),
               ),
+              if (notification['read'] != true)
+                TextButton.icon(
+                  key: const Key('notification-detail-mark-read'),
+                  onPressed: () => onRead(notification),
+                  icon: const Icon(Icons.done_rounded, size: 16),
+                  label: Text(tr('읽음으로 표시')),
+                  style: TextButton.styleFrom(
+                    foregroundColor: WorkspaceUi.colors(context).muted,
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                  ),
+                ),
               if (!narrow)
                 IconButton(
                   key: const Key('notification-detail-close'),
-                  tooltip: '상세 닫기',
-                  onPressed: onCloseDetail,
+                  tooltip: tr('알림 상세 닫기'),
+                  onPressed: onClose,
                   icon: const Icon(Icons.close_rounded, size: 19),
                 ),
             ],
           ),
-          const SizedBox(height: 20),
-          _detailCard(notification),
-        ],
-      ),
+        ),
+        Divider(height: 1, color: WorkspaceUi.colors(context).line),
+        Expanded(
+          child: SingleChildScrollView(
+            key: const PageStorageKey('notification-detail-scroll'),
+            padding: EdgeInsets.fromLTRB(padding, 24, padding, 32),
+            child: _detailCard(context, notification),
+          ),
+        ),
+        if ('${notification['taskId'] ?? ''}'.isNotEmpty && onOpenTask != null)
+          Container(
+            padding: EdgeInsets.fromLTRB(padding, 12, padding, 16),
+            decoration: BoxDecoration(
+              border: Border(
+                top: BorderSide(color: WorkspaceUi.colors(context).line),
+              ),
+            ),
+            child: Align(
+              alignment: Alignment.centerRight,
+              child: OutlinedButton.icon(
+                key: const Key('notification-open-task'),
+                onPressed: onOpen ?? () => onOpenTask!(notification),
+                icon: const Icon(Icons.open_in_new_rounded, size: 16),
+                label: Text(tr('작업 열기')),
+              ),
+            ),
+          ),
+      ],
     );
   }
 
-  Widget _detailCard(Map<String, dynamic> notification) {
-    final (eventLabel, eventIcon, eventColor) = _eventInfo(notification);
+  Widget _detailCard(BuildContext context, Map<String, dynamic> notification) {
+    final (eventLabel, eventIcon, eventColor) = _eventInfo(
+      context,
+      notification,
+    );
     final occurred = DateTime.tryParse('${notification['createdAt'] ?? ''}')
         ?.toLocal();
     final timestamp = occurred == null
-        ? '시간 정보 없음'
+        ? tr('시간 미정')
         : '${occurred.year}.${occurred.month.toString().padLeft(2, '0')}.${occurred.day.toString().padLeft(2, '0')} '
               '${occurred.hour.toString().padLeft(2, '0')}:${occurred.minute.toString().padLeft(2, '0')}';
     final reason = '${notification['reason'] ?? ''}'.trim();
@@ -398,11 +419,10 @@ class NotificationInbox extends StatelessWidget {
     return Container(
       key: const Key('notification-detail'),
       width: double.infinity,
-      padding: const EdgeInsets.all(24),
+      padding: EdgeInsets.zero,
       decoration: BoxDecoration(
-        color: Colors.white,
-        border: Border.all(color: _line),
-        borderRadius: BorderRadius.circular(14),
+        color: WorkspaceUi.colors(context).surface,
+        borderRadius: BorderRadius.circular(10),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -422,84 +442,128 @@ class NotificationInbox extends StatelessWidget {
                 ),
               ),
               Text(
-                unread ? '안 읽음' : '읽음',
-                style: const TextStyle(fontSize: 11, color: _muted),
+                unread ? tr('안 읽음') : tr('읽음'),
+                style: TextStyle(
+                  fontSize: 11,
+                  color: WorkspaceUi.colors(context).muted,
+                ),
               ),
             ],
           ),
           const SizedBox(height: 18),
           Text(
-            '${notification['title'] ?? '작업 알림'}',
-            style: const TextStyle(
-              fontSize: 18,
-              height: 1.4,
+            tr('{v0}', args: {'v0': notification['title'] ?? tr('작업 알림')}),
+            style: TextStyle(
+              fontSize: 22,
+              height: 1.45,
               fontWeight: FontWeight.w700,
-              color: _ink,
+              color: WorkspaceUi.colors(context).ink,
             ),
           ),
           const SizedBox(height: 12),
           Text(
-            '${notification['projectName'] ?? '프로젝트'} · $timestamp',
-            style: const TextStyle(fontSize: 11, color: _muted),
+            tr(
+              '{v0} · {v1}',
+              args: {
+                'v0': notification['projectName'] ?? tr('프로젝트'),
+                'v1': timestamp,
+              },
+            ),
+            style: TextStyle(
+              fontSize: 11,
+              color: WorkspaceUi.colors(context).muted,
+            ),
           ),
           if (projectSlug.isNotEmpty && projectSlug != '로컬') ...[
             const SizedBox(height: 4),
             Text(
               projectSlug,
-              style: const TextStyle(fontSize: 11, color: _muted),
+              style: TextStyle(
+                fontSize: 11,
+                color: WorkspaceUi.colors(context).muted,
+              ),
             ),
           ],
           const SizedBox(height: 22),
-          const Divider(height: 1, color: _line),
+          Divider(height: 1, color: WorkspaceUi.colors(context).line),
           const SizedBox(height: 20),
-          const Text(
-            '알림 내용',
+          Text(
+            tr('알림 내용'),
             style: TextStyle(
               fontSize: 12,
               fontWeight: FontWeight.w700,
-              color: _ink,
+              color: WorkspaceUi.colors(context).ink,
             ),
           ),
           const SizedBox(height: 10),
           Text(
-            reason.isEmpty ? '$eventLabel 알림입니다.' : reason,
-            style: const TextStyle(fontSize: 13, height: 1.6, color: _ink),
+            reason.isEmpty ? eventLabel : reason,
+            style: TextStyle(
+              fontSize: 13,
+              height: 1.6,
+              color: WorkspaceUi.colors(context).ink,
+            ),
           ),
           if (taskId.isNotEmpty) ...[
             const SizedBox(height: 22),
-            const Divider(height: 1, color: _line),
+            Divider(height: 1, color: WorkspaceUi.colors(context).line),
             const SizedBox(height: 20),
-            const Text(
-              '현재 작업',
+            Text(
+              tr('작업 정보'),
               style: TextStyle(
                 fontSize: 12,
                 fontWeight: FontWeight.w700,
-                color: _ink,
+                color: WorkspaceUi.colors(context).ink,
               ),
             ),
             const SizedBox(height: 12),
             if (description.isNotEmpty) ...[
               Text(
                 description,
-                style: const TextStyle(fontSize: 12, height: 1.7, color: _ink),
+                style: TextStyle(
+                  fontSize: 12,
+                  height: 1.7,
+                  color: WorkspaceUi.colors(context).ink,
+                ),
               ),
               const SizedBox(height: 18),
             ],
-            _detailField('작업 ID', taskId),
-            if (taskStatus.isNotEmpty) _detailField('현재 상태', taskStatus),
-            _detailField('담당 파트', '${notification['taskPart'] ?? ''}'),
-            _detailField('담당자', '${notification['taskAssigneeName'] ?? ''}'),
-            _detailField('검토자', '${notification['taskReviewerName'] ?? ''}'),
-            _detailField('우선순위', '${notification['taskPriority'] ?? ''}'),
-            _detailField('마감일', '${notification['taskDueDate'] ?? ''}'),
-          ],
-          if (unread) ...[
-            const SizedBox(height: 24),
-            OutlinedButton.icon(
-              key: const Key('notification-detail-mark-read'),
-              onPressed: () => onRead(notification),
-              icon: const Icon(Icons.done_rounded, size: 17),
-              label: const Text('읽음 처리'),
+            _detailField(
+              context,
+              tr('작업 ID'),
+              _taskReference(taskId),
+              tooltip: taskId,
+            ),
+            if (taskStatus.isNotEmpty)
+              _detailField(
+                context,
+                tr('상태'),
+                trStageName('${notification['status'] ?? ''}', taskStatus),
+              ),
+            _detailField(
+              context,
+              tr('담당 파트'),
+              '${notification['taskPart'] ?? ''}',
+            ),
+            _detailField(
+              context,
+              tr('담당자'),
+              '${notification['taskAssigneeName'] ?? ''}',
+            ),
+            _detailField(
+              context,
+              tr('검토자'),
+              '${notification['taskReviewerName'] ?? ''}',
+            ),
+            _detailField(
+              context,
+              tr('우선순위'),
+              tr('${notification['taskPriority'] ?? ''}'),
+            ),
+            _detailField(
+              context,
+              tr('마감일'),
+              _displayDate('${notification['taskDueDate'] ?? ''}'),
             ),
           ],
         ],
@@ -507,7 +571,24 @@ class NotificationInbox extends StatelessWidget {
     );
   }
 
-  Widget _detailField(String label, String value) {
+  String _taskReference(String id) => id.startsWith('TASK-') && id.length >= 6
+      ? 'IE-${id.substring(id.length - 6).toUpperCase()}'
+      : id;
+
+  String _displayDate(String value) {
+    final date = DateTime.tryParse(value);
+    return date == null
+        ? value
+        : '${date.year}.${date.month.toString().padLeft(2, '0')}.'
+              '${date.day.toString().padLeft(2, '0')}';
+  }
+
+  Widget _detailField(
+    BuildContext context,
+    String label,
+    String value, {
+    String? tooltip,
+  }) {
     if (value.trim().isEmpty) return const SizedBox.shrink();
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
@@ -518,13 +599,22 @@ class NotificationInbox extends StatelessWidget {
             width: 84,
             child: Text(
               label,
-              style: const TextStyle(fontSize: 11, color: _muted),
+              style: TextStyle(
+                fontSize: 11,
+                color: WorkspaceUi.colors(context).muted,
+              ),
             ),
           ),
           Expanded(
-            child: Text(
-              value,
-              style: const TextStyle(fontSize: 11, color: _ink),
+            child: Tooltip(
+              message: tooltip ?? value,
+              child: Text(
+                value,
+                style: TextStyle(
+                  fontSize: 11,
+                  color: WorkspaceUi.colors(context).ink,
+                ),
+              ),
             ),
           ),
         ],
@@ -533,6 +623,7 @@ class NotificationInbox extends StatelessWidget {
   }
 
   Widget _filterButton(
+    BuildContext context,
     String key,
     String label,
     IconData icon,
@@ -544,11 +635,19 @@ class NotificationInbox extends StatelessWidget {
       key: Key(key),
       onPressed: onPressed,
       style: OutlinedButton.styleFrom(
-        minimumSize: const Size(0, 42),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-        backgroundColor: selected ? const Color(0xfff1edfc) : Colors.white,
-        foregroundColor: selected ? _accent : _muted,
-        side: BorderSide(color: selected ? const Color(0xffd6ccf4) : _line),
+        minimumSize: const Size(0, 34),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        backgroundColor: selected
+            ? WorkspaceUi.colors(context).accentSurface
+            : WorkspaceUi.colors(context).surface,
+        foregroundColor: selected
+            ? WorkspaceUi.colors(context).accent
+            : WorkspaceUi.colors(context).muted,
+        side: BorderSide(
+          color: selected
+              ? WorkspaceUi.colors(context).accent.withValues(alpha: .3)
+              : WorkspaceUi.colors(context).line,
+        ),
         textStyle: const TextStyle(fontSize: 12, fontFamily: 'Malgun Gothic'),
       ),
       icon: Icon(selected ? Icons.check_rounded : icon, size: 16),
@@ -556,182 +655,225 @@ class NotificationInbox extends StatelessWidget {
     ),
   );
 
-  Widget _emptyState(bool noNotifications) => Container(
+  Widget _emptyState(bool noNotifications) => Padding(
     key: const Key('notification-empty-state'),
-    width: double.infinity,
-    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 44),
-    decoration: BoxDecoration(
-      color: Colors.white,
-      border: Border.all(color: _line),
-      borderRadius: BorderRadius.circular(12),
-    ),
-    child: Column(
-      children: [
-        Container(
-          width: 56,
-          height: 56,
-          decoration: BoxDecoration(
-            color: const Color(0xfff1edfc),
-            borderRadius: BorderRadius.circular(16),
-          ),
-          child: Icon(
-            noNotifications
-                ? Icons.notifications_none_rounded
-                : Icons.filter_alt_outlined,
-            size: 26,
-            color: _accent,
-          ),
-        ),
-        const SizedBox(height: 18),
-        Text(
-          noNotifications ? '아직 도착한 알림이 없습니다.' : '조건에 맞는 알림이 없습니다.',
-          textAlign: TextAlign.center,
-          style: const TextStyle(
-            fontSize: 15,
-            fontWeight: FontWeight.w600,
-            color: _ink,
-          ),
-        ),
-        const SizedBox(height: 8),
-        if (noNotifications)
-          const Text(
-            '내게 배정된 작업이나 검토 요청이 도착하면\n시간순으로 이곳에 쌓입니다.',
-            textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 12, height: 1.7, color: _muted),
-          ),
-      ],
+    padding: const EdgeInsets.symmetric(vertical: 36),
+    child: WorkspaceEmptyState(
+      icon: noNotifications
+          ? Icons.notifications_none_rounded
+          : Icons.filter_alt_outlined,
+      title: noNotifications ? tr('아직 도착한 알림이 없습니다.') : tr('조건에 맞는 알림이 없습니다.'),
     ),
   );
 
-  Widget _notificationRow(Map<String, dynamic> n, bool compact, bool selected) {
+  Widget _notificationRow(
+    BuildContext context,
+    Map<String, dynamic> n,
+    bool compact,
+    bool selected, {
+    required bool wide,
+  }) {
     final unread = n['read'] != true;
-    final (label, icon, color) = _eventInfo(n);
+    final (label, icon, color) = _eventInfo(context, n);
     final date = DateTime.tryParse('${n['createdAt'] ?? ''}')?.toLocal();
     final time = date == null
-        ? '시간 미상'
+        ? tr('시간 미정')
         : '${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
     final reason = '${n['reason'] ?? ''}'.trim();
-    return InkWell(
-      onTap: onSelect == null ? null : () => onSelect!(n),
-      child: Container(
-        key: ValueKey('notification-${n['projectPath']}-${n['id']}'),
-        color: selected
-            ? const Color(0xffeae6f7)
-            : unread
-            ? const Color(0xffeef0f0)
-            : const Color(0xfff5f6f6),
-        padding: EdgeInsets.all(compact ? 14 : 18),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Container(
-              width: 36,
-              height: 36,
-              decoration: BoxDecoration(
-                color: color.withValues(alpha: .09),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Icon(icon, size: 19, color: color),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    '${n['title'] ?? '작업 알림'}',
-                    style: TextStyle(
-                      fontSize: 13,
-                      height: 1.5,
-                      fontWeight: unread ? FontWeight.w600 : FontWeight.w400,
-                      color: _ink,
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 4,
-                    crossAxisAlignment: WrapCrossAlignment.center,
-                    children: [
-                      Text(
-                        '${n['projectName'] ?? '프로젝트'}',
-                        style: const TextStyle(fontSize: 11, color: _muted),
-                      ),
-                      Text(label, style: TextStyle(fontSize: 11, color: color)),
-                      if (n['isMyMention'] == true)
-                        const Text(
-                          '@ 내 멘션',
-                          style: TextStyle(fontSize: 11, color: _accent),
-                        ),
-                      if (compact)
-                        Text(
-                          time,
-                          style: const TextStyle(fontSize: 11, color: _muted),
-                        ),
-                    ],
-                  ),
-                  if (reason.isNotEmpty) ...[
-                    const SizedBox(height: 8),
-                    Text(
-                      reason,
-                      style: const TextStyle(
-                        fontSize: 12,
-                        height: 1.6,
-                        color: _muted,
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-            ),
-            const SizedBox(width: 8),
-            SizedBox(
-              width: compact ? 32 : 82,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  if (!compact)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 3, bottom: 4),
-                      child: Text(
-                        time,
-                        style: const TextStyle(fontSize: 11, color: _muted),
-                      ),
-                    ),
-                  if (unread)
-                    IconButton(
-                      key: ValueKey('mark-notification-read-${n['id']}'),
-                      tooltip: '읽음 처리',
-                      onPressed: () => onRead(n),
-                      constraints: const BoxConstraints.tightFor(
-                        width: 32,
-                        height: 32,
-                      ),
-                      padding: EdgeInsets.zero,
-                      icon: const Icon(
-                        Icons.done_rounded,
-                        size: 18,
-                        color: _accent,
-                      ),
-                    ),
-                ],
-              ),
-            ),
-          ],
+    final background = selected
+        ? WorkspaceUi.colors(context).accentSurface
+        : unread
+        ? WorkspaceUi.colors(context).subtle
+        : WorkspaceUi.colors(context).background;
+    return Material(
+      key: ValueKey('notification-${n['projectPath']}-${n['id']}'),
+      color: background,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(10),
+        side: BorderSide(
+          color: selected
+              ? WorkspaceUi.colors(context).accent.withValues(alpha: .3)
+              : WorkspaceUi.colors(context).line,
         ),
       ),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onSelect == null
+            ? null
+            : () => _openDetail(context, n, wide: wide),
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 32,
+                height: 32,
+                decoration: BoxDecoration(
+                  color: color.withValues(alpha: .08),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Icon(icon, size: 17, color: color),
+              ),
+              const SizedBox(width: 11),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      tr('{v0}', args: {'v0': n['title'] ?? tr('작업 알림')}),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 13,
+                        height: 1.5,
+                        fontWeight: unread ? FontWeight.w600 : FontWeight.w400,
+                        color: WorkspaceUi.colors(context).ink,
+                      ),
+                    ),
+                    const SizedBox(height: 5),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 3,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        Text(
+                          tr(
+                            '{v0}',
+                            args: {'v0': n['projectName'] ?? tr('프로젝트')},
+                          ),
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: WorkspaceUi.colors(context).muted,
+                          ),
+                        ),
+                        Text(
+                          label,
+                          style: TextStyle(fontSize: 11, color: color),
+                        ),
+                        if (n['isMyMention'] == true)
+                          Text(
+                            tr('@ 내 멘션'),
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: WorkspaceUi.colors(context).accent,
+                            ),
+                          ),
+                        if (compact)
+                          Text(
+                            time,
+                            style: TextStyle(
+                              fontSize: 10,
+                              color: WorkspaceUi.colors(context).muted,
+                            ),
+                          ),
+                      ],
+                    ),
+                    if (reason.isNotEmpty) ...[
+                      const SizedBox(height: 7),
+                      Text(
+                        reason,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 12,
+                          height: 1.5,
+                          color: WorkspaceUi.colors(context).muted,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              const SizedBox(width: 6),
+              SizedBox(
+                width: compact ? 28 : 48,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    if (!compact)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 2, bottom: 4),
+                        child: Text(
+                          time,
+                          style: TextStyle(
+                            fontSize: 10,
+                            color: WorkspaceUi.colors(context).muted,
+                          ),
+                        ),
+                      ),
+                    if (unread)
+                      IconButton(
+                        key: ValueKey('mark-notification-read-${n['id']}'),
+                        tooltip: tr('읽음으로 표시'),
+                        onPressed: () => onRead(n),
+                        constraints: const BoxConstraints.tightFor(
+                          width: 28,
+                          height: 28,
+                        ),
+                        padding: EdgeInsets.zero,
+                        icon: Icon(
+                          Icons.done_rounded,
+                          size: 16,
+                          color: WorkspaceUi.colors(context).muted,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _openDetail(
+    BuildContext context,
+    Map<String, dynamic> notification, {
+    required bool wide,
+  }) {
+    onSelect?.call(notification);
+    if (notification['read'] != true) onRead(notification);
+    if (wide) return;
+    final size = MediaQuery.sizeOf(context);
+    unawaited(
+      showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => Dialog(
+          clipBehavior: Clip.antiAlias,
+          child: SizedBox(
+            width: min(560, size.width - 48),
+            height: min(680, size.height - 48),
+            child: _detailScroll(
+              context,
+              {...notification, 'read': true},
+              24,
+              narrow: true,
+              onClose: () => Navigator.pop(dialogContext),
+              onOpen: () => Navigator.pop(dialogContext, true),
+            ),
+          ),
+        ),
+      ).then((openTask) {
+        onCloseDetail?.call();
+        if (openTask == true) onOpenTask?.call(notification);
+      }),
     );
   }
 
   String _dayLabel(Map<String, dynamic> notification) {
     final date = DateTime.tryParse('${notification['createdAt'] ?? ''}')
         ?.toLocal();
-    if (date == null) return '이전 알림';
+    if (date == null) return tr('이전 기록');
     final now = DateTime.now();
     final day = DateTime(date.year, date.month, date.day);
     final today = DateTime(now.year, now.month, now.day);
-    if (day == today) return '오늘';
-    if (day == DateTime(now.year, now.month, now.day - 1)) return '어제';
-    return '${date.year}년 ${date.month}월 ${date.day}일';
+    if (day == today) return tr('오늘');
+    if (day == DateTime(now.year, now.month, now.day - 1)) return tr('어제');
+    return tr(
+      '{v0}년 {v1}월 {v2}일',
+      args: {'v0': date.year, 'v1': date.month, 'v2': date.day},
+    );
   }
 }

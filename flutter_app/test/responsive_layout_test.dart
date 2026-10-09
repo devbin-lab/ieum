@@ -134,8 +134,8 @@ void main() {
         await tester.pumpAndSettle();
         expect(find.byKey(const Key('task-title')), findsOneWidget);
         expect(tester.takeException(), isNull);
-        await tester.ensureVisible(find.byTooltip('작업 등록 닫기'));
-        await tester.tap(find.byTooltip('작업 등록 닫기'));
+        await tester.ensureVisible(find.byTooltip('새 작업 창 닫기'));
+        await tester.tap(find.byTooltip('새 작업 창 닫기'));
         await tester.pumpAndSettle();
         expect(tester.takeException(), isNull);
       }

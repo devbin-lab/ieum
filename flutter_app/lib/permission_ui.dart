@@ -1,3 +1,5 @@
+import 'app_localizations.dart';
+
 import 'package:flutter/material.dart';
 
 import 'models.dart';
@@ -33,9 +35,9 @@ class RolePermissionGroups extends StatelessWidget {
             key: Key('permission-${entry.key}'),
             dense: true,
             contentPadding: EdgeInsets.zero,
-            title: Text(entry.value, style: const TextStyle(fontSize: 13)),
+            title: Text(tr(entry.value), style: const TextStyle(fontSize: 13)),
             subtitle: Text(
-              permissionDescriptions[entry.key]!,
+              tr(permissionDescriptions[entry.key]!),
               style: const TextStyle(fontSize: 11, height: 1.5),
             ),
             value: permissions.contains(entry.key),
@@ -51,7 +53,7 @@ class RolePermissionGroups extends StatelessWidget {
             key: Key('permission-summary-${entry.key}'),
             dense: true,
             contentPadding: EdgeInsets.zero,
-            title: Text(entry.value, style: const TextStyle(fontSize: 13)),
+            title: Text(tr(entry.value), style: const TextStyle(fontSize: 13)),
             trailing: Icon(
               permissions.contains(entry.key)
                   ? Icons.check_circle_outline

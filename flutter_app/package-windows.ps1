@@ -15,6 +15,10 @@ $taskRelease = if ([IO.Path]::IsPathRooted($ReleaseDirectory)) {
 $taskStage = Join-Path $taskRoot ".local\packages\$BuildId"
 $taskOutput = Join-Path $taskRoot "dist\windows\$BuildId"
 $taskPayload = Join-Path $taskStage 'payload'
+$taskShortcutIcons = @(
+    'googledrive.svg', 'notion.svg', 'jira.svg', 'discord.svg',
+    'kakaotalk.svg', 'github.svg', 'figma.svg', 'slack.svg'
+)
 foreach ($taskRequired in @(
     'ieum_flutter.exe', 'flutter_windows.dll', 'sqlite3.dll',
     'file_selector_windows_plugin.dll', 'screen_retriever_windows_plugin.dll',
@@ -22,10 +26,21 @@ foreach ($taskRequired in @(
     'data\flutter_assets\AssetManifest.bin',
     'data\flutter_assets\NativeAssetsManifest.json',
     'data\flutter_assets\fonts\MaterialIcons-Regular.otf'
+    foreach ($taskShortcutIcon in $taskShortcutIcons) {
+        "data\flutter_assets\assets\shortcut-services\$taskShortcutIcon"
+    }
 )) {
     $taskRequiredPath = Join-Path $taskRelease $taskRequired
     if (-not (Test-Path -LiteralPath $taskRequiredPath -PathType Leaf) -or (Get-Item -LiteralPath $taskRequiredPath).Length -eq 0) {
         throw "배포 필수 파일이 없거나 비어 있습니다. Windows Release를 다시 빌드하세요: $taskRequired"
+    }
+}
+$taskShortcutLicenseSource = Join-Path $PSScriptRoot 'third_party\simple-icons'
+$taskShortcutLicenseFiles = @('LICENSE.md', 'DISCLAIMER.md', 'NOTICE.md', 'icon-metadata.json')
+foreach ($taskShortcutLicenseFile in $taskShortcutLicenseFiles) {
+    $taskShortcutLicensePath = Join-Path $taskShortcutLicenseSource $taskShortcutLicenseFile
+    if (-not (Test-Path -LiteralPath $taskShortcutLicensePath -PathType Leaf) -or (Get-Item -LiteralPath $taskShortcutLicensePath).Length -eq 0) {
+        throw "바로가기 아이콘의 배포 고지가 없거나 비어 있습니다: $taskShortcutLicenseFile"
     }
 }
 $taskBinaryVersion = [Diagnostics.FileVersionInfo]::GetVersionInfo((Join-Path $taskRelease 'ieum_flutter.exe')).ProductVersion
@@ -37,6 +52,11 @@ if ((Test-Path -LiteralPath $taskStage) -or (Test-Path -LiteralPath $taskOutput)
 }
 New-Item -ItemType Directory -Path $taskPayload,$taskOutput | Out-Null
 Copy-Item -Path "$taskRelease\*" -Destination $taskPayload -Recurse
+$taskShortcutLicenseTarget = Join-Path $taskPayload 'data\licenses\simple-icons'
+New-Item -ItemType Directory -Path $taskShortcutLicenseTarget -Force | Out-Null
+foreach ($taskShortcutLicenseFile in $taskShortcutLicenseFiles) {
+    Copy-Item -LiteralPath (Join-Path $taskShortcutLicenseSource $taskShortcutLicenseFile) -Destination $taskShortcutLicenseTarget
+}
 # Flutter's build-side manifest may contain an absolute development path.
 # Both runtime manifests refer only to DLLs copied into this bundle.
 foreach ($taskNativeManifest in @('native_assets.json', 'data\flutter_assets\NativeAssetsManifest.json')) {
@@ -91,11 +111,14 @@ ZIP 배포본은 전체 압축을 풀고 ieum_flutter.exe를 실행하세요.
 1. GitHub로 로그인하고 브라우저에서 인증 코드를 승인합니다.
 2. 관리자는 프로젝트를 생성합니다. 팀원은 저장소 초대를 수락한 뒤 프로젝트 참여를 요청합니다.
 3. 관리자가 참여 요청을 승인하고 파트를 배정합니다. 파트는 직접 구성합니다.
-4. 작업 목록·칸반에서 업무를 관리하고 일정에서 지정일~마감일 기간을 확인합니다.
+4. 작업 목록·칸반에서 작업을 관리하고 일정에서 시작일~마감일 기간을 확인합니다.
 5. 작업 상세에서 다음 담당자에게 전달하고 필요하면 잠금을 적용합니다.
 
 작업 관리
-확인중·진행중·완료의 세 상태를 사용합니다. 담당자 전달은 현재 상태를 유지합니다.
+확인중·진행중·검토중·완료·보류·드랍의 여섯 채널을 사용합니다. 진행중·검토중에서 전달하면 확인중으로 이동합니다.
+작성·수정 목적으로 받은 작업을 시작하면 진행중, 검토 목적으로 받은 작업을 시작하면 검토중입니다.
+보류에서 재개하면 이전 상태로, 드랍에서 복귀하면 확인중으로 돌아갑니다. 드랍은 일정에서 제외됩니다.
+새 작업은 잠금 없음·작성자 잠금·지정 작업자 잠금 중 선택합니다. 최초 작성자·담당자와 최근 전달·검토 이력은 작업 상세에서 확인합니다.
 잠금 담당자만 내용 수정과 상태 변경·삭제를 할 수 있으며 다른 참여자는 열람·코멘트를 할 수 있습니다.
 잠근 채 전달하면 다음 담당자만 수정할 수 있습니다. 전달 전에 최종 확인합니다.
 코멘트로 피드백을 남깁니다. 반려 및 작업 단계 자동화 기능은 사용하지 않습니다.

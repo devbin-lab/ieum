@@ -1,3 +1,6 @@
+import 'workspace_ui.dart';
+import 'app_localizations.dart';
+
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -48,6 +51,7 @@ class _ProjectGateState extends State<ProjectGate> {
       session.user == null ? null : catalog.lastFor(session.user!.id);
   TaskStore? store;
   GitHubSync? sync;
+  String? initialTaskId;
 
   @override
   void initState() {
@@ -180,7 +184,11 @@ class _ProjectGateState extends State<ProjectGate> {
     try {
       await openDesktopUrl(url);
     } catch (_) {
-      if (mounted) setState(() => error = '브라우저에서 $url 을 직접 열어주세요.');
+      if (mounted) {
+        setState(
+          () => error = tr('브라우저에서 {v0} 을 직접 열어주세요.', args: {'v0': url}),
+        );
+      }
     }
   }
 
@@ -225,6 +233,7 @@ class _ProjectGateState extends State<ProjectGate> {
     TaskStore next,
     GitHubConfig config, {
     bool cached = false,
+    String? focusTaskId,
   }) async {
     final previousSync = sync;
     final previousStore = store;
@@ -237,15 +246,16 @@ class _ProjectGateState extends State<ProjectGate> {
         } catch (error) {
           if (!GitHubSession.transient(error)) rethrow;
           cached = true;
-          session.connectionNotice.value =
-              '오프라인 · 저장된 프로젝트를 열었습니다. 연결되면 자동으로 동기화합니다.';
+          session.connectionNotice.value = tr(
+            '오프라인 · 저장된 프로젝트를 열었습니다. 연결되면 자동으로 동기화합니다.',
+          );
         }
       }
       if (cached) {
         next.setMeta('github.config', jsonEncode(config.toJson()));
         next.setMeta('github.login', session.user!.login);
       }
-      if (!mounted) throw StateError('프로젝트 열기가 취소되었습니다.');
+      if (!mounted) throw StateError(tr('프로젝트 열기가 취소되었습니다.'));
       if (!cached &&
           catalog
               .pendingNames(session.user!.id)
@@ -266,7 +276,7 @@ class _ProjectGateState extends State<ProjectGate> {
                 .toList(),
           );
         } catch (e) {
-          error = '이름 변경 전송 대기: $e';
+          error = tr('이름 변경 전송 대기: {v0}', args: {'v0': e});
         }
       }
       catalog.remember(
@@ -281,6 +291,7 @@ class _ProjectGateState extends State<ProjectGate> {
       setState(() {
         store = next;
         sync = service;
+        initialTaskId = focusTaskId;
         showingSetup = false;
       });
       previousSync?.dispose();
@@ -301,14 +312,14 @@ class _ProjectGateState extends State<ProjectGate> {
     config.validate();
     if (folder.text.trim().isEmpty ||
         !Directory(folder.text.trim()).isAbsolute) {
-      throw StateError('DB를 저장할 로컬 폴더의 전체 경로를 지정하세요.');
+      throw StateError(tr('DB를 저장할 로컬 폴더의 전체 경로를 지정하세요.'));
     }
     final directory = Directory(folder.text.trim());
     await directory.create(recursive: true);
     if (creating &&
         (projectName.text.trim().isEmpty ||
             projectName.text.trim().length > 80)) {
-      throw StateError('프로젝트 이름은 1~80자로 입력하세요.');
+      throw StateError(tr('프로젝트 이름은 1~80자로 입력하세요.'));
     }
     config = await session.resolveRepository(config);
     final project = creating
@@ -333,14 +344,20 @@ class _ProjectGateState extends State<ProjectGate> {
   Future<void> openSaved(
     SavedProject entry, {
     bool settingsView = false,
+    String? focusTaskId,
   }) async {
     if (store?.filename == entry.path) {
       sync?.resume();
-      if (mounted) setState(() => showingSetup = false);
+      if (mounted) {
+        setState(() {
+          initialTaskId = focusTaskId;
+          showingSetup = false;
+        });
+      }
       return;
     }
     if (!File(entry.path).existsSync()) {
-      throw StateError('DB 파일이 없습니다. 프로젝트 참여에서 기존 DB 저장 폴더를 선택하세요.');
+      throw StateError(tr('DB 파일이 없습니다. 프로젝트 참여에서 기존 DB 저장 폴더를 선택하세요.'));
     }
     final previousSync = sync;
     await previousSync?.quiesce();
@@ -350,7 +367,7 @@ class _ProjectGateState extends State<ProjectGate> {
       if (!next.isProject ||
           next.profileId != session.user!.id ||
           next.project!.id != entry.projectId) {
-        throw StateError('이 계정과 프로젝트에 등록된 DB가 아닙니다. 내 계정으로 참여하세요.');
+        throw StateError(tr('이 계정과 프로젝트에 등록된 DB가 아닙니다. 내 계정으로 참여하세요.'));
       }
       final raw = next.meta('github.config');
       final config = raw.isEmpty
@@ -362,7 +379,7 @@ class _ProjectGateState extends State<ProjectGate> {
           final project = await session.loadProject(config);
           if (project.id != next.project!.id ||
               project.founderId != next.project!.founderId) {
-            throw const GitHubFailure('이 DB와 연결된 프로젝트 저장소가 아닙니다.');
+            throw GitHubFailure(tr('이 DB와 연결된 프로젝트 저장소가 아닙니다.'));
           }
           next.updateProject(project);
         } catch (error) {
@@ -372,8 +389,9 @@ class _ProjectGateState extends State<ProjectGate> {
           }
           if (!GitHubSession.transient(error)) rethrow;
           cached = true;
-          session.connectionNotice.value =
-              '오프라인 · 저장된 프로젝트를 열었습니다. 연결되면 자동으로 동기화합니다.';
+          session.connectionNotice.value = tr(
+            '오프라인 · 저장된 프로젝트를 열었습니다. 연결되면 자동으로 동기화합니다.',
+          );
         }
       }
       final opened = next;
@@ -391,7 +409,7 @@ class _ProjectGateState extends State<ProjectGate> {
         opened.setMeta('ui.workspace', jsonEncode(view));
       }
       next = null; // openStore owns cleanup from here, including failure.
-      await openStore(opened, config, cached: cached);
+      await openStore(opened, config, cached: cached, focusTaskId: focusTaskId);
     } catch (_) {
       next?.dispose();
       if (mounted && !showingSetup) previousSync?.resume();
@@ -425,12 +443,16 @@ class _ProjectGateState extends State<ProjectGate> {
   @override
   Widget build(BuildContext context) {
     if (booting) {
-      return const Scaffold(
+      return Scaffold(
         body: Center(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(Icons.all_inclusive, size: 44, color: purple),
+              Icon(
+                Icons.all_inclusive,
+                size: 44,
+                color: WorkspaceUi.colors(context).accent,
+              ),
               SizedBox(height: 24),
               SizedBox(
                 width: 24,
@@ -438,7 +460,10 @@ class _ProjectGateState extends State<ProjectGate> {
                 child: CircularProgressIndicator(strokeWidth: 2),
               ),
               SizedBox(height: 18),
-              Text('내 작업 공간을 준비하고 있어요', style: TextStyle(color: muted)),
+              Text(
+                tr('내 작업 공간을 준비하고 있어요'),
+                style: TextStyle(color: WorkspaceUi.colors(context).muted),
+              ),
             ],
           ),
         ),
@@ -453,6 +478,9 @@ class _ProjectGateState extends State<ProjectGate> {
           sync: sync,
           session: session,
           onRename: renameAll,
+          initialTaskId: initialTaskId,
+          onOpenProjectTask: (entry, taskId) =>
+              run(() => openSaved(entry, focusTaskId: taskId)),
           onSignOut: signOut,
           sessionNotice: [
             session.connectionNotice.value,
@@ -486,17 +514,21 @@ class _ProjectGateState extends State<ProjectGate> {
                 MediaQuery.sizeOf(context).width < 600 ? 20 : 32,
               ),
               decoration: BoxDecoration(
-                color: Colors.white,
-                border: Border.all(color: border),
+                color: WorkspaceUi.colors(context).surface,
+                border: Border.all(color: WorkspaceUi.colors(context).line),
                 borderRadius: BorderRadius.circular(18),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Icon(Icons.all_inclusive, size: 44, color: purple),
+                  Icon(
+                    Icons.all_inclusive,
+                    size: 44,
+                    color: WorkspaceUi.colors(context).accent,
+                  ),
                   const SizedBox(height: 16),
                   Text(
-                    signedIn ? '프로젝트 시작하기' : '이음에 로그인',
+                    signedIn ? tr('프로젝트 시작하기') : tr('이음에 로그인'),
                     style: const TextStyle(
                       fontSize: 26,
                       fontWeight: FontWeight.w700,
@@ -505,15 +537,27 @@ class _ProjectGateState extends State<ProjectGate> {
                   const SizedBox(height: 10),
                   Text(
                     signedIn
-                        ? '@${session.user!.login} · GitHub 인증 완료'
-                        : 'GitHub 계정으로 인증한 뒤 프로젝트를 만들거나 참여하세요.',
-                    style: const TextStyle(color: muted, fontSize: 12),
+                        ? tr(
+                            '@{v0} · GitHub 인증 완료',
+                            args: {'v0': session.user!.login},
+                          )
+                        : tr('GitHub 계정으로 인증한 뒤 프로젝트를 만들거나 참여하세요.'),
+                    style: TextStyle(
+                      color: WorkspaceUi.colors(context).muted,
+                      fontSize: 12,
+                    ),
                   ),
                   const SizedBox(height: 24),
                   if (!signedIn) ...[
-                    const Text(
-                      'GitHub에서 이음의 저장소 접근을 승인하면 로그인됩니다.\n작업 등록·PR·동기화를 위해 저장소 권한을 요청합니다.',
-                      style: TextStyle(fontSize: 12, color: muted, height: 1.7),
+                    Text(
+                      tr(
+                        'GitHub에서 이음의 저장소 접근을 승인하면 로그인됩니다.\n작업 등록·PR·동기화를 위해 저장소 권한을 요청합니다.',
+                      ),
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: WorkspaceUi.colors(context).muted,
+                        height: 1.7,
+                      ),
                     ),
                     const SizedBox(height: 12),
                     Material(
@@ -521,13 +565,16 @@ class _ProjectGateState extends State<ProjectGate> {
                       child: CheckboxListTile(
                         contentPadding: EdgeInsets.zero,
                         controlAffinity: ListTileControlAffinity.leading,
-                        title: const Text(
-                          '이 컴퓨터에서 로그인 유지',
+                        title: Text(
+                          tr('이 컴퓨터에서 로그인 유지'),
                           style: TextStyle(fontSize: 12),
                         ),
                         subtitle: Text(
                           credentialStorageDescription(),
-                          style: const TextStyle(fontSize: 11, color: muted),
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: WorkspaceUi.colors(context).muted,
+                          ),
                         ),
                         value: rememberLogin,
                         onChanged: busy
@@ -543,34 +590,42 @@ class _ProjectGateState extends State<ProjectGate> {
                         width: double.infinity,
                         padding: const EdgeInsets.all(18),
                         decoration: BoxDecoration(
-                          color: purple.withValues(alpha: .06),
+                          color: WorkspaceUi.colors(context).accent
+                              .withValues(alpha: .06),
                           borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: border),
+                          border: Border.all(
+                            color: WorkspaceUi.colors(context).line,
+                          ),
                         ),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            const Text(
-                              'GitHub 인증 코드',
-                              style: TextStyle(fontSize: 12, color: muted),
+                            Text(
+                              tr('GitHub 인증 코드'),
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: WorkspaceUi.colors(context).muted,
+                              ),
                             ),
                             const SizedBox(height: 8),
                             SelectableText(
                               grant!.userCode,
                               key: const Key('oauth-code'),
-                              style: const TextStyle(
+                              style: TextStyle(
                                 fontSize: 26,
                                 fontWeight: FontWeight.w700,
                                 letterSpacing: 3,
-                                color: purple,
+                                color: WorkspaceUi.colors(context).accent,
                               ),
                             ),
                             const SizedBox(height: 8),
-                            const Text(
-                              '브라우저에 위 코드를 입력하고 이음의 접근을 승인하세요.\n인증 코드가 만료되면 다시 로그인할 수 있습니다.',
+                            Text(
+                              tr(
+                                '브라우저에 위 코드를 입력하고 이음의 접근을 승인하세요.\n인증 코드가 만료되면 다시 로그인할 수 있습니다.',
+                              ),
                               style: TextStyle(
                                 fontSize: 12,
-                                color: muted,
+                                color: WorkspaceUi.colors(context).muted,
                                 height: 1.7,
                               ),
                             ),
@@ -584,16 +639,16 @@ class _ProjectGateState extends State<ProjectGate> {
                                       ClipboardData(text: grant!.userCode),
                                     );
                                   },
-                                  child: const Text('코드 복사'),
+                                  child: Text(tr('코드 복사')),
                                 ),
                                 OutlinedButton(
                                   onPressed: () => openGitHub(githubDeviceUrl),
-                                  child: const Text('GitHub 인증 페이지 열기'),
+                                  child: Text(tr('GitHub 인증 페이지 열기')),
                                 ),
                                 TextButton(
                                   key: const Key('oauth-cancel'),
                                   onPressed: session.signOut,
-                                  child: const Text('로그인 취소'),
+                                  child: Text(tr('로그인 취소')),
                                 ),
                               ],
                             ),
@@ -608,8 +663,10 @@ class _ProjectGateState extends State<ProjectGate> {
                       onPressed: busy ? null : oauthLogin,
                       label: Text(
                         busy
-                            ? (grant == null ? '로그인 확인 중…' : 'GitHub 승인 대기 중…')
-                            : 'GitHub로 로그인',
+                            ? (grant == null
+                                  ? tr('로그인 확인 중…')
+                                  : tr('GitHub 승인 대기 중…'))
+                            : tr('GitHub로 로그인'),
                       ),
                     ),
                     const SizedBox(height: 12),
@@ -620,7 +677,7 @@ class _ProjectGateState extends State<ProjectGate> {
                           onPressed: busy
                               ? null
                               : () => openGitHub('https://github.com/signup'),
-                          child: const Text('GitHub 계정 만들기'),
+                          child: Text(tr('GitHub 계정 만들기')),
                         ),
                         TextButton(
                           onPressed: busy
@@ -628,7 +685,9 @@ class _ProjectGateState extends State<ProjectGate> {
                               : () => setState(
                                   () => advancedLogin = !advancedLogin,
                                 ),
-                          child: Text(advancedLogin ? '고급 연결 닫기' : '고급 연결'),
+                          child: Text(
+                            advancedLogin ? tr('고급 연결 닫기') : tr('고급 연결'),
+                          ),
                         ),
                       ],
                     ),
@@ -641,17 +700,19 @@ class _ProjectGateState extends State<ProjectGate> {
                         obscureText: true,
                         autocorrect: false,
                         enableSuggestions: false,
-                        decoration: const InputDecoration(
-                          labelText: '세션 토큰 (선택)',
-                          hintText: '비워 두면 컴퓨터에 저장된 Git 인증 사용',
+                        decoration: InputDecoration(
+                          labelText: tr('세션 토큰 (선택)'),
+                          hintText: tr('비워 두면 컴퓨터에 저장된 Git 인증 사용'),
                         ),
                       ),
                       const SizedBox(height: 14),
-                      const Text(
-                        '토큰은 앱 메모리에만 보관합니다. 이음 비밀번호는 만들지 않습니다.\nGitHub 계정이 없다면 GitHub에서 계정을 만든 뒤 저장소 초대를 받으세요.',
+                      Text(
+                        tr(
+                          '토큰은 앱 메모리에만 보관합니다. 이음 비밀번호는 만들지 않습니다.\nGitHub 계정이 없다면 GitHub에서 계정을 만든 뒤 저장소 초대를 받으세요.',
+                        ),
                         style: TextStyle(
                           fontSize: 11,
-                          color: muted,
+                          color: WorkspaceUi.colors(context).muted,
                           height: 1.7,
                         ),
                       ),
@@ -659,7 +720,9 @@ class _ProjectGateState extends State<ProjectGate> {
                       FilledButton(
                         key: const Key('github-advanced-login'),
                         onPressed: busy ? null : signIn,
-                        child: Text(busy ? '계정 확인 중…' : 'GitHub 연결 / 로그인'),
+                        child: Text(
+                          busy ? tr('계정 확인 중…') : tr('GitHub 연결 / 로그인'),
+                        ),
                       ),
                     ],
                   ] else ...[
@@ -668,15 +731,17 @@ class _ProjectGateState extends State<ProjectGate> {
                         key: const Key('reopen-project'),
                         onPressed: busy ? null : reopen,
                         child: Text(
-                          store != null ? '현재 프로젝트로 돌아가기' : '최근 프로젝트 열기',
+                          store != null
+                              ? tr('현재 프로젝트로 돌아가기')
+                              : tr('최근 프로젝트 열기'),
                         ),
                       ),
                       const SizedBox(height: 20),
                     ],
                     SegmentedButton<bool>(
-                      segments: const [
-                        ButtonSegment(value: true, label: Text('프로젝트 생성')),
-                        ButtonSegment(value: false, label: Text('프로젝트 참여')),
+                      segments: [
+                        ButtonSegment(value: true, label: Text(tr('프로젝트 생성'))),
+                        ButtonSegment(value: false, label: Text(tr('프로젝트 참여'))),
                       ],
                       selected: {creating},
                       onSelectionChanged: busy
@@ -689,7 +754,7 @@ class _ProjectGateState extends State<ProjectGate> {
                         key: const Key('project-name'),
                         enabled: !busy,
                         controller: projectName,
-                        decoration: const InputDecoration(labelText: '프로젝트 이름'),
+                        decoration: InputDecoration(labelText: tr('프로젝트 이름')),
                       ),
                       const SizedBox(height: 16),
                     ],
@@ -697,9 +762,9 @@ class _ProjectGateState extends State<ProjectGate> {
                       key: const Key('project-repository'),
                       enabled: !busy,
                       controller: repo,
-                      decoration: const InputDecoration(
-                        labelText: 'GitHub 저장소',
-                        hintText: '소유자/저장소 또는 HTTPS 주소',
+                      decoration: InputDecoration(
+                        labelText: tr('GitHub 저장소'),
+                        hintText: tr('소유자/저장소 또는 HTTPS 주소'),
                       ),
                     ),
                     const SizedBox(height: 16),
@@ -708,8 +773,8 @@ class _ProjectGateState extends State<ProjectGate> {
                       enabled: !busy,
                       controller: nickname,
                       maxLength: 40,
-                      decoration: const InputDecoration(
-                        labelText: '이름 / 닉네임',
+                      decoration: InputDecoration(
+                        labelText: tr('이름 / 닉네임'),
                         counterText: '',
                       ),
                     ),
@@ -718,25 +783,27 @@ class _ProjectGateState extends State<ProjectGate> {
                       width: double.infinity,
                       padding: const EdgeInsets.all(14),
                       decoration: BoxDecoration(
-                        color: const Color(0xfff6f7f9),
+                        color: WorkspaceUi.colors(context).subtle,
                         borderRadius: BorderRadius.circular(10),
                       ),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Text(
-                            '이 컴퓨터에 안전하게 저장',
+                          Text(
+                            tr('이 컴퓨터에 안전하게 저장'),
                             style: TextStyle(
                               fontSize: 12,
                               fontWeight: FontWeight.w600,
                             ),
                           ),
                           const SizedBox(height: 5),
-                          const Text(
-                            '작업은 자동 저장되고 GitHub와 동기화됩니다.\n인터넷이 끊겨도 저장된 프로젝트에서 작업할 수 있습니다.',
+                          Text(
+                            tr(
+                              '작업은 자동 저장되고 GitHub와 동기화됩니다.\n인터넷이 끊겨도 저장된 프로젝트에서 작업할 수 있습니다.',
+                            ),
                             style: TextStyle(
                               fontSize: 11,
-                              color: muted,
+                              color: WorkspaceUi.colors(context).muted,
                               height: 1.6,
                             ),
                           ),
@@ -754,7 +821,7 @@ class _ProjectGateState extends State<ProjectGate> {
                               size: 16,
                             ),
                             label: Text(
-                              advancedStorage ? '저장 위치 닫기' : '저장 위치 변경',
+                              advancedStorage ? tr('저장 위치 닫기') : tr('저장 위치 변경'),
                             ),
                           ),
                           if (advancedStorage) ...[
@@ -763,8 +830,8 @@ class _ProjectGateState extends State<ProjectGate> {
                               key: const Key('project-folder'),
                               enabled: !busy,
                               controller: folder,
-                              decoration: const InputDecoration(
-                                labelText: '로컬 저장 폴더',
+                              decoration: InputDecoration(
+                                labelText: tr('로컬 저장 폴더'),
                               ),
                             ),
                             const SizedBox(height: 8),
@@ -773,7 +840,7 @@ class _ProjectGateState extends State<ProjectGate> {
                                   ? null
                                   : () async {
                                       final value = await getDirectoryPath(
-                                        confirmButtonText: '저장 위치 선택',
+                                        confirmButtonText: tr('저장 위치 선택'),
                                       );
                                       if (value != null && mounted) {
                                         setState(() => folder.text = value);
@@ -783,7 +850,7 @@ class _ProjectGateState extends State<ProjectGate> {
                                 Icons.folder_open_outlined,
                                 size: 16,
                               ),
-                              label: const Text('폴더 선택'),
+                              label: Text(tr('폴더 선택')),
                             ),
                           ],
                         ],
@@ -792,11 +859,15 @@ class _ProjectGateState extends State<ProjectGate> {
                     const SizedBox(height: 16),
                     Text(
                       creating
-                          ? '저장소 관리자 계정으로 빈 프로젝트를 만듭니다. 파트와 작업 흐름은 프로젝트 설정에서 구성하세요.'
-                          : '먼저 GitHub 저장소 초대를 수락해 주세요. 참여 요청을 관리자가 승인하면 작업을 시작할 수 있습니다.',
-                      style: const TextStyle(
+                          ? tr(
+                              '프로젝트를 만들고 팀의 작업을 시작합니다. 파트는 프로젝트 설정에서 추가할 수 있습니다.',
+                            )
+                          : tr(
+                              '먼저 GitHub 저장소 초대를 수락해 주세요. 참여 요청을 관리자가 승인하면 작업을 시작할 수 있습니다.',
+                            ),
+                      style: TextStyle(
                         fontSize: 11,
-                        color: muted,
+                        color: WorkspaceUi.colors(context).muted,
                         height: 1.7,
                       ),
                     ),
@@ -810,15 +881,15 @@ class _ProjectGateState extends State<ProjectGate> {
                           onPressed: busy ? null : submit,
                           child: Text(
                             busy
-                                ? '프로젝트 준비 중…'
+                                ? tr('프로젝트 준비 중…')
                                 : creating
-                                ? '프로젝트 생성'
-                                : '참여 요청',
+                                ? tr('프로젝트 생성')
+                                : tr('참여 요청'),
                           ),
                         ),
                         TextButton(
                           onPressed: busy ? null : signOut,
-                          child: const Text('로그아웃'),
+                          child: Text(tr('로그아웃')),
                         ),
                       ],
                     ),

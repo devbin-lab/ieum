@@ -201,7 +201,7 @@ void main() {
             ),
           ),
         );
-        expect(find.text('첫 파트를 추가해 주세요.'), findsOneWidget);
+        expect(find.text('등록된 파트가 없습니다.'), findsOneWidget);
         await tester.tap(find.byKey(const Key('add-first-part')));
         await tester.pumpAndSettle();
         await tester.enterText(find.byKey(const Key('role-name')), '디렉터');
@@ -217,7 +217,7 @@ void main() {
         await tester.pumpAndSettle();
         await tester.tap(find.byKey(const Key('confirm-delete-role')));
         await tester.pumpAndSettle();
-        expect(find.text('첫 파트를 추가해 주세요.'), findsOneWidget);
+        expect(find.text('등록된 파트가 없습니다.'), findsOneWidget);
         expect((await session.loadProject(config)).parts, isEmpty);
         expect(tester.takeException(), isNull);
       } finally {
@@ -243,7 +243,7 @@ void main() {
           ),
         );
         await tester.pumpAndSettle();
-        expect(find.text('프로젝트 설정의 파트 탭에서 파트를 먼저 추가하세요.'), findsOneWidget);
+        expect(find.text('프로젝트 설정에서 파트를 추가한 후 작업을 만들 수 있습니다.'), findsOneWidget);
         expect(find.text('기획'), findsNothing);
         expect(tester.takeException(), isNull);
       } finally {

@@ -1,3 +1,5 @@
+import 'app_localizations.dart';
+
 import 'dart:async';
 import 'dart:io';
 
@@ -85,20 +87,20 @@ class _DraftGuardState extends State<DraftGuard> with WindowListener {
     final choice = await showDialog<String>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('저장하지 않은 변경사항'),
-        content: const Text('변경사항을 저장하거나 버릴 수 있습니다. 저장 실패 시 편집 내용이 유지됩니다.'),
+        title: Text(tr('저장하지 않은 변경사항')),
+        content: Text(tr('변경사항을 저장하거나 버릴 수 있습니다. 저장 실패 시 편집 내용이 유지됩니다.')),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
-            child: const Text('계속 편집'),
+            child: Text(tr('계속 편집')),
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, 'discard'),
-            child: const Text('변경 버리기'),
+            child: Text(tr('변경 버리기')),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(ctx, 'save'),
-            child: const Text('저장'),
+            child: Text(tr('저장')),
           ),
         ],
       ),

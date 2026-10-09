@@ -364,7 +364,7 @@ void main() {
           ),
         );
         await tester.pumpAndSettle();
-        expect(find.text('첫 파트를 추가해 주세요.'), findsOneWidget);
+        expect(find.text('등록된 파트가 없습니다.'), findsOneWidget);
         expect(find.text('첫 역할을 추가해 주세요.'), findsNothing);
         expect(find.byKey(const Key('settings-nav-assignments')), findsNothing);
         await tester.tap(find.byKey(const Key('add-first-part')));

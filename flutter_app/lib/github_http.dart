@@ -5,7 +5,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/services.dart';
 
-/// JSON requests only. Downloads keep their streaming transport.
+/// GitHub JSON requests and bounded raw attachment downloads.
 class GitHubHttpReply {
   const GitHubHttpReply(this.status, this.headers, this.bytes);
   final int status;
@@ -45,6 +45,20 @@ class GitHubHttpTransport {
           '/login/device/code',
           '/login/oauth/access_token',
         ].contains(uri.path);
+    final blobDownload =
+        method == 'GET' &&
+        uri.host == 'api.github.com' &&
+        RegExp(
+          r'^/repos/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/git/blobs/[a-f0-9]{40}$',
+        ).hasMatch(uri.path);
+    final blobUpload =
+        method == 'POST' &&
+        uri.host == 'api.github.com' &&
+        RegExp(r'^/repos/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/git/blobs$')
+            .hasMatch(uri.path);
+    final transferTimeout = Duration(
+      seconds: blobDownload || blobUpload ? 180 : 30,
+    );
     if (uri.scheme != 'https' ||
         uri.userInfo.isNotEmpty ||
         uri.port != 443 ||
@@ -60,7 +74,7 @@ class GitHubHttpTransport {
           'HEAD',
         ].contains(method) ||
         maxBytes < 1 ||
-        maxBytes > 32 * 1024 * 1024) {
+        maxBytes > (blobDownload ? 50 : 32) * 1024 * 1024) {
       throw const FormatException('허용되지 않은 GitHub 요청입니다.');
     }
     if (_nativeWindows) {
@@ -97,9 +111,9 @@ class GitHubHttpTransport {
     request.followRedirects = false;
     headers.forEach(request.headers.set);
     if (body.isNotEmpty) request.add(utf8.encode(body));
-    final response = await request.close().timeout(const Duration(seconds: 30));
+    final response = await request.close().timeout(transferTimeout);
     final bytes = BytesBuilder(copy: false);
-    await for (final chunk in response.timeout(const Duration(seconds: 30))) {
+    await for (final chunk in response.timeout(transferTimeout)) {
       if (bytes.length + chunk.length > maxBytes) {
         client.close(force: true);
         _client = null;

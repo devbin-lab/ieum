@@ -1,3 +1,6 @@
+import 'workspace_ui.dart';
+import 'app_localizations.dart';
+
 import 'package:flutter/material.dart';
 
 import 'github_sync.dart';
@@ -38,7 +41,7 @@ class _PartsPanelState extends State<PartsPanel> {
       );
       if (!mounted || widget.store.project?.id != projectId) return false;
       widget.store.updateProject(project);
-      setState(() => notice = '파트 목록을 저장했습니다.');
+      setState(() => notice = tr('파트 목록을 저장했습니다.'));
       return true;
     } catch (e) {
       if (mounted) setState(() => notice = '$e');
@@ -84,7 +87,9 @@ class _PartsPanelState extends State<PartsPanel> {
             final next = [...original, name];
             if (!validProjectParts(next)) {
               update(
-                () => error = '중복되지 않는 이름을 1~40자로 입력하세요. 최대 50개까지 등록할 수 있습니다.',
+                () => error = tr(
+                  '중복되지 않는 이름을 1~40자로 입력하세요. 최대 50개까지 등록할 수 있습니다.',
+                ),
               );
               return;
             }
@@ -107,7 +112,7 @@ class _PartsPanelState extends State<PartsPanel> {
           return PopScope(
             canPop: !saving,
             child: AlertDialog(
-              title: const Text('파트 추가'),
+              title: Text(tr('파트 추가')),
               content: SizedBox(
                 width: 340,
                 child: TextField(
@@ -117,8 +122,8 @@ class _PartsPanelState extends State<PartsPanel> {
                   enabled: !saving,
                   maxLength: 40,
                   decoration: InputDecoration(
-                    labelText: '파트 이름',
-                    hintText: '예: 기획, 디렉터',
+                    labelText: tr('파트 이름'),
+                    hintText: tr('예: 기획, 디렉터'),
                     errorText: error,
                   ),
                   onSubmitted: (_) => submit(),
@@ -127,12 +132,12 @@ class _PartsPanelState extends State<PartsPanel> {
               actions: [
                 TextButton(
                   onPressed: saving ? null : () => Navigator.pop(ctx),
-                  child: const Text('취소'),
+                  child: Text(tr('취소')),
                 ),
                 FilledButton(
                   key: const Key('part-save'),
                   onPressed: saving ? null : submit,
-                  child: Text(saving ? '저장 중' : '추가'),
+                  child: Text(saving ? tr('저장 중') : tr('추가')),
                 ),
               ],
             ),
@@ -161,19 +166,19 @@ class _PartsPanelState extends State<PartsPanel> {
                 key: const Key('part-add'),
                 onPressed: busy || !canManage ? null : add,
                 icon: const Icon(Icons.add_rounded, size: 17),
-                label: const Text('파트 추가'),
+                label: Text(tr('파트 추가')),
               ),
               OutlinedButton.icon(
                 key: const Key('parts-refresh'),
                 onPressed: busy ? null : refresh,
                 icon: const Icon(Icons.refresh_rounded, size: 17),
-                label: const Text('새로고침'),
+                label: Text(tr('새로고침')),
               ),
             ],
           ),
           const SizedBox(height: 14),
-          const Text(
-            '파트를 만든 후 참여자 관리에서 소속 파트를 지정하세요.',
+          Text(
+            tr('파트를 만든 후 참여자 관리에서 소속 파트를 지정하세요.'),
             style: TextStyle(fontSize: 12, color: Color(0xff7a8581)),
           ),
           if (busy)
@@ -184,7 +189,10 @@ class _PartsPanelState extends State<PartsPanel> {
           if (notice.isNotEmpty)
             Padding(
               padding: const EdgeInsets.only(top: 12),
-              child: Text(notice, style: const TextStyle(fontSize: 12)),
+              child: Text(
+                trError(notice),
+                style: const TextStyle(fontSize: 12),
+              ),
             ),
           const SizedBox(height: 20),
           if (project.parts.isEmpty)
@@ -192,10 +200,10 @@ class _PartsPanelState extends State<PartsPanel> {
               key: const Key('parts-empty'),
               padding: const EdgeInsets.all(28),
               decoration: BoxDecoration(
-                border: Border.all(color: const Color(0xffe1e6e4)),
+                border: Border.all(color: WorkspaceUi.colors(context).line),
                 borderRadius: BorderRadius.circular(12),
               ),
-              child: const Column(
+              child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Icon(
@@ -205,12 +213,12 @@ class _PartsPanelState extends State<PartsPanel> {
                   ),
                   SizedBox(height: 12),
                   Text(
-                    '등록된 파트가 없습니다.',
+                    tr('등록된 파트가 없습니다.'),
                     style: TextStyle(fontSize: 15, fontWeight: FontWeight.w500),
                   ),
                   SizedBox(height: 6),
                   Text(
-                    '파트 추가 버튼으로 필요한 파트를 만들어 주세요.',
+                    tr('파트 추가 버튼으로 필요한 파트를 만들어 주세요.'),
                     style: TextStyle(fontSize: 12, color: Color(0xff7a8581)),
                   ),
                 ],
@@ -219,7 +227,7 @@ class _PartsPanelState extends State<PartsPanel> {
           else
             Container(
               decoration: BoxDecoration(
-                border: Border.all(color: const Color(0xffe1e6e4)),
+                border: Border.all(color: WorkspaceUi.colors(context).line),
                 borderRadius: BorderRadius.circular(12),
               ),
               child: Column(
@@ -230,12 +238,19 @@ class _PartsPanelState extends State<PartsPanel> {
                       leading: const Icon(Icons.groups_outlined, size: 20),
                       title: Text(part, style: const TextStyle(fontSize: 13)),
                       subtitle: Text(
-                        '소속 ${project.people.where((p) => p.parts.contains(part)).length}명',
+                        tr(
+                          '소속 {v0}명',
+                          args: {
+                            'v0': project.people
+                                .where((p) => p.parts.contains(part))
+                                .length,
+                          },
+                        ),
                         style: const TextStyle(fontSize: 11),
                       ),
                       trailing: IconButton(
                         key: ValueKey('part-delete-$part'),
-                        tooltip: '파트 삭제',
+                        tooltip: tr('파트 삭제'),
                         onPressed: busy || !canManage
                             ? null
                             : () => save(
@@ -253,8 +268,8 @@ class _PartsPanelState extends State<PartsPanel> {
               ),
             ),
           const SizedBox(height: 12),
-          const Text(
-            '삭제한 파트의 참여자 배정은 해제되며, 기존 작업 내역은 유지됩니다.',
+          Text(
+            tr('삭제한 파트의 참여자 배정은 해제되며, 기존 작업 내역은 유지됩니다.'),
             style: TextStyle(fontSize: 11, color: Color(0xff929d98)),
           ),
         ],

@@ -27,8 +27,23 @@ import 'roles_panel.dart';
 import 'project_catalog.dart';
 import 'notification_inbox.dart';
 import 'project_schedule_view.dart';
+import 'work_status_palette.dart' as work_palette;
 import 'task_comments_panel.dart';
+import 'task_detail_toolbar.dart';
+import 'workspace_ui.dart';
+import 'app_preferences.dart';
+import 'app_theme.dart';
+import 'appearance_settings.dart';
+import 'markdown_content.dart';
+import 'task_resources_panel.dart';
+import 'project_resource_settings.dart';
+import 'app_localizations.dart';
+
+import 'package:flutter_localizations/flutter_localizations.dart';
+
 import 'project_connections_view.dart';
+import 'project_timeline_view.dart';
+import 'project_shortcuts_view.dart';
 
 const purple = Color(0xff7963d5),
     ink = Color(0xff302b3c),
@@ -36,59 +51,46 @@ const purple = Color(0xff7963d5),
     border = Color(0xffe1e3e6),
     canvas = Color(0xfffafbfa);
 const iconRailSurface = Color(0xffe6e8e7);
-const boardStatuses = {'todo': '확인중', 'doing': '진행중', 'done': '완료'};
+const boardStatuses = {
+  'todo': '확인중',
+  'doing': '진행중',
+  'review': '검토중',
+  'done': '완료',
+  'hold': '보류',
+  'drop': '드랍',
+};
 const iconRailSelected = Color(0xffcfd4d2), iconRailActive = Color(0xff302b3c);
 const iconRailMuted = Color(0xff505753);
-const _customStatusColors = [
-  Color(0xff58798a),
-  Color(0xff8a6e9d),
-  Color(0xff9a713d),
-  Color(0xff4e8078),
-];
-const _customStatusSurfaces = [
-  Color(0xffedf3f5),
-  Color(0xfff3eff7),
-  Color(0xfff8f1e8),
-  Color(0xffedf5f3),
-];
-int _stagePaletteIndex(String id) =>
-    id.codeUnits.fold<int>(0, (sum, value) => sum + value) %
-    _customStatusColors.length;
-Color statusColor(String id) =>
-    {
-      'todo': const Color(0xff6e687b),
-      'doing': purple,
-      'review': const Color(0xff8c652d),
-      'rework': const Color(0xffa0445a),
-      'done': const Color(0xff417458),
-    }[id] ??
-    _customStatusColors[_stagePaletteIndex(id)];
-Color stageSurfaceColor(String id) =>
-    {
-      'todo': const Color(0xfff1f3f5),
-      'doing': const Color(0xfff2efff),
-      'review': const Color(0xfffff5e8),
-      'rework': const Color(0xfffff0f2),
-      'done': const Color(0xffedf6ef),
-    }[id] ??
-    _customStatusSurfaces[_stagePaletteIndex(id)];
+Map<String, String> _localizedBoardLabels() => {
+  for (final entry in boardStatuses.entries) entry.key: tr(entry.value),
+};
+Map<String, String> _localizedPriorities() => {
+  for (final entry in priorities.entries) entry.key: tr(entry.value),
+};
+Color statusColor(String id) => work_palette.statusColor(id);
+Color stageSurfaceColor(String id) => work_palette.stageSurfaceColor(id);
 Color priorityColor(String id) => id == 'high'
     ? const Color(0xff9a622b)
     : id == 'low'
     ? const Color(0xff50735a)
     : muted;
-Widget badge(String text, {Color color = muted}) => Container(
-  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-  decoration: BoxDecoration(
-    color: color.withValues(alpha: .09),
-    borderRadius: BorderRadius.circular(5),
-  ),
-  child: Text(
-    text,
-    maxLines: 1,
-    overflow: TextOverflow.ellipsis,
-    style: TextStyle(color: color, fontSize: 10),
-  ),
+Widget badge(String text, {Color? color}) => Builder(
+  builder: (context) {
+    final tint = color ?? Theme.of(context).colorScheme.onSurfaceVariant;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+      decoration: BoxDecoration(
+        color: tint.withValues(alpha: .09),
+        borderRadius: BorderRadius.circular(5),
+      ),
+      child: Text(
+        text,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(color: tint, fontSize: 10),
+      ),
+    );
+  },
 );
 Widget avatar(Person p, {double size = 28}) {
   return CircleAvatar(
@@ -105,36 +107,54 @@ Widget avatar(Person p, {double size = 28}) {
   );
 }
 
-Widget heading(String title, String subtitle) => Column(
-  crossAxisAlignment: CrossAxisAlignment.start,
-  children: [
-    Text(
-      title,
-      style: const TextStyle(fontSize: 19, fontWeight: FontWeight.w700),
-    ),
-    const SizedBox(height: 8),
-    Text(subtitle, style: const TextStyle(fontSize: 11, color: muted)),
-  ],
+Widget heading(String title, String subtitle) => Builder(
+  builder: (context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Text(
+        title,
+        style: const TextStyle(fontSize: 19, fontWeight: FontWeight.w700),
+      ),
+      const SizedBox(height: 8),
+      Text(
+        subtitle,
+        style: TextStyle(
+          fontSize: 11,
+          color: Theme.of(context).colorScheme.onSurfaceVariant,
+        ),
+      ),
+    ],
+  ),
 );
 String shortId(String id) => id.startsWith('TASK-')
     ? 'IE-${id.substring(id.length - 6).toUpperCase()}'
     : id;
 String shortDate(String date) => date.isEmpty
-    ? '미정'
+    ? tr('미정')
     : '${int.parse(date.substring(5, 7))}.${date.substring(8, 10)}';
+
+String displayDateTime(String value) {
+  final time = DateTime.tryParse(value)?.toLocal();
+  if (time == null) return tr('기록 없음');
+  String two(int value) => value.toString().padLeft(2, '0');
+  return '${time.year}.${two(time.month)}.${two(time.day)} '
+      '${two(time.hour)}:${two(time.minute)}';
+}
+
+String displayDate(String value) =>
+    value.isEmpty ? tr('미정') : value.replaceAll('-', '.');
+
+String displayActivityMessage(String value) => value == '코멘트를 추가했습니다.'
+    ? '댓글을 추가했습니다.'
+    : value.replaceFirst(RegExp(r'^코멘트 · '), '댓글 · ');
 
 String taskChangeValue(String key, dynamic value) {
   if (value == null) return '—';
-  if (key == 'pinned') return value == 'true' ? '고정' : '해제';
+  if (key == 'pinned') return value == 'true' ? tr('고정') : tr('해제');
   return '$value';
 }
 
-class IeumApp extends StatelessWidget {
-  final TaskStore store;
-  final GitHubSync? sync;
-  final Widget? home;
-  final VoidCallback? onSignOut;
-  final GitHubSession? session;
+class IeumApp extends StatefulWidget {
   const IeumApp({
     super.key,
     required this.store,
@@ -142,100 +162,77 @@ class IeumApp extends StatelessWidget {
     this.home,
     this.onSignOut,
     this.session,
+    this.preferences,
   });
+  final TaskStore store;
+  final GitHubSync? sync;
+  final Widget? home;
+  final VoidCallback? onSignOut;
+  final GitHubSession? session;
+  final AppPreferences? preferences;
   @override
-  Widget build(BuildContext context) => MaterialApp(
-    title: '이음',
-    debugShowCheckedModeBanner: false,
-    builder: (context, child) => DesktopFrame(child: child!),
-    theme: ThemeData(
-      useMaterial3: true,
-      fontFamily: 'Malgun Gothic',
-      colorScheme: ColorScheme.fromSeed(
-        seedColor: purple,
-        surface: Colors.white,
-      ),
-      scaffoldBackgroundColor: canvas,
-      dialogTheme: DialogThemeData(
-        backgroundColor: Colors.white,
-        surfaceTintColor: Colors.transparent,
-        elevation: 24,
-        shadowColor: ink.withValues(alpha: .20),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-          side: const BorderSide(color: border),
-        ),
-      ),
-      tooltipTheme: TooltipThemeData(
-        decoration: BoxDecoration(
-          color: ink,
-          borderRadius: BorderRadius.circular(6),
-        ),
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-        textStyle: const TextStyle(fontSize: 11, color: Colors.white),
-        waitDuration: const Duration(milliseconds: 450),
-      ),
-      textButtonTheme: TextButtonThemeData(
-        style: TextButton.styleFrom(
-          foregroundColor: purple,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-          textStyle: const TextStyle(
-            fontFamily: 'Malgun Gothic',
-            fontSize: 13,
-            fontWeight: FontWeight.w600,
+  State<IeumApp> createState() => _IeumAppState();
+}
+
+class _IeumAppState extends State<IeumApp> {
+  late AppPreferences preferences = widget.preferences ?? AppPreferences();
+  @override
+  void didUpdateWidget(covariant IeumApp oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.preferences != widget.preferences) {
+      if (oldWidget.preferences == null) preferences.dispose();
+      preferences = widget.preferences ?? AppPreferences();
+    }
+  }
+
+  @override
+  void dispose() {
+    if (widget.preferences == null) preferences.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AnimatedBuilder(
+    animation: preferences,
+    builder: (context, _) {
+      setAppLanguage(preferences.languageCode);
+      return AppPreferencesScope(
+        preferences: preferences,
+        child: MaterialApp(
+          title: '이음',
+          debugShowCheckedModeBanner: false,
+          locale: Locale(preferences.languageCode),
+          supportedLocales: AppLocalizations.supportedLocales,
+          localizationsDelegates: const [
+            AppLocalizations.delegate,
+            GlobalMaterialLocalizations.delegate,
+            GlobalWidgetsLocalizations.delegate,
+            GlobalCupertinoLocalizations.delegate,
+          ],
+          themeMode: preferences.themeMode,
+          themeAnimationDuration: const Duration(milliseconds: 140),
+          theme: buildAppTheme(
+            preferences.accentForBrightness(Brightness.light),
+            Brightness.light,
+            languageCode: preferences.languageCode,
           ),
-        ),
-      ),
-      textTheme: const TextTheme(
-        bodyMedium: TextStyle(fontSize: 13, color: ink),
-      ),
-      inputDecorationTheme: InputDecorationTheme(
-        filled: true,
-        fillColor: Colors.white,
-        isDense: true,
-        contentPadding: const EdgeInsets.all(13),
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(8),
-          borderSide: const BorderSide(color: border),
-        ),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(8),
-          borderSide: const BorderSide(color: border),
-        ),
-        labelStyle: const TextStyle(fontSize: 12, color: muted),
-      ),
-      filledButtonTheme: FilledButtonThemeData(
-        style: FilledButton.styleFrom(
-          backgroundColor: purple,
-          textStyle: const TextStyle(
-            fontFamily: 'Malgun Gothic',
-            fontSize: 13,
-            fontWeight: FontWeight.w600,
+          darkTheme: buildAppTheme(
+            preferences.accentForBrightness(Brightness.dark),
+            Brightness.dark,
+            languageCode: preferences.languageCode,
           ),
-          minimumSize: const Size(40, 40),
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          builder: (context, child) => DesktopFrame(child: child!),
+          home:
+              widget.home ??
+              Workspace(
+                store: widget.store,
+                sync: widget.sync,
+                onSignOut: widget.onSignOut,
+                session: widget.session,
+              ),
         ),
-      ),
-      outlinedButtonTheme: OutlinedButtonThemeData(
-        style: OutlinedButton.styleFrom(
-          foregroundColor: ink,
-          textStyle: const TextStyle(fontFamily: 'Malgun Gothic', fontSize: 13),
-          minimumSize: const Size(40, 40),
-          side: const BorderSide(color: border),
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-        ),
-      ),
-    ),
-    home:
-        home ??
-        Workspace(
-          store: store,
-          sync: sync,
-          onSignOut: onSignOut,
-          session: session,
-        ),
+      );
+    },
   );
 }
 
@@ -249,6 +246,8 @@ class Workspace extends StatefulWidget {
   final List<SavedProject> notificationProjects;
   final String? sessionNotice;
   final Future<String> Function(String)? onRename;
+  final Future<void> Function(SavedProject, String)? onOpenProjectTask;
+  final String? initialTaskId;
   const Workspace({
     super.key,
     required this.store,
@@ -260,6 +259,8 @@ class Workspace extends StatefulWidget {
     this.notificationProjects = const [],
     this.sessionNotice,
     this.onRename,
+    this.onOpenProjectTask,
+    this.initialTaskId,
   });
   @override
   State<Workspace> createState() => _WorkspaceState();
@@ -279,9 +280,37 @@ typedef _WorkspaceView = ({
 
 class _WorkspaceState extends State<Workspace>
     with SingleTickerProviderStateMixin {
+  WorkspaceColors get colors => WorkspaceUi.colors(context);
+  Color get purple => colors.accent;
+  Color get ink => colors.ink;
+  Color get muted => colors.muted;
+  Color get border => colors.line;
+  Color get canvas => colors.background;
+  Color get surface => colors.surface;
+  Color get iconRailSurface => colors.chrome;
+  Color get iconRailSelected => colors.chromeHover;
+  Color get iconRailActive => colors.ink;
+  Color get iconRailMuted => colors.chromeInk;
+  Map<String, String> get boardStatuses => _localizedBoardLabels();
+  Map<String, String> get priorities => _localizedPriorities();
+  final _standalonePreferences = AppPreferences();
+  Color statusColor(String id) =>
+      work_palette.statusColor(id, brightness: Theme.of(context).brightness);
+  Color stageSurfaceColor(String id) => work_palette.stageSurfaceColor(
+    id,
+    brightness: Theme.of(context).brightness,
+  );
+  Color priorityColor(String id) => id == 'high'
+      ? colors.warning
+      : id == 'low'
+      ? colors.success
+      : muted;
   int page = 6;
   SettingsSection settingsSection = SettingsSection.general;
   TaskView taskView = TaskView.list;
+  int lastWorkPage = 6;
+  String? focusedTaskId;
+  bool openingRecordTask = false;
   String search = '', part = '', scope = 'all', relatedMember = '';
   String statusFilter = '', deadlineFilter = '', taskSort = 'updated';
   int taskPage = 0;
@@ -320,7 +349,7 @@ class _WorkspaceState extends State<Workspace>
       final saved = jsonDecode(s.meta('ui.workspace')) as Map;
       final savedPage = saved['page'];
       migrateSavedView = saved['projectTabsVersion'] != 1;
-      if (savedPage is int && savedPage >= 0 && savedPage <= 6) {
+      if (savedPage is int && savedPage >= 0 && savedPage <= 8) {
         // The old home combined schedule and task management. Preserve that
         // content under Tasks once, then respect future Schedule selections.
         page = migrateSavedView && (savedPage == 0 || savedPage == 3)
@@ -334,6 +363,11 @@ class _WorkspaceState extends State<Workspace>
                     .firstOrNull ??
                 SettingsSection.general;
       taskView = saved['view'] == 'kanban' ? TaskView.kanban : TaskView.list;
+      lastWorkPage = const {0, 6}.contains(saved['lastWorkPage'])
+          ? saved['lastWorkPage'] as int
+          : page == 0
+          ? 0
+          : 6;
     } catch (_) {
       // New projects start with the task list.
     }
@@ -344,10 +378,16 @@ class _WorkspaceState extends State<Workspace>
     );
     _viewHistory.add(_currentView);
     if (page == 4) refreshNotificationHistory();
+    if (widget.initialTaskId != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) openLocalTask(widget.initialTaskId!);
+      });
+    }
   }
 
   bool projectViewInitialized = false;
-  bool get hasProjectSidebar => page == 0 || page == 5 || page == 6;
+  bool get hasProjectSidebar =>
+      page == 0 || page == 5 || page == 6 || page == 7 || page == 8;
   bool get isTaskPage => page == 6;
 
   @override
@@ -371,6 +411,7 @@ class _WorkspaceState extends State<Workspace>
 
   @override
   void dispose() {
+    _standalonePreferences.dispose();
     taskSearch.dispose();
     _projectViewAnimation.dispose();
     final controller = titlebarSidebar;
@@ -384,6 +425,7 @@ class _WorkspaceState extends State<Workspace>
     setState(() {
       final previous = _currentView;
       change();
+      if (page == 0 || page == 6) lastWorkPage = page;
       final next = _currentView;
       if (next != previous) {
         _viewHistory.removeRange(_viewHistoryIndex + 1, _viewHistory.length);
@@ -426,6 +468,7 @@ class _WorkspaceState extends State<Workspace>
       'view': taskView.name,
       'settings': settingsSection.name,
       'projectTabsVersion': 1,
+      'lastWorkPage': lastWorkPage,
     }),
   );
 
@@ -447,6 +490,7 @@ class _WorkspaceState extends State<Workspace>
       _viewHistoryIndex = nextIndex;
       final view = _viewHistory[nextIndex];
       page = view.page;
+      if (page == 0 || page == 6) lastWorkPage = page;
       settingsSection = view.settings;
       taskView = view.taskView;
       notificationProject = view.notificationProject;
@@ -460,22 +504,16 @@ class _WorkspaceState extends State<Workspace>
     if (page == 4) refreshNotificationHistory();
   }
 
-  static const titles = ['작업', '내 변경내역', '프로젝트 설정'];
-  static const subtitles = [
-    '프로젝트 작업을 목록 또는 칸반보드로 확인하고 관리하세요.',
-    '개인 작업을 팀의 통합본으로 연결하세요.',
-    '팀의 다음 단계를 준비하세요.',
-  ];
   void message(String text) {
     if (!mounted) return;
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(
         SnackBar(
-          content: Text(text),
+          content: Text(trEventMessage(text)),
           behavior: SnackBarBehavior.floating,
           width: min(520, MediaQuery.sizeOf(context).width - 32),
-          backgroundColor: ink,
+          backgroundColor: Theme.of(context).snackBarTheme.backgroundColor,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(10),
           ),
@@ -495,9 +533,9 @@ class _WorkspaceState extends State<Workspace>
     if (task == null && s.isProject && s.partRules.isEmpty) {
       if (s.actor.has('role.manage')) {
         selectSettings(SettingsSection.roles);
-        message('첫 작업을 등록하기 전에 팀에서 사용할 파트를 추가하세요.');
+        message(tr('첫 작업을 등록하기 전에 팀에서 사용할 파트를 추가하세요.'));
       } else {
-        message('프로젝트 관리자에게 작업을 등록할 파트 추가를 요청하세요.');
+        message(tr('프로젝트 관리자에게 작업을 등록할 파트 추가를 요청하세요.'));
       }
       return;
     }
@@ -514,7 +552,7 @@ class _WorkspaceState extends State<Workspace>
           .availableHandoffs(task)
           .where((plan) => plan.destinationId == target)
           .toList();
-      if (choices.isEmpty) throw StateError('현재 작업을 이 단계로 전달할 수 없습니다.');
+      if (choices.isEmpty) throw StateError(tr('현재 작업을 이 단계로 전달할 수 없습니다.'));
       await chooseHandoff(choices);
     } catch (e) {
       if (mounted) message(e.toString().replaceFirst('Bad state: ', ''));
@@ -522,14 +560,42 @@ class _WorkspaceState extends State<Workspace>
   }
 
   String boardCategory(WorkTask task) => workflowBoardCategory(task, s.project);
-  String boardKey(WorkTask task) =>
-      boardCategory(task) == 'inProgress' ? 'doing' : boardCategory(task);
+  String boardKey(WorkTask task) => work_palette.workStatusKey(task, s.project);
   String purposeLabel(WorkTask task) =>
-      workflowPurposeLabels[workflowTaskPurpose(task, s.project)] ?? '작성';
+      tr(workflowPurposeLabels[workflowTaskPurpose(task, s.project)] ?? '작업');
+  String taskAssigneeId(WorkTask task) => s.manualWorkflow
+      ? task.assigneeId
+      : s.project?.workflowSheet == null || task.workflowTarget == 'legacy'
+      ? task.currentId
+      : task.workflowPerson;
+  String taskAssigneeLabel(WorkTask task) {
+    final personId = taskAssigneeId(task);
+    if (personId.isNotEmpty) return s.member(personId).name;
+    if (task.workflowTarget == 'role:owner') return tr('관리자');
+    if (task.workflowTarget.startsWith('part:')) {
+      return tr(
+        '{value0} 전체',
+        args: {'value0': workflowCurrentPartLabel(task, s.project)},
+      );
+    }
+    return tr('모든 작업자');
+  }
+
+  String taskPartLabel(WorkTask task) =>
+      s.manualWorkflow ? task.part : workflowCurrentPartLabel(task, s.project);
   List<TaskHandoffPlan> taskActions(WorkTask task) => [
     ...s.availableHandoffs(task),
     ...s.availableTransfers(task),
   ];
+  List<TaskHandoffPlan> cardActions(WorkTask task) => taskActions(task)
+      .where(
+        (plan) => !const {
+          'manual-review',
+          'manual-hold',
+          'manual-drop',
+        }.contains(plan.routeId),
+      )
+      .toList();
   bool wasTransferred(WorkTask task) {
     if (task.workflowSender.isNotEmpty) return true;
     if (task.workflowRoute.isEmpty ||
@@ -547,19 +613,13 @@ class _WorkspaceState extends State<Workspace>
     return route?.assignment != 'keep';
   }
 
-  String destinationCategory(String id) {
-    final stage = s.project?.stage(id);
-    if (id == 'review' && (stage == null || stage.category.isEmpty) ||
-        id == 'rework') {
-      return 'inProgress';
-    }
-    return stage?.resolvedCategory ??
-        (id == 'todo'
-            ? 'todo'
-            : id == 'done'
-            ? 'done'
-            : 'inProgress');
-  }
+  String destinationCategory(String id) => boardStatuses.containsKey(id)
+      ? id
+      : id == 'rework'
+      ? 'todo'
+      : s.project?.stage(id)?.isCompleted == true
+      ? 'done'
+      : 'doing';
 
   Future<void> moveToCategory(WorkTask task, String category) async {
     if (handoffOpen) return;
@@ -568,7 +628,7 @@ class _WorkspaceState extends State<Workspace>
           .availableHandoffs(task)
           .where((plan) => destinationCategory(plan.destinationId) == category)
           .toList();
-      if (choices.isEmpty) throw StateError('이 작업을 해당 열로 전달할 수 없습니다.');
+      if (choices.isEmpty) throw StateError(tr('이 작업을 해당 열로 전달할 수 없습니다.'));
       await chooseHandoff(choices);
     } catch (e) {
       if (mounted) message(e.toString().replaceFirst('Bad state: ', ''));
@@ -581,12 +641,14 @@ class _WorkspaceState extends State<Workspace>
       final selected = await showDialog<TaskHandoffPlan>(
         context: context,
         builder: (context) => SimpleDialog(
-          title: const Text('전달 경로 선택'),
+          title: Text(tr('전달 경로 선택')),
           children: [
             for (final choice in choices)
               SimpleDialogOption(
                 onPressed: () => Navigator.pop(context, choice),
-                child: Text('${choice.buttonLabel} · ${choice.recipientLabel}'),
+                child: Text(
+                  '${tr(choice.buttonLabel)} · ${choice.recipientLabel}',
+                ),
               ),
           ],
         ),
@@ -607,8 +669,22 @@ class _WorkspaceState extends State<Workspace>
         s.confirmHandoff(result.plan, reason: result.reason);
         message(
           result.plan.maintainsStatus
-              ? '${result.plan.recipientLabel}에게 전달했습니다. ${result.plan.routeLabel}.'
-              : '${result.plan.destinationName}으로 변경했습니다.',
+              ? tr(
+                  '{value0}에게 전달했습니다. {value1}.',
+                  args: {
+                    'value0': result.plan.recipientLabel,
+                    'value1': result.plan.routeLabel,
+                  },
+                )
+              : tr(
+                  '{value0}으로 변경했습니다.',
+                  args: {
+                    'value0': trStageName(
+                      result.plan.destinationId,
+                      result.plan.destinationName,
+                    ),
+                  },
+                ),
         );
       });
     } finally {
@@ -620,6 +696,7 @@ class _WorkspaceState extends State<Workspace>
     TaskHandoffPlan plan, {
     bool compact = false,
     bool interactive = true,
+    bool secondary = false,
     String? surface,
   }) {
     final key = interactive
@@ -627,7 +704,16 @@ class _WorkspaceState extends State<Workspace>
             'task-handoff-${surface == null ? (compact ? '' : 'detail-') : '$surface-'}${plan.taskId}-${plan.action}-${plan.destinationId}${plan.routeId.isEmpty ? '' : '-${plan.routeId}'}',
           )
         : null;
-    final actionLabel = plan.buttonLabel;
+    final actionLabel = compact
+        ? switch (plan.routeId) {
+            'manual-handoff' => tr('전달'),
+            'manual-finish' => tr('완료'),
+            'manual-start' => tr('시작'),
+            'manual-resume' => tr('재개'),
+            'manual-restore' => tr('복원'),
+            _ => tr(plan.buttonLabel),
+          }
+        : tr(plan.buttonLabel);
     final matching = taskActions(s.find(plan.taskId))
         .where(
           (other) =>
@@ -656,23 +742,32 @@ class _WorkspaceState extends State<Workspace>
       overflow: compact ? TextOverflow.ellipsis : null,
     );
     return Tooltip(
-      message: '${plan.routeLabel}\n다음 담당자: ${plan.recipientLabel}',
-      child: compact || plan.action == 'reject'
+      message: tr(
+        '{value0}\n다음 담당자: {value1}',
+        args: {'value0': plan.routeLabel, 'value1': plan.recipientLabel},
+      ),
+      child: compact
+          ? TextButton.icon(
+              key: key,
+              onPressed: onPressed,
+              icon: icon,
+              label: text,
+              style: TextButton.styleFrom(
+                foregroundColor: muted,
+                minimumSize: const Size(0, 30),
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+                textStyle: const TextStyle(
+                  fontFamily: 'Malgun Gothic',
+                  fontSize: 10,
+                ),
+              ),
+            )
+          : secondary || plan.action == 'reject'
           ? OutlinedButton.icon(
               key: key,
               onPressed: onPressed,
               icon: icon,
               label: text,
-              style: compact
-                  ? OutlinedButton.styleFrom(
-                      minimumSize: const Size(0, 32),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 9,
-                        vertical: 7,
-                      ),
-                      textStyle: const TextStyle(fontSize: 11),
-                    )
-                  : null,
             )
           : FilledButton.icon(
               key: key,
@@ -687,14 +782,14 @@ class _WorkspaceState extends State<Workspace>
     showGeneralDialog<void>(
       context: context,
       barrierDismissible: true,
-      barrierLabel: '작업 상세 닫기',
+      barrierLabel: tr('작업 상세 닫기'),
       barrierColor: Colors.black.withValues(alpha: .18),
       pageBuilder: (ctx, a, b) => Align(
         alignment: Alignment.centerRight,
         child: SizedBox(
           width: 470,
           child: Material(
-            color: Colors.white,
+            color: surface,
             child: SafeArea(
               child: AnimatedBuilder(
                 animation: s,
@@ -713,16 +808,16 @@ class _WorkspaceState extends State<Workspace>
       final target = await getSaveLocation(
         suggestedName: 'ieum-flutter-changes.json',
         acceptedTypeGroups: [
-          const XTypeGroup(label: 'JSON 변경안', extensions: ['json']),
+          XTypeGroup(label: tr('JSON 변경안'), extensions: ['json']),
         ],
       );
       if (target == null) return;
       await File(target.path).writeAsString(
         '${const JsonEncoder.withIndent('  ').convert(s.exportChanges())}\n',
       );
-      message('개인 변경안을 JSON 파일로 내보냈습니다.');
+      message(tr('개인 변경안을 JSON 파일로 내보냈습니다.'));
     } catch (e) {
-      message('내보내기 실패: $e');
+      message(tr('내보내기 실패: {value0}', args: {'value0': e}));
     } finally {
       if (mounted) setState(() => fileBusy = false);
     }
@@ -730,36 +825,38 @@ class _WorkspaceState extends State<Workspace>
 
   Future<void> import() async {
     if (!s.canImportManually) {
-      message('읽기 전용 · 수동 가져오기 권한이 없습니다.');
+      message(tr('읽기 전용 · 수동 가져오기 권한이 없습니다.'));
       return;
     }
     setState(() => fileBusy = true);
     try {
       final file = await openFile(
         acceptedTypeGroups: [
-          const XTypeGroup(label: '통합본 JSON', extensions: ['json']),
+          XTypeGroup(label: tr('통합본 JSON'), extensions: ['json']),
         ],
       );
       if (file == null) return;
       if (await File(file.path).length() > 10 * 1024 * 1024) {
-        throw StateError('통합본은 10MB 이하만 지원합니다.');
+        throw StateError(tr('통합본은 10MB 이하만 지원합니다.'));
       }
       if (!mounted) return;
       final trusted = await showDialog<bool>(
         context: context,
         builder: (ctx) => IeumDialog(
-          title: const Text('신뢰할 수 있는 통합본인가요?'),
-          content: const Text(
-            '수동 JSON은 GitHub에서 검증된 통합본과 다릅니다. 출처를 확인한 파일만 가져오세요. 현재 프로젝트의 업무 데이터가 변경되며 충돌은 자동 덮어쓰지 않습니다.',
+          title: Text(tr('신뢰할 수 있는 통합본인가요?')),
+          content: Text(
+            tr(
+              '수동 JSON은 GitHub에서 검증된 통합본과 다릅니다. 출처를 확인한 파일만 가져오세요. 현재 프로젝트의 업무 데이터가 변경되며 충돌은 자동 덮어쓰지 않습니다.',
+            ),
           ),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(ctx),
-              child: const Text('취소'),
+              child: Text(tr('취소')),
             ),
             FilledButton(
               onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('출처 확인 · 가져오기'),
+              child: Text(tr('출처 확인 · 가져오기')),
             ),
           ],
         ),
@@ -771,12 +868,12 @@ class _WorkspaceState extends State<Workspace>
       );
 
       if (result.applied) {
-        message('통합본을 반영했습니다. 개인 변경은 보존했습니다.');
+        message(tr('통합본을 반영했습니다. 개인 변경은 보존했습니다.'));
       } else if (mounted) {
         await showDialog<void>(
           context: context,
           builder: (ctx) => IeumDialog(
-            title: const Text('통합 전 확인이 필요해요'),
+            title: Text(tr('통합 전 확인이 필요해요')),
             width: 580,
             icon: Icons.merge_outlined,
             content: SizedBox(
@@ -785,8 +882,8 @@ class _WorkspaceState extends State<Workspace>
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text(
-                      '데이터는 변경하지 않았습니다. 양쪽 변경을 확인해 주세요.',
+                    Text(
+                      tr('데이터는 변경하지 않았습니다. 양쪽 변경을 확인해 주세요.'),
                       style: TextStyle(fontSize: 12, color: muted),
                     ),
                     const SizedBox(height: 15),
@@ -794,7 +891,7 @@ class _WorkspaceState extends State<Workspace>
                       (c) => Container(
                         margin: const EdgeInsets.only(bottom: 12),
                         padding: const EdgeInsets.all(15),
-                        color: const Color(0xfffaf0f3),
+                        color: Theme.of(context).colorScheme.errorContainer,
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
@@ -807,7 +904,13 @@ class _WorkspaceState extends State<Workspace>
                             ),
                             const SizedBox(height: 7),
                             SelectableText(
-                              '내 변경: ${c['local']}\n통합본: ${c['remote']}',
+                              tr(
+                                '내 변경: {value0}\n통합본: {value1}',
+                                args: {
+                                  'value0': c['local'],
+                                  'value1': c['remote'],
+                                },
+                              ),
                               style: const TextStyle(fontSize: 11),
                             ),
                           ],
@@ -821,14 +924,14 @@ class _WorkspaceState extends State<Workspace>
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(ctx),
-                child: const Text('닫기'),
+                child: Text(tr('닫기')),
               ),
             ],
           ),
         );
       }
     } catch (e) {
-      message('통합본 가져오기 실패: $e');
+      message(tr('통합본 가져오기 실패: {value0}', args: {'value0': e}));
     } finally {
       if (mounted) setState(() => fileBusy = false);
     }
@@ -841,18 +944,96 @@ class _WorkspaceState extends State<Workspace>
     refreshNotificationHistory();
   }
 
+  Future<void> openRecordTask(Map<String, dynamic> record) async {
+    if (openingRecordTask) return;
+    final taskId = record['taskId'];
+    if (taskId is! String || taskId.isEmpty) return;
+    final path = record['projectPath'] as String? ?? s.filename;
+    openingRecordTask = true;
+    try {
+      if (path == s.filename) {
+        await openLocalTask(taskId);
+        return;
+      }
+      final entry = notificationProjectList()
+          .where((project) => project.path == path)
+          .firstOrNull;
+      if (entry == null || widget.onOpenProjectTask == null) {
+        message(tr('이 작업의 프로젝트를 열 수 없습니다. 프로젝트 연결을 확인해 주세요.'));
+        return;
+      }
+      await widget.onOpenProjectTask!(entry, taskId);
+    } catch (error) {
+      if (mounted) message(error.toString().replaceFirst('Bad state: ', ''));
+    } finally {
+      openingRecordTask = false;
+    }
+  }
+
+  Future<void> openLocalTask(String taskId) async {
+    if (!mounted) return;
+    WorkTask task;
+    try {
+      task = s.find(taskId);
+    } catch (_) {
+      message(tr('이 작업을 찾을 수 없습니다. 최신 프로젝트 기록을 확인해 주세요.'));
+      return;
+    }
+    if (task.isDeleted) {
+      message(tr('삭제된 작업입니다. 변경 기록은 타임라인에서 확인할 수 있습니다.'));
+      return;
+    }
+    rememberView(() {
+      page = task.isArchived || task.isDropped ? 6 : lastWorkPage;
+      focusedTaskId = task.id;
+      scope = task.isArchived ? 'archived' : 'all';
+      search = '';
+      part = '';
+      relatedMember = '';
+      statusFilter = '';
+      deadlineFilter = '';
+      taskPage = 0;
+      taskSearch.clear();
+    });
+    await WidgetsBinding.instance.endOfFrame;
+    if (mounted) {
+      setState(() => focusedTaskId = null);
+      details(s.find(task.id));
+    }
+  }
+
+  List<Map<String, dynamic>> get currentProjectActivity {
+    final records = <Map<String, dynamic>>[];
+    collectProjectActivity(
+      records,
+      s,
+      projectPath: s.filename,
+      projectName: s.project?.name ?? tr('로컬 작업 공간'),
+    );
+    records.sort((a, b) {
+      final left = DateTime.tryParse('${a['createdAt']}') ?? DateTime(1970);
+      final right = DateTime.tryParse('${b['createdAt']}') ?? DateTime(1970);
+      return right.compareTo(left);
+    });
+    return records.take(300).toList();
+  }
+
   void refreshNotificationHistory() {
     final projects = notificationProjectList();
     final result = <Map<String, dynamic>>[];
     if (projects.isEmpty) {
       for (final notification in s.notifications) {
+        if (notification['recipientId'] is String &&
+            notification['recipientId'] != s.profileId) {
+          continue;
+        }
         final taskDetails = notificationTaskDetails(s, notification);
         result.add({
           ...notification,
           ...taskDetails,
           'projectPath': s.filename,
-          'projectName': s.project?.name ?? '현재 프로젝트',
-          'projectSlug': '로컬',
+          'projectName': s.project?.name ?? tr('현재 프로젝트'),
+          'projectSlug': tr('로컬'),
           'searchableText':
               '${notification['title'] ?? ''} ${notification['reason'] ?? ''} ${taskDetails['taskDescription'] ?? ''} ${taskDetails['taskReworkReason'] ?? ''}',
         });
@@ -872,6 +1053,10 @@ class _WorkspaceState extends State<Workspace>
           continue;
         }
         for (final notification in source.notifications) {
+          if (notification['recipientId'] is String &&
+              notification['recipientId'] != source.profileId) {
+            continue;
+          }
           final taskDetails = notificationTaskDetails(source, notification);
           result.add({
             ...notification,
@@ -894,7 +1079,125 @@ class _WorkspaceState extends State<Workspace>
       final right = DateTime.tryParse('${b['createdAt']}') ?? DateTime(1970);
       return right.compareTo(left);
     });
-    if (mounted) setState(() => notificationHistory = result);
+    if (mounted) {
+      setState(() {
+        notificationHistory = result;
+      });
+    }
+  }
+
+  void collectProjectActivity(
+    List<Map<String, dynamic>> target,
+    TaskStore source, {
+    required String projectPath,
+    required String projectName,
+  }) {
+    final tasks = {for (final task in source.storedTasks) task.id: task};
+    String personName(String id) => id.isEmpty ? '작업자' : source.member(id).name;
+
+    void add({
+      required String id,
+      required String kind,
+      required String taskId,
+      required String taskTitle,
+      required String actorId,
+      required String message,
+      required String createdAt,
+    }) {
+      if (DateTime.tryParse(createdAt) == null || message.trim().isEmpty) {
+        return;
+      }
+      target.add({
+        'id': '$projectPath:$id',
+        'kind': kind,
+        'taskId': taskId,
+        'taskTitle': taskTitle,
+        'actorId': actorId,
+        'actorName': personName(actorId),
+        'message': message,
+        'createdAt': createdAt,
+        'projectPath': projectPath,
+        'projectName': projectName,
+      });
+    }
+
+    for (final task in tasks.values) {
+      if (task.createdAt.isNotEmpty) {
+        add(
+          id: '${task.id}:created',
+          kind: 'created',
+          taskId: task.id,
+          taskTitle: task.title,
+          actorId: task.creatorId,
+          message: '작업을 등록했습니다.',
+          createdAt: task.createdAt,
+        );
+      }
+      for (final transition in task.transitionHistory) {
+        final from = source.workflowStatusName('${transition['from']}');
+        final to = source.workflowStatusName('${transition['to']}');
+        final recipientId = '${transition['recipientId'] ?? ''}';
+        final comment = '${transition['comment'] ?? ''}'.trim();
+        add(
+          id: '${transition['id']}',
+          kind: 'transition',
+          taskId: task.id,
+          taskTitle: task.title,
+          actorId: '${transition['actorId'] ?? ''}',
+          message:
+              '단계 전달 · $from → $to'
+              '${recipientId.isEmpty ? '' : ' · 담당 ${personName(recipientId)}'}'
+              '${comment.isEmpty ? '' : ' · $comment'}',
+          createdAt: '${transition['createdAt'] ?? ''}',
+        );
+      }
+      for (final comment in task.comments) {
+        add(
+          id: '${comment['id']}',
+          kind: 'comment',
+          taskId: task.id,
+          taskTitle: task.title,
+          actorId: '${comment['authorId'] ?? ''}',
+          message: '댓글 · ${comment['text']}',
+          createdAt: '${comment['createdAt'] ?? ''}',
+        );
+      }
+    }
+
+    for (final record in source.activity) {
+      final taskId = '${record['taskId'] ?? ''}';
+      final task = tasks[taskId];
+      if (task == null) continue;
+      final actorId = '${record['actorId'] ?? ''}';
+      final message = '${record['message'] ?? ''}';
+      final version = record['taskVersion'];
+      if (task.transitionHistory.any((event) => event['version'] == version) ||
+          message.contains('새 작업을 등록했습니다.')) {
+        continue;
+      }
+      final recordTime = DateTime.tryParse('${record['createdAt'] ?? ''}');
+      final commentAlreadyShared =
+          message == '코멘트를 추가했습니다.' &&
+          task.comments.any((comment) {
+            if (comment['authorId'] != actorId || recordTime == null) {
+              return false;
+            }
+            final commentTime = DateTime.tryParse('${comment['createdAt']}');
+            return commentTime != null &&
+                commentTime.difference(recordTime).abs() <
+                    const Duration(seconds: 5);
+          });
+      if (commentAlreadyShared) continue;
+      add(
+        id: '${record['id'] ?? '${task.id}:${record['taskVersion']}'}',
+        kind: 'activity',
+        taskId: task.id,
+        taskTitle: task.title,
+        actorId: actorId,
+        message: displayActivityMessage(message),
+        createdAt: '${record['createdAt'] ?? ''}',
+      );
+    }
   }
 
   Map<String, dynamic> notificationTaskDetails(
@@ -950,7 +1253,7 @@ class _WorkspaceState extends State<Workspace>
         snapshot = TaskStore(path);
         snapshot.markNotificationRead(id);
       } catch (_) {
-        message('알림을 읽음 처리하지 못했습니다. 프로젝트 DB를 확인하세요.');
+        message(tr('알림을 읽음으로 표시하지 못했습니다. 다시 시도해 주세요.'));
       } finally {
         snapshot?.dispose();
       }
@@ -981,7 +1284,7 @@ class _WorkspaceState extends State<Workspace>
   }
 
   Widget notificationsPage() {
-    final projectValues = <String, String>{'all': '모든 프로젝트'};
+    final projectValues = <String, String>{'all': tr('모든 프로젝트')};
     for (final project in notificationProjectList()) {
       projectValues[project.path] = project.name;
     }
@@ -1021,6 +1324,7 @@ class _WorkspaceState extends State<Workspace>
       onRefresh: refreshNotificationHistory,
       onRead: markNotificationRead,
       onReadVisible: markVisibleNotificationsRead,
+      onOpenTask: openRecordTask,
     );
   }
 
@@ -1052,6 +1356,7 @@ class _WorkspaceState extends State<Workspace>
   Widget build(BuildContext context) => AnimatedBuilder(
     animation: s,
     builder: (_, _) {
+      final project = s.project;
       final tasks = s.tasks;
       final all = tasks.where((t) => !t.isArchived).toList();
       final filtered = tasks
@@ -1091,10 +1396,10 @@ class _WorkspaceState extends State<Workspace>
             Container(
               width: double.infinity,
               padding: const EdgeInsets.symmetric(horizontal: 34, vertical: 10),
-              color: const Color(0xfffff6e8),
+              color: stageSurfaceColor("review"),
               child: Text(
                 widget.sessionNotice!,
-                style: const TextStyle(fontSize: 11, color: Color(0xff896b37)),
+                style: TextStyle(fontSize: 11, color: statusColor("review")),
               ),
             ),
           Expanded(
@@ -1102,9 +1407,38 @@ class _WorkspaceState extends State<Workspace>
                 ? ProjectScheduleView(
                     key: Key('schedule-page'),
                     store: s,
+                    focusTaskId: focusedTaskId,
                     onOpenTask: details,
                     onEditTask: edit,
                     onCreateTask: (date) => edit(null, date),
+                  )
+                : page == 7
+                ? ProjectTimelineView(
+                    key: const Key('project-timeline-page'),
+                    projectName: s.project?.name ?? tr('로컬 작업 공간'),
+                    activityHistory: currentProjectActivity,
+                    onRefresh: () => setState(() {}),
+                    onOpenTask: openRecordTask,
+                  )
+                : page == 8
+                ? ProjectShortcutsView(
+                    key: const Key('project-shortcuts-page'),
+                    store: s,
+                    repository: widget.sync?.config.slug,
+                    onSave:
+                        project != null &&
+                            widget.session != null &&
+                            widget.sync != null
+                        ? (shortcuts, expected) async {
+                            final saved = await widget.session!.saveShortcuts(
+                              widget.sync!.config,
+                              shortcuts,
+                              expectedProjectId: project.id,
+                              expectedShortcuts: expected,
+                            );
+                            s.updateProject(saved);
+                          }
+                        : null,
                   )
                 : page == 5
                 ? ProjectConnectionsView(
@@ -1120,196 +1454,10 @@ class _WorkspaceState extends State<Workspace>
                 : page == 4
                 ? notificationsPage()
                 : isTaskPage
-                ? LayoutBuilder(
-                    builder: (ctx, constraints) => SingleChildScrollView(
-                      child: Padding(
-                        padding: EdgeInsets.fromLTRB(
-                          constraints.maxWidth < 700 ? 16 : 34,
-                          constraints.maxWidth < 700 ? 24 : 34,
-                          constraints.maxWidth < 700 ? 16 : 34,
-                          30,
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        s.project?.name ?? '예시 작업 공간',
-                                        key: const Key(
-                                          'workspace-project-name',
-                                        ),
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: const TextStyle(
-                                          fontSize: 12,
-                                          color: muted,
-                                        ),
-                                      ),
-                                      const SizedBox(height: 10),
-                                      Text(
-                                        isTaskPage ? titles[0] : '설정',
-                                        style: const TextStyle(
-                                          fontSize: 27,
-                                          fontWeight: FontWeight.w700,
-                                          letterSpacing: -1,
-                                        ),
-                                      ),
-                                      const SizedBox(height: 9),
-                                      Text(
-                                        isTaskPage
-                                            ? subtitles[0]
-                                            : '프로젝트 설정과 개인 변경내역을 관리하세요.',
-                                        style: const TextStyle(
-                                          fontSize: 12,
-                                          color: muted,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                                if (isTaskPage)
-                                  FilledButton.icon(
-                                    key: const Key('new-task'),
-                                    onPressed: s.canCreate
-                                        ? () => edit()
-                                        : null,
-                                    icon: const Icon(Icons.add, size: 18),
-                                    label: const Text(
-                                      '작업 등록',
-                                      style: TextStyle(fontSize: 12),
-                                    ),
-                                  ),
-                              ],
-                            ),
-                            const SizedBox(height: 30),
-                            if (s.isProject && s.actor.role == 'pending')
-                              info(
-                                '가입 승인 대기 중입니다. 관리자가 역할을 부여하면 자동 동기화 후 작업을 진행할 수 있습니다.',
-                              ),
-                            if (s.isProject &&
-                                s.actor.role != 'pending' &&
-                                !s.actor.active)
-                              info(
-                                '비활성화된 참여자입니다. 작업 수정·진행·업로드가 차단됩니다. 관리자에게 활성화를 요청하세요.',
-                              ),
-                            if (isTaskPage) ...[
-                              const Text(
-                                '프로젝트 전체 현황',
-                                key: Key('project-stats-scope'),
-                              ),
-                              const SizedBox(height: 8),
-                              stats(all),
-                              if (relatedMember.isNotEmpty)
-                                InputChip(
-                                  label: Text(
-                                    '${s.member(relatedMember).name} · 관련 업무',
-                                  ),
-                                  onDeleted: () =>
-                                      setState(() => relatedMember = ''),
-                                ),
-                              const SizedBox(height: 27),
-                              toolbar(),
-                              const SizedBox(height: 17),
-                              Row(
-                                children: [
-                                  const Icon(
-                                    Icons.circle_outlined,
-                                    size: 12,
-                                    color: muted,
-                                  ),
-                                  const SizedBox(width: 5),
-                                  Expanded(
-                                    child: Text(
-                                      s.isProject
-                                          ? '확인중 → 진행중 → 완료 · 전달 시 상태 유지'
-                                          : '예시 데이터로 흐름을 테스트해 보세요.',
-                                      style: const TextStyle(
-                                        fontSize: 10,
-                                        color: muted,
-                                      ),
-                                    ),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  Text(
-                                    '${filtered.length}개 작업 · 자동 저장',
-                                    style: const TextStyle(
-                                      fontSize: 10,
-                                      color: muted,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 15),
-                              if (filtered.isEmpty && taskView == TaskView.list)
-                                emptyTasks()
-                              else if (taskView == TaskView.kanban)
-                                board(
-                                  filtered,
-                                  constraints.maxWidth -
-                                      (constraints.maxWidth < 700 ? 32 : 68),
-                                )
-                              else ...[
-                                schedule(
-                                  filtered
-                                      .skip(visiblePage * 50)
-                                      .take(50)
-                                      .toList(),
-                                ),
-                                if (pageCount > 1)
-                                  Padding(
-                                    padding: const EdgeInsets.only(top: 18),
-                                    child: Wrap(
-                                      spacing: 12,
-                                      crossAxisAlignment:
-                                          WrapCrossAlignment.center,
-                                      children: [
-                                        Text(
-                                          '${visiblePage * 50 + 1}–${min((visiblePage + 1) * 50, filtered.length)} / ${filtered.length}',
-                                          style: const TextStyle(
-                                            color: muted,
-                                            fontSize: 12,
-                                          ),
-                                        ),
-                                        IconButton(
-                                          tooltip: '이전 페이지',
-                                          onPressed: visiblePage > 0
-                                              ? () => setState(
-                                                  () => taskPage =
-                                                      visiblePage - 1,
-                                                )
-                                              : null,
-                                          icon: const Icon(Icons.chevron_left),
-                                        ),
-                                        Text('${visiblePage + 1} / $pageCount'),
-                                        IconButton(
-                                          tooltip: '다음 페이지',
-                                          onPressed: visiblePage + 1 < pageCount
-                                              ? () => setState(
-                                                  () => taskPage =
-                                                      visiblePage + 1,
-                                                )
-                                              : null,
-                                          icon: const Icon(Icons.chevron_right),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                              ],
-                            ],
-                          ],
-                        ),
-                      ),
-                    ),
-                  )
+                ? tasksWorkspace(all, filtered, pageCount, visiblePage)
                 : SettingsShell(
-                    personal: settingsSection == SettingsSection.general,
-                    projectName: s.project?.name ?? '예시 작업 공간',
+                    personal: settingsSection.isPersonal,
+                    projectName: s.project?.name ?? tr('로컬 작업 공간'),
                     projectSelector:
                         widget.projectSwitcherBuilder?.call(
                           () => selectSettings(SettingsSection.projectGeneral),
@@ -1342,6 +1490,7 @@ class _WorkspaceState extends State<Workspace>
                 sidebar(),
                 Expanded(
                   child: Material(
+                    key: Key('workspace-main-surface'),
                     color: canvas,
                     elevation: 4,
                     shadowColor: const Color(0x40000000),
@@ -1359,9 +1508,8 @@ class _WorkspaceState extends State<Workspace>
                         if (page == 1 || page == 2)
                           SettingsShell(
                             key: const Key('settings-sidebar-view'),
-                            personal:
-                                settingsSection == SettingsSection.general,
-                            projectName: s.project?.name ?? '예시 작업 공간',
+                            personal: settingsSection.isPersonal,
+                            projectName: s.project?.name ?? tr('로컬 작업 공간'),
                             projectSelector:
                                 widget.projectSwitcherBuilder?.call(
                                   () => selectSettings(
@@ -1480,18 +1628,18 @@ class _WorkspaceState extends State<Workspace>
     return Container(
       key: const Key('project-view-sidebar'),
       width: 210,
-      decoration: const BoxDecoration(
-        color: Color(0xfff8f9f8),
-        border: Border(right: BorderSide(color: Color(0xffe1e4e3))),
+      decoration: BoxDecoration(
+        color: surface,
+        border: Border(right: BorderSide(color: colors.line)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          const Padding(
-            padding: EdgeInsets.fromLTRB(16, 18, 8, 18),
+          Padding(
+            padding: EdgeInsets.fromLTRB(20, 24, 12, 20),
             child: Text(
-              '프로젝트',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+              tr('프로젝트'),
+              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
             ),
           ),
           Expanded(
@@ -1500,29 +1648,43 @@ class _WorkspaceState extends State<Workspace>
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  picker ?? Text(s.project?.name ?? '예시 작업 공간'),
+                  picker ?? Text(s.project?.name ?? tr('로컬 작업 공간')),
                   const SizedBox(height: 14),
-                  const Divider(height: 1, color: Color(0xffe1e4e3)),
+                  Divider(height: 1, color: border),
                   const SizedBox(height: 10),
                   projectViewTab(
                     key: 'project-view-tab-tasks',
-                    title: '작업',
+                    title: tr('작업'),
                     icon: Icons.view_kanban_outlined,
                     targetPage: 6,
                   ),
                   const SizedBox(height: 4),
                   projectViewTab(
                     key: 'project-view-tab-schedule',
-                    title: '일정',
+                    title: tr('일정'),
                     icon: Icons.calendar_month_outlined,
                     targetPage: 0,
                   ),
                   const SizedBox(height: 4),
                   projectViewTab(
+                    key: 'project-view-tab-timeline',
+                    title: tr('타임라인'),
+                    icon: Icons.history_rounded,
+                    targetPage: 7,
+                  ),
+                  const SizedBox(height: 4),
+                  projectViewTab(
                     key: 'project-view-tab-connections',
-                    title: '연결',
+                    title: tr('연결'),
                     icon: Icons.link,
                     targetPage: 5,
+                  ),
+                  const SizedBox(height: 4),
+                  projectViewTab(
+                    key: 'project-view-tab-shortcuts',
+                    title: tr('바로가기'),
+                    icon: Icons.bookmarks_outlined,
+                    targetPage: 8,
                   ),
                 ],
               ),
@@ -1536,13 +1698,13 @@ class _WorkspaceState extends State<Workspace>
   Widget sidebar() => Container(
     key: const Key('workspace-sidebar'),
     width: 56,
-    decoration: const BoxDecoration(color: iconRailSurface),
+    decoration: BoxDecoration(color: iconRailSurface),
     padding: const EdgeInsets.fromLTRB(6, 12, 6, 12),
     child: Column(
       children: [
         railButton(
           'project-home',
-          '${s.project?.name ?? '현재 프로젝트'} 홈',
+          tr('{value0} 홈', args: {'value0': s.project?.name ?? '현재 프로젝트'}),
           Icons.home_outlined,
           () => rememberView(() => page = 6),
           selected: isTaskPage,
@@ -1550,7 +1712,7 @@ class _WorkspaceState extends State<Workspace>
         const SizedBox(height: 8),
         IconButton(
           key: const Key('sidebar-notifications'),
-          tooltip: s.isProject ? '내 알림' : '알림 미리보기',
+          tooltip: s.isProject ? tr('내 알림') : tr('알림 미리보기'),
           onPressed: notifications,
           style: IconButton.styleFrom(
             backgroundColor: page == 4 ? iconRailSelected : Colors.transparent,
@@ -1564,7 +1726,7 @@ class _WorkspaceState extends State<Workspace>
             isLabelVisible: s.unreadNotificationCount > 0,
             smallSize: 5,
             backgroundColor: purple,
-            child: const Icon(
+            child: Icon(
               Icons.notifications_none_outlined,
               size: 21,
               color: iconRailMuted,
@@ -1575,7 +1737,9 @@ class _WorkspaceState extends State<Workspace>
         const Spacer(),
         AccountMenu(
           name: s.actor.name,
-          role: s.isProject ? s.actor.roleLabel : '테스트 사용자',
+          role: s.isProject
+              ? trRoleName(s.actor.role, s.actor.roleLabel)
+              : tr('테스트 사용자'),
           avatar: avatar(s.actor),
           onSettings: () => selectSettings(SettingsSection.general),
           onProjectSettings: () =>
@@ -1632,101 +1796,46 @@ class _WorkspaceState extends State<Workspace>
         alignment: Alignment.centerLeft,
         foregroundColor: page == targetPage ? ink : muted,
         backgroundColor: page == targetPage
-            ? const Color(0xffe9edeb)
+            ? colors.subtle
             : Colors.transparent,
         padding: const EdgeInsets.symmetric(horizontal: 11),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-        textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
+        textStyle: const TextStyle(
+          fontFamily: 'Malgun Gothic',
+          fontSize: 12,
+          fontWeight: FontWeight.w500,
+        ),
       ),
       icon: Icon(icon, size: 17),
       label: Text(title),
     ),
   );
 
-  Widget stats(List<WorkTask> tasks) => LayoutBuilder(
-    builder: (context, constraints) {
-      final columns = constraints.maxWidth >= 760 ? 4 : 2;
-      final width = (constraints.maxWidth - (columns - 1) * 15) / columns;
-      final labels = ['전체 작업', '확인중', '진행중', '완료'];
-      final counts = [
-        tasks.length,
-        tasks.where((task) => boardCategory(task) == 'todo').length,
-        tasks.where((task) => boardCategory(task) == 'inProgress').length,
-        tasks.where(s.isCompleted).length,
-      ];
-      return Wrap(
-        spacing: 15,
-        runSpacing: 15,
-        children: List.generate(
-          4,
-          (i) => SizedBox(
-            width: width,
-            child: Container(
-              constraints: BoxConstraints(minHeight: columns == 4 ? 106 : 82),
-              padding: EdgeInsets.all(columns == 4 ? 20 : 12),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                border: Border.all(color: border),
-                borderRadius: BorderRadius.circular(11),
-              ),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Text(
-                          labels[i],
-                          style: const TextStyle(fontSize: 11, color: muted),
-                        ),
-                        const SizedBox(height: 9),
-                        RichText(
-                          text: TextSpan(
-                            style: const TextStyle(
-                              color: ink,
-                              fontFamily: 'Malgun Gothic',
-                            ),
-                            children: [
-                              TextSpan(
-                                text: '${counts[i]}',
-                                style: const TextStyle(
-                                  fontSize: 25,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                              const TextSpan(
-                                text: '  건',
-                                style: TextStyle(fontSize: 10, color: muted),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  if (width >= 150)
-                    Icon(
-                      [
-                        Icons.folder_copy_outlined,
-                        Icons.play_arrow_outlined,
-                        Icons.play_arrow_outlined,
-                        Icons.check_circle_outline,
-                      ][i],
-                      size: 22,
-                      color: i == 2
-                          ? statusColor('review')
-                          : i == 3
-                          ? statusColor('done')
-                          : purple.withValues(alpha: .6),
-                    ),
-                ],
-              ),
-            ),
-          ),
+  Widget stats(List<WorkTask> tasks) => SingleChildScrollView(
+    scrollDirection: Axis.horizontal,
+    child: Row(
+      children: [
+        Text(
+          tr('프로젝트 현황'),
+          key: Key('project-stats-scope'),
+          style: WorkspaceUi.captionStyleOf(context),
         ),
-      );
-    },
+        const SizedBox(width: 16),
+        Text(
+          tr('전체 {value0}', args: {'value0': tasks.length}),
+          style: WorkspaceUi.captionStyleOf(context),
+        ),
+        for (final entry in boardStatuses.entries) ...[
+          const SizedBox(width: 16),
+          Icon(Icons.circle, size: 5, color: statusColor(entry.key)),
+          const SizedBox(width: 5),
+          Text(
+            '${entry.value} ${tasks.where((task) => boardKey(task) == entry.key).length}',
+            style: WorkspaceUi.captionStyleOf(context),
+          ),
+        ],
+      ],
+    ),
   );
   bool matchesDeadline(WorkTask task) {
     if (deadlineFilter.isEmpty) return true;
@@ -1768,7 +1877,7 @@ class _WorkspaceState extends State<Workspace>
     width: double.infinity,
     padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 56),
     decoration: BoxDecoration(
-      color: Colors.white,
+      color: surface,
       borderRadius: BorderRadius.circular(14),
       border: Border.all(color: border),
     ),
@@ -1783,7 +1892,7 @@ class _WorkspaceState extends State<Workspace>
         ),
         const SizedBox(height: 14),
         Text(
-          scope == 'archived' ? '보관한 작업이 없습니다' : '표시할 작업이 없습니다',
+          scope == 'archived' ? tr('보관한 작업이 없습니다') : tr('표시할 작업이 없습니다'),
           style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
         ),
         const SizedBox(height: 8),
@@ -1792,14 +1901,14 @@ class _WorkspaceState extends State<Workspace>
                   part.isNotEmpty ||
                   statusFilter.isNotEmpty ||
                   deadlineFilter.isNotEmpty
-              ? '검색어나 필터를 바꾸어 보세요.'
+              ? tr('검색어나 필터를 바꾸어 보세요.')
               : scope == 'archived'
-              ? '작업 상세에서 보관한 항목을 여기서 확인하고 복원할 수 있습니다.'
+              ? tr('작업 상세에서 보관한 항목을 여기서 확인하고 복원할 수 있습니다.')
               : scope != 'all'
-              ? '배정받은 작업이 생기면 여기에 표시됩니다.'
-              : '첫 작업을 등록하고 팀의 흐름을 시작하세요.',
+              ? tr('배정받은 작업이 생기면 여기에 표시됩니다.')
+              : tr('새 작업을 등록해 팀과 함께 진행하세요.'),
           textAlign: TextAlign.center,
-          style: const TextStyle(color: muted, fontSize: 12),
+          style: TextStyle(color: muted, fontSize: 12),
         ),
         const SizedBox(height: 18),
         Wrap(
@@ -1813,18 +1922,148 @@ class _WorkspaceState extends State<Workspace>
                 relatedMember.isNotEmpty)
               OutlinedButton(
                 onPressed: clearTaskFilters,
-                child: const Text('필터 초기화'),
+                child: Text(tr('필터 초기화')),
               ),
             if (s.canCreate && scope == 'all')
               FilledButton.icon(
                 onPressed: () => edit(),
                 icon: const Icon(Icons.add, size: 16),
-                label: const Text('작업 등록'),
+                label: Text(tr('새 작업')),
               ),
           ],
         ),
       ],
     ),
+  );
+
+  Widget tasksWorkspace(
+    List<WorkTask> all,
+    List<WorkTask> filtered,
+    int pageCount,
+    int visiblePage,
+  ) => LayoutBuilder(
+    builder: (context, bounds) {
+      final inset = bounds.maxWidth < 600 ? 16.0 : 24.0;
+      return Column(
+        children: [
+          Container(
+            key: const Key('task-workspace-header'),
+            padding: EdgeInsets.fromLTRB(inset, 20, inset, 12),
+            decoration: BoxDecoration(
+              color: surface,
+              border: Border(bottom: BorderSide(color: colors.line)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                WorkspacePageHeader(
+                  title: tr('작업'),
+                  contextLabel: s.project?.name ?? tr('로컬 작업 공간'),
+                  contextKey: const Key('workspace-project-name'),
+                  actions: [
+                    FilledButton.icon(
+                      key: const Key('new-task'),
+                      onPressed: s.canCreate ? () => edit() : null,
+                      icon: const Icon(Icons.add_rounded, size: 17),
+                      label: Text(tr('새 작업')),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                toolbar(),
+                const SizedBox(height: 12),
+                stats(all),
+              ],
+            ),
+          ),
+          if (s.isProject && s.actor.role == 'pending')
+            info(tr('가입 승인 대기 중입니다. 관리자가 참여를 승인하면 작업을 진행할 수 있습니다.')),
+          if (s.isProject && s.actor.role != 'pending' && !s.actor.active)
+            info(tr('비활성화된 참여자입니다. 관리자에게 활성화를 요청하세요.')),
+          Expanded(
+            child: Padding(
+              padding: EdgeInsets.fromLTRB(inset, 16, inset, 0),
+              child: taskView == TaskView.kanban
+                  ? board(filtered, bounds.maxWidth - inset * 2)
+                  : SingleChildScrollView(
+                      key: const Key('task-content-scroll'),
+                      padding: const EdgeInsets.only(bottom: 24),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          if (relatedMember.isNotEmpty)
+                            Align(
+                              alignment: Alignment.centerLeft,
+                              child: InputChip(
+                                label: Text(
+                                  tr(
+                                    '{value0} · 관련 업무',
+                                    args: {
+                                      'value0': s.member(relatedMember).name,
+                                    },
+                                  ),
+                                ),
+                                onDeleted: () =>
+                                    setState(() => relatedMember = ''),
+                              ),
+                            ),
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 12),
+                            child: Text(
+                              tr(
+                                '{value0}개 작업',
+                                args: {'value0': filtered.length},
+                              ),
+                              style: WorkspaceUi.captionStyleOf(context),
+                            ),
+                          ),
+                          if (filtered.isEmpty)
+                            emptyTasks()
+                          else
+                            schedule(
+                              filtered.skip(visiblePage * 50).take(50).toList(),
+                            ),
+                          if (pageCount > 1)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 16),
+                              child: Wrap(
+                                spacing: 12,
+                                crossAxisAlignment: WrapCrossAlignment.center,
+                                children: [
+                                  Text(
+                                    '${visiblePage * 50 + 1}–${min((visiblePage + 1) * 50, filtered.length)} / ${filtered.length}',
+                                    style: WorkspaceUi.captionStyleOf(context),
+                                  ),
+                                  IconButton(
+                                    tooltip: tr('이전 페이지'),
+                                    onPressed: visiblePage > 0
+                                        ? () => setState(
+                                            () => taskPage = visiblePage - 1,
+                                          )
+                                        : null,
+                                    icon: const Icon(Icons.chevron_left),
+                                  ),
+                                  Text('${visiblePage + 1} / $pageCount'),
+                                  IconButton(
+                                    tooltip: tr('다음 페이지'),
+                                    onPressed: visiblePage + 1 < pageCount
+                                        ? () => setState(
+                                            () => taskPage = visiblePage + 1,
+                                          )
+                                        : null,
+                                    icon: const Icon(Icons.chevron_right),
+                                  ),
+                                ],
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+            ),
+          ),
+        ],
+      );
+    },
   );
 
   Widget taskFilter(
@@ -1833,7 +2072,7 @@ class _WorkspaceState extends State<Workspace>
     Map<String, String> values,
     ValueChanged<String> onChanged,
   ) => SizedBox(
-    width: 140,
+    width: 124,
     child: IeumSelect(
       key: ValueKey('$key-$value'),
       value: values.containsKey(value) ? value : '',
@@ -1845,287 +2084,326 @@ class _WorkspaceState extends State<Workspace>
     ),
   );
 
-  Widget toolbar() => Wrap(
-    alignment: WrapAlignment.spaceBetween,
-    runSpacing: 12,
-    spacing: 20,
-    children: [
-      Wrap(
-        spacing: 5,
-        runSpacing: 6,
-        children: [
-          for (final entry in {
-            'all': '전체 작업',
-            'mine': '내 할 일',
-            'review': '전달받은 작업',
-            'archived': '보관함',
-          }.entries)
-            Padding(
-              padding: const EdgeInsets.only(right: 5),
-              child: TextButton(
-                key: Key('scope-${entry.key}'),
-                style: TextButton.styleFrom(
-                  backgroundColor: scope == entry.key
-                      ? const Color(0xffeee8fb)
-                      : Colors.transparent,
-                  foregroundColor: scope == entry.key ? purple : muted,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(6),
-                  ),
+  Widget toolbar() => LayoutBuilder(
+    builder: (context, bounds) => Column(
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: [
+                    for (final entry in {
+                      'all': tr('전체 작업'),
+                      'mine': tr('내 할 일'),
+                      'review': tr('전달받은 작업'),
+                      'archived': tr('보관함'),
+                    }.entries)
+                      WorkspaceTab(
+                        key: Key('scope-${entry.key}'),
+                        label: entry.value,
+                        selected: scope == entry.key,
+                        onPressed: () => setState(() {
+                          scope = entry.key;
+                          taskPage = 0;
+                        }),
+                      ),
+                  ],
                 ),
-                onPressed: () => setState(() {
-                  scope = entry.key;
+              ),
+            ),
+            const SizedBox(width: 12),
+            SegmentedButton<TaskView>(
+              key: const Key('task-view-selector'),
+              showSelectedIcon: false,
+              style: SegmentedButton.styleFrom(
+                foregroundColor: muted,
+                selectedForegroundColor: ink,
+                backgroundColor: surface,
+                selectedBackgroundColor: colors.subtle,
+                side: BorderSide(color: colors.line),
+                textStyle: const TextStyle(
+                  fontFamily: 'Malgun Gothic',
+                  fontSize: 11,
+                ),
+                iconSize: 15,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 8,
+                ),
+                minimumSize: const Size(0, 34),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(7),
+                ),
+              ),
+              segments: [
+                ButtonSegment(
+                  value: TaskView.list,
+                  label: Text(tr('목록'), key: Key('view-list')),
+                  icon: Icon(Icons.view_list_outlined),
+                ),
+                ButtonSegment(
+                  value: TaskView.kanban,
+                  label: Text(tr('보드'), key: Key('view-kanban')),
+                  icon: Icon(Icons.view_kanban_outlined),
+                ),
+              ],
+              selected: {taskView},
+              onSelectionChanged: (value) =>
+                  rememberView(() => taskView = value.single),
+            ),
+          ],
+        ),
+        Divider(height: 1, color: colors.line),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            SizedBox(
+              width: min(200, max(112, bounds.maxWidth * .26)),
+              height: 36,
+              child: TextField(
+                key: const Key('search'),
+                controller: taskSearch,
+                style: const TextStyle(fontSize: 12),
+                onChanged: (value) => setState(() {
+                  search = value;
                   taskPage = 0;
                 }),
-                child: Text(entry.value, style: const TextStyle(fontSize: 11)),
-              ),
-            ),
-        ],
-      ),
-      SegmentedButton<TaskView>(
-        key: const Key('task-view-selector'),
-        showSelectedIcon: false,
-        style: SegmentedButton.styleFrom(
-          foregroundColor: muted,
-          selectedForegroundColor: purple,
-          backgroundColor: Colors.white,
-          selectedBackgroundColor: const Color(0xffeee8fb),
-          side: const BorderSide(color: border),
-          textStyle: const TextStyle(fontFamily: 'Malgun Gothic', fontSize: 12),
-          iconSize: 16,
-          padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 10),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(7)),
-        ),
-        segments: const [
-          ButtonSegment(
-            value: TaskView.list,
-            label: Text('목록', key: Key('view-list')),
-            icon: Icon(Icons.view_list_outlined),
-            tooltip: '담당자와 날짜를 목록으로 보기',
-          ),
-          ButtonSegment(
-            value: TaskView.kanban,
-            label: Text('칸반보드', key: Key('view-kanban')),
-            icon: Icon(Icons.view_kanban_outlined),
-            tooltip: '작업 상태를 칸반보드로 보기',
-          ),
-        ],
-        selected: {taskView},
-        onSelectionChanged: (value) =>
-            rememberView(() => taskView = value.single),
-      ),
-      Wrap(
-        spacing: 9,
-        runSpacing: 10,
-        children: [
-          SizedBox(
-            width: 190,
-            child: TextField(
-              key: const Key('search'),
-              controller: taskSearch,
-              style: const TextStyle(fontSize: 11),
-              onChanged: (value) => setState(() {
-                search = value;
-                taskPage = 0;
-              }),
-              decoration: const InputDecoration(
-                hintText: '작업 검색',
-                prefixIcon: Icon(Icons.search, size: 17),
-                contentPadding: EdgeInsets.all(10),
-              ),
-            ),
-          ),
-          SizedBox(
-            width: 140,
-            child: IeumSelect(
-              key: ValueKey('filter-$part'),
-              value: part,
-              values: {
-                '': '모든 파트',
-                for (final r in s.partRules) r.part: r.part,
-              },
-              onChanged: (value) => setState(() {
-                part = value;
-                taskPage = 0;
-              }),
-            ),
-          ),
-          taskFilter('status-filter', statusFilter, {
-            '': '모든 상태',
-            'category:todo': '확인중',
-            'category:inProgress': '진행중',
-            'category:done': '완료',
-          }, (value) => statusFilter = value),
-          taskFilter('deadline-filter', deadlineFilter, {
-            '': '모든 마감일',
-            'overdue': '마감 지남',
-            'today': '오늘 마감',
-            'none': '마감 미정',
-          }, (value) => deadlineFilter = value),
-          taskFilter('task-sort', taskSort, {
-            'updated': '최근 수정순',
-            'due': '마감일순',
-            'priority': '우선순위순',
-            'title': '이름순',
-          }, (value) => taskSort = value),
-          if (search.isNotEmpty ||
-              part.isNotEmpty ||
-              statusFilter.isNotEmpty ||
-              deadlineFilter.isNotEmpty ||
-              relatedMember.isNotEmpty)
-            IconButton(
-              tooltip: '필터 초기화',
-              onPressed: clearTaskFilters,
-              icon: const Icon(Icons.filter_alt_off_outlined, size: 18),
-            ),
-        ],
-      ),
-    ],
-  );
-  Widget board(List<WorkTask> tasks, double available) => HorizontalViewport(
-    key: const Key('task-kanban'),
-    child: SizedBox(
-      width: max(available, 760.0),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: boardStatuses.entries.map((stage) {
-          final category = stage.key == 'doing' ? 'inProgress' : stage.key;
-          final list = tasks
-              .where((t) => boardCategory(t) == category)
-              .toList();
-          return Expanded(
-            child: Padding(
-              padding: EdgeInsets.only(right: stage.key == 'done' ? 0 : 13),
-              child: DragTarget<WorkTask>(
-                onWillAcceptWithDetails: (d) =>
-                    !handoffOpen &&
-                    s
-                        .availableHandoffs(d.data)
-                        .any(
-                          (plan) =>
-                              destinationCategory(plan.destinationId) ==
-                              category,
-                        ),
-                onAcceptWithDetails: (d) => moveToCategory(d.data, category),
-                builder: (ctx, candidates, rejected) => Container(
-                  key: Key('column-${stage.key}'),
-                  constraints: const BoxConstraints(minHeight: 425),
-                  padding: const EdgeInsets.all(11),
-                  decoration: BoxDecoration(
-                    color: candidates.isNotEmpty
-                        ? const Color(0xffeae3f8)
-                        : stageSurfaceColor(stage.key),
-                    border: Border.all(
-                      color: candidates.isNotEmpty ? purple : border,
-                    ),
-                    borderRadius: BorderRadius.circular(11),
+                decoration: InputDecoration(
+                  hintText: tr('작업 검색'),
+                  prefixIcon: Icon(Icons.search_rounded, size: 17),
+                  contentPadding: EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 9,
                   ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Row(
-                        children: [
-                          Icon(
-                            Icons.circle,
-                            size: 6,
-                            color: statusColor(stage.key),
-                          ),
-                          const SizedBox(width: 7),
-                          Expanded(
-                            child: Tooltip(
-                              message: stage.value,
-                              child: Text(
-                                stage.value,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 6),
-                          badge('${list.length}'),
-                          if (s.canCreate &&
-                              stage.key == 'todo' &&
-                              scope != 'archived')
-                            IconButton(
-                              visualDensity: VisualDensity.compact,
-                              tooltip: '새 작업 등록',
-                              onPressed: () => edit(),
-                              icon: const Icon(
-                                Icons.add,
-                                size: 16,
-                                color: muted,
-                              ),
-                            ),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-                      ...list
-                          .take(50)
-                          .map(
-                            (t) => Padding(
-                              padding: const EdgeInsets.only(bottom: 11),
-                              child: Draggable<WorkTask>(
-                                data: t,
-                                feedback: Material(
-                                  color: Colors.transparent,
-                                  child: SizedBox(
-                                    width: 200,
-                                    child: taskCard(t, interactive: false),
-                                  ),
-                                ),
-                                childWhenDragging: Opacity(
-                                  opacity: .35,
-                                  child: taskCard(t, interactive: false),
-                                ),
-                                child: taskCard(t),
-                              ),
-                            ),
-                          ),
-                      if (list.isEmpty)
-                        const Padding(
-                          padding: EdgeInsets.symmetric(vertical: 35),
-                          child: Center(
-                            child: Text(
-                              '아직 작업이 없어요',
-                              style: TextStyle(fontSize: 11, color: muted),
-                            ),
-                          ),
-                        ),
-                      if (list.length > 50)
-                        TextButton(
-                          onPressed: () => setState(() {
-                            statusFilter = 'category:$category';
-                            taskPage = 0;
-                            taskView = TaskView.list;
-                          }),
-                          child: Text('전체 ${list.length}개 목록에서 보기'),
-                        ),
-                      if (s.canCreate &&
-                          stage.key == 'todo' &&
-                          scope != 'archived')
-                        TextButton.icon(
-                          onPressed: () => edit(),
-                          icon: const Icon(Icons.add, size: 14),
-                          label: const Text(
-                            '작업 추가',
-                            style: TextStyle(fontSize: 10),
-                          ),
-                          style: TextButton.styleFrom(foregroundColor: muted),
-                        ),
-                    ],
+                  prefixIconConstraints: BoxConstraints(
+                    minWidth: 34,
+                    minHeight: 34,
                   ),
                 ),
               ),
             ),
-          );
-        }).toList(),
+            const SizedBox(width: 8),
+            Expanded(
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: [
+                    SizedBox(
+                      width: 124,
+                      child: IeumSelect(
+                        key: ValueKey('filter-$part'),
+                        value: part,
+                        values: {
+                          '': tr('모든 파트'),
+                          for (final r in s.partRules) r.part: r.part,
+                        },
+                        onChanged: (value) => setState(() {
+                          part = value;
+                          taskPage = 0;
+                        }),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    taskFilter('status-filter', statusFilter, {
+                      '': tr('모든 상태'),
+                      ...boardStatuses,
+                      if (statusFilter.startsWith('category:'))
+                        statusFilter: tr('이전 상태 필터'),
+                    }, (value) => statusFilter = value),
+                    const SizedBox(width: 8),
+                    taskFilter('deadline-filter', deadlineFilter, {
+                      '': tr('모든 마감일'),
+                      'overdue': tr('마감 지남'),
+                      'today': tr('오늘 마감'),
+                      'none': tr('마감 미정'),
+                    }, (value) => deadlineFilter = value),
+                    const SizedBox(width: 8),
+                    taskFilter('task-sort', taskSort, {
+                      'updated': tr('최근 수정순'),
+                      'due': tr('마감일순'),
+                      'priority': tr('우선순위순'),
+                      'title': tr('이름순'),
+                    }, (value) => taskSort = value),
+                  ],
+                ),
+              ),
+            ),
+            if (search.isNotEmpty ||
+                part.isNotEmpty ||
+                statusFilter.isNotEmpty ||
+                deadlineFilter.isNotEmpty ||
+                relatedMember.isNotEmpty)
+              IconButton(
+                tooltip: tr('필터 초기화'),
+                onPressed: clearTaskFilters,
+                icon: const Icon(Icons.filter_alt_off_outlined, size: 17),
+              ),
+          ],
+        ),
+      ],
+    ),
+  );
+
+  Widget board(List<WorkTask> tasks, double available) => LayoutBuilder(
+    builder: (context, bounds) => HorizontalViewport(
+      key: const Key('task-kanban'),
+      child: SizedBox(
+        width: max(available, 1480.0),
+        height: max(120, bounds.maxHeight - 12),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            for (final stage in boardStatuses.entries)
+              Expanded(
+                child: Padding(
+                  padding: EdgeInsets.only(right: stage.key == 'drop' ? 0 : 12),
+                  child: DragTarget<WorkTask>(
+                    onWillAcceptWithDetails: (d) =>
+                        !handoffOpen &&
+                        s
+                            .availableHandoffs(d.data)
+                            .any(
+                              (plan) =>
+                                  destinationCategory(plan.destinationId) ==
+                                  stage.key,
+                            ),
+                    onAcceptWithDetails: (d) =>
+                        moveToCategory(d.data, stage.key),
+                    builder: (context, candidates, rejected) {
+                      final list = tasks
+                          .where((t) => boardKey(t) == stage.key)
+                          .toList();
+                      return Container(
+                        key: Key('column-${stage.key}'),
+                        padding: const EdgeInsets.fromLTRB(10, 8, 10, 0),
+                        decoration: BoxDecoration(
+                          color: candidates.isNotEmpty
+                              ? colors.accentSurface
+                              : stageSurfaceColor(stage.key),
+                          border: Border.all(
+                            color: candidates.isNotEmpty ? purple : colors.line,
+                          ),
+                          borderRadius: BorderRadius.circular(
+                            WorkspaceUi.radius,
+                          ),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            SizedBox(
+                              height: 36,
+                              child: Row(
+                                children: [
+                                  Icon(
+                                    Icons.circle,
+                                    size: 6,
+                                    color: statusColor(stage.key),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: Text(
+                                      stage.value,
+                                      style: WorkspaceUi.sectionStyleOf(
+                                        context,
+                                      ),
+                                    ),
+                                  ),
+                                  Text(
+                                    '${list.length}',
+                                    style: WorkspaceUi.captionStyleOf(context),
+                                  ),
+                                  if (s.canCreate &&
+                                      stage.key == 'todo' &&
+                                      scope != 'archived')
+                                    IconButton(
+                                      visualDensity: VisualDensity.compact,
+                                      tooltip: tr('새 작업 등록'),
+                                      onPressed: () => edit(),
+                                      icon: Icon(
+                                        Icons.add_rounded,
+                                        size: 17,
+                                        color: muted,
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Expanded(
+                              child: list.isEmpty
+                                  ? Center(
+                                      child: Text(
+                                        tr('작업 없음'),
+                                        style: WorkspaceUi.captionStyleOf(
+                                          context,
+                                        ),
+                                      ),
+                                    )
+                                  : ListView(
+                                      key: Key('column-items-${stage.key}'),
+                                      padding: const EdgeInsets.only(
+                                        bottom: 12,
+                                      ),
+                                      children: [
+                                        for (final task in list.take(50))
+                                          Padding(
+                                            padding: const EdgeInsets.only(
+                                              bottom: 10,
+                                            ),
+                                            child: Draggable<WorkTask>(
+                                              data: task,
+                                              feedback: Material(
+                                                color: Colors.transparent,
+                                                child: SizedBox(
+                                                  width: 220,
+                                                  child: taskCard(
+                                                    task,
+                                                    interactive: false,
+                                                  ),
+                                                ),
+                                              ),
+                                              childWhenDragging: Opacity(
+                                                opacity: .35,
+                                                child: taskCard(
+                                                  task,
+                                                  interactive: false,
+                                                ),
+                                              ),
+                                              child: taskCard(task),
+                                            ),
+                                          ),
+                                        if (list.length > 50)
+                                          TextButton(
+                                            onPressed: () => setState(() {
+                                              statusFilter = stage.key;
+                                              taskPage = 0;
+                                              taskView = TaskView.list;
+                                            }),
+                                            child: Text(
+                                              tr(
+                                                '전체 {value0}개 목록에서 보기',
+                                                args: {'value0': list.length},
+                                              ),
+                                            ),
+                                          ),
+                                      ],
+                                    ),
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ),
+          ],
+        ),
       ),
     ),
   );
+
   void toggleTaskPin(WorkTask task) => action(() {
     s.setTaskPinned(task.id, !task.isPinned, expectedVersion: task.version);
     if (!task.isPinned) setState(() => taskPage = 0);
@@ -2133,7 +2411,7 @@ class _WorkspaceState extends State<Workspace>
 
   Widget taskPinButton(WorkTask task, String surface) => IconButton(
     key: Key('task-pin-$surface-${task.id}'),
-    tooltip: task.isPinned ? '상단 고정 해제' : '상단에 고정',
+    tooltip: task.isPinned ? tr('상단 고정 해제') : tr('상단에 고정'),
     onPressed: s.canPin(task) ? () => toggleTaskPin(task) : null,
     constraints: const BoxConstraints.tightFor(width: 28, height: 28),
     padding: EdgeInsets.zero,
@@ -2145,19 +2423,18 @@ class _WorkspaceState extends State<Workspace>
   );
 
   Widget taskCard(WorkTask t, {bool interactive = true}) {
-    final handoffs = taskActions(t);
-    final openStage = s.isOpenTaskStage(t);
+    final handoffs = cardActions(t);
     return Material(
       key: interactive ? Key('card-${t.id}') : null,
-      color: Colors.white,
+      color: surface,
       borderRadius: BorderRadius.circular(9),
       child: InkWell(
         borderRadius: BorderRadius.circular(9),
         onTap: interactive ? () => details(t) : null,
         child: Container(
-          padding: const EdgeInsets.all(14),
+          padding: const EdgeInsets.fromLTRB(14, 8, 14, 12),
           decoration: BoxDecoration(
-            border: Border.all(color: border),
+            border: Border.all(color: colors.line),
             borderRadius: BorderRadius.circular(9),
           ),
           child: Column(
@@ -2165,142 +2442,103 @@ class _WorkspaceState extends State<Workspace>
             children: [
               Row(
                 children: [
-                  Flexible(
-                    child: Tooltip(
-                      message: workflowCurrentPartLabel(t, s.project),
-                      child: badge(workflowCurrentPartLabel(t, s.project)),
+                  Expanded(
+                    child: Text(
+                      shortId(t.id),
+                      style: TextStyle(fontSize: 10, color: muted),
                     ),
                   ),
-                  taskPinButton(t, 'card'),
-                  const SizedBox(width: 4),
-                  if (t.isLocked) ...[
+                  if (t.priority == 'high')
                     Tooltip(
-                      message: '${s.member(t.lockedBy).name}님만 수정 가능',
-                      child: const Icon(
-                        Icons.lock_outline_rounded,
-                        size: 14,
-                        color: muted,
+                      message: tr('높은 우선순위'),
+                      child: Icon(
+                        Icons.keyboard_double_arrow_up_rounded,
+                        size: 15,
+                        color: Color(0xff9a622b),
                       ),
                     ),
-                    const SizedBox(width: 5),
-                  ],
-                  badge(
-                    '${t.priority == 'high' ? '↑ ' : ''}${priorities[t.priority]}',
-                    color: priorityColor(t.priority),
-                  ),
+                  if (t.isLocked)
+                    Padding(
+                      padding: const EdgeInsets.only(left: 6),
+                      child: Tooltip(
+                        message: tr(
+                          '{value0}님만 수정 가능',
+                          args: {'value0': s.member(t.lockedBy).name},
+                        ),
+                        child: Icon(
+                          Icons.lock_outline_rounded,
+                          size: 14,
+                          color: muted,
+                        ),
+                      ),
+                    ),
+                  taskPinButton(t, 'card'),
                 ],
-              ),
-              const SizedBox(height: 14),
-              Text(
-                shortId(t.id),
-                style: const TextStyle(fontSize: 9, color: muted),
-              ),
-              const SizedBox(height: 7),
-              SizedBox(
-                height: 44,
-                child: Text(
-                  t.title,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    height: 1.7,
-                  ),
-                ),
-              ),
-              if (t.status == 'rework')
-                Padding(
-                  padding: const EdgeInsets.only(top: 6),
-                  child: Text(
-                    '기존 코멘트를 확인하세요',
-                    style: TextStyle(fontSize: 9, color: statusColor('rework')),
-                  ),
-                ),
-              const SizedBox(height: 15),
-              Text(
-                '담당 · ${s.currentActorLabel(t)}',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontSize: 10, color: muted),
               ),
               const SizedBox(height: 5),
               Text(
-                '목적 · ${purposeLabel(t)}',
-                key: interactive ? Key('task-purpose-${t.id}') : null,
-                style: const TextStyle(fontSize: 10, color: muted),
+                t.title,
+                maxLines: 3,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  height: 1.6,
+                ),
               ),
               const SizedBox(height: 12),
+              Wrap(
+                spacing: 6,
+                runSpacing: 4,
+                children: [
+                  badge(taskPartLabel(t)),
+                  Text(
+                    tr('{value0} 요청', args: {'value0': purposeLabel(t)}),
+                    key: interactive ? Key('task-purpose-${t.id}') : null,
+                    style: TextStyle(fontSize: 10, color: muted, height: 1.9),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              Text(
+                tr('담당 · {value0}', args: {'value0': taskAssigneeLabel(t)}),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontSize: 11, color: muted),
+              ),
+              const SizedBox(height: 10),
               Row(
                 children: [
-                  const Icon(
-                    Icons.calendar_month_outlined,
-                    size: 13,
-                    color: muted,
-                  ),
+                  Icon(Icons.calendar_today_outlined, size: 12, color: muted),
                   const SizedBox(width: 5),
                   Text(
                     shortDate(t.dueDate),
-                    style: const TextStyle(fontSize: 10, color: muted),
+                    style: TextStyle(fontSize: 10, color: muted),
                   ),
                   const Spacer(),
                   Tooltip(
-                    message: openStage ? '모든 작업자' : s.currentActorLabel(t),
-                    child:
-                        !t.isLocked &&
-                            (openStage ||
-                                s.project?.workflowSheet != null &&
-                                    t.workflowPerson.isEmpty)
-                        ? const Icon(
-                            Icons.groups_outlined,
-                            size: 22,
-                            color: muted,
-                          )
-                        : avatar(
-                            s.member(
-                              t.isLocked
-                                  ? t.lockedBy
-                                  : s.project?.workflowSheet != null &&
-                                        t.workflowPerson.isNotEmpty
-                                  ? t.workflowPerson
-                                  : s.currentActorId(t),
-                            ),
-                            size: 25,
-                          ),
+                    message: taskAssigneeLabel(t),
+                    child: taskAssigneeId(t).isEmpty
+                        ? Icon(Icons.groups_outlined, size: 20, color: muted)
+                        : avatar(s.member(taskAssigneeId(t)), size: 23),
                   ),
                 ],
               ),
               if (s.isWaitingForReview(t)) ...[
-                const Divider(height: 24, color: border),
-                Row(
-                  children: [
-                    Icon(
-                      Icons.arrow_forward,
-                      size: 12,
-                      color: statusColor(t.status),
-                    ),
-                    const SizedBox(width: 4),
-                    Expanded(
-                      child: Text(
-                        s.project?.workflowSheet != null
-                            ? '${s.currentActorLabel(t)} · 검토 요청'
-                            : openStage
-                            ? '모든 작업자 검토 대기'
-                            : '${s.member(t.reviewerId).name} 검토 대기',
-                        style: TextStyle(
-                          fontSize: 9,
-                          color: statusColor(t.status),
-                        ),
-                      ),
-                    ),
-                  ],
+                const SizedBox(height: 10),
+                Text(
+                  tr(
+                    '{value0} · 검토 요청',
+                    args: {'value0': taskAssigneeLabel(t)},
+                  ),
+                  style: TextStyle(fontSize: 10, color: statusColor(t.status)),
                 ),
               ],
               if (handoffs.isNotEmpty) ...[
-                const SizedBox(height: 12),
+                Divider(height: 18, color: colors.line),
                 Wrap(
-                  spacing: 6,
-                  runSpacing: 6,
+                  spacing: 4,
+                  runSpacing: 4,
                   children: [
                     for (final plan in handoffs)
                       handoffButton(
@@ -2326,16 +2564,16 @@ class _WorkspaceState extends State<Workspace>
 
   Widget compactSchedule(List<WorkTask> tasks) => Material(
     key: const Key('task-list'),
-    color: Colors.white,
+    color: surface,
     clipBehavior: Clip.antiAlias,
     shape: RoundedRectangleBorder(
       borderRadius: BorderRadius.circular(10),
-      side: const BorderSide(color: border),
+      side: BorderSide(color: border),
     ),
     child: Column(
       children: [
         for (var i = 0; i < tasks.length; i++) ...[
-          if (i > 0) const Divider(height: 1, color: border),
+          if (i > 0) Divider(height: 1, color: border),
           InkWell(
             key: Key('compact-task-${tasks[i].id}'),
             onTap: () => details(tasks[i]),
@@ -2371,16 +2609,26 @@ class _WorkspaceState extends State<Workspace>
                     runSpacing: 6,
                     children: [
                       Text(
-                        '${workflowCurrentPartLabel(tasks[i], s.project)} · ${s.currentActorLabel(tasks[i])}',
-                        style: const TextStyle(fontSize: 12, color: muted),
+                        '${taskPartLabel(tasks[i])} · ${taskAssigneeLabel(tasks[i])}',
+                        style: TextStyle(fontSize: 12, color: muted),
                       ),
                       Text(
-                        '목적 · ${purposeLabel(tasks[i])}',
-                        style: const TextStyle(fontSize: 12, color: muted),
+                        tr(
+                          '{value0} 요청',
+                          args: {'value0': purposeLabel(tasks[i])},
+                        ),
+                        style: TextStyle(fontSize: 12, color: muted),
                       ),
                       Text(
-                        '마감 ${tasks[i].dueDate.isEmpty ? '미정' : tasks[i].dueDate}',
-                        style: const TextStyle(fontSize: 12, color: muted),
+                        tr(
+                          '마감 {value0}',
+                          args: {
+                            'value0': tasks[i].dueDate.isEmpty
+                                ? '미정'
+                                : tasks[i].dueDate,
+                          },
+                        ),
+                        style: TextStyle(fontSize: 12, color: muted),
                       ),
                       Text(
                         priorities[tasks[i].priority]!,
@@ -2415,7 +2663,7 @@ class _WorkspaceState extends State<Workspace>
     key: const Key('task-list'),
     width: double.infinity,
     decoration: BoxDecoration(
-      color: Colors.white,
+      color: surface,
       border: Border.all(color: border),
       borderRadius: BorderRadius.circular(10),
     ),
@@ -2426,19 +2674,17 @@ class _WorkspaceState extends State<Workspace>
         headingRowHeight: 49,
         dataRowMinHeight: 70,
         dataRowMaxHeight: 110,
-        headingTextStyle: const TextStyle(fontSize: 12, color: muted),
-        dataTextStyle: const TextStyle(fontSize: 12, color: ink),
+        headingTextStyle: TextStyle(fontSize: 12, color: muted),
+        dataTextStyle: TextStyle(fontSize: 12, color: ink),
         dividerThickness: .5,
         columns: [
-          '작업내용',
-          '상태',
-          '등록 담당자',
-          '현재 처리자',
-          '우선순위',
-          '작업 지정일',
-          '마감일',
-          '완료일',
-          '작업 처리',
+          tr('작업'),
+          tr('상태'),
+          tr('담당자'),
+          tr('우선순위'),
+          tr('시작일'),
+          tr('마감일'),
+          tr('동작'),
         ].map((label) => DataColumn(label: Text(label))).toList(),
         rows: tasks
             .map(
@@ -2466,10 +2712,7 @@ class _WorkspaceState extends State<Workspace>
                                 const SizedBox(height: 6),
                                 Text(
                                   '${t.part} · ${shortId(t.id)}',
-                                  style: const TextStyle(
-                                    fontSize: 9,
-                                    color: muted,
-                                  ),
+                                  style: TextStyle(fontSize: 9, color: muted),
                                 ),
                               ],
                             ),
@@ -2485,7 +2728,6 @@ class _WorkspaceState extends State<Workspace>
                       color: statusColor(boardKey(t)),
                     ),
                   ),
-                  DataCell(Text(s.member(t.assigneeId).name)),
                   DataCell(
                     SizedBox(
                       width: 120,
@@ -2494,18 +2736,22 @@ class _WorkspaceState extends State<Workspace>
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            s.isOpenTaskStage(t)
-                                ? '모든 작업자'
-                                : s.currentActorLabel(t),
+                            taskAssigneeLabel(t),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                           ),
                           const SizedBox(height: 6),
                           Text(
-                            '${workflowCurrentPartLabel(t, s.project)} · ${purposeLabel(t)}',
+                            tr(
+                              '{value0} · {value1} 요청',
+                              args: {
+                                'value0': taskPartLabel(t),
+                                'value1': purposeLabel(t),
+                              },
+                            ),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(fontSize: 10, color: muted),
+                            style: TextStyle(fontSize: 10, color: muted),
                           ),
                         ],
                       ),
@@ -2517,11 +2763,8 @@ class _WorkspaceState extends State<Workspace>
                       color: priorityColor(t.priority),
                     ),
                   ),
-                  DataCell(Text(t.assignedDate)),
-                  DataCell(Text(t.dueDate.isEmpty ? '—' : t.dueDate)),
-                  DataCell(
-                    Text(t.completedDate.isEmpty ? '—' : t.completedDate),
-                  ),
+                  DataCell(Text(displayDate(t.assignedDate))),
+                  DataCell(Text(displayDate(t.dueDate))),
                   DataCell(tableTaskActions(t)),
                 ],
               ),
@@ -2532,9 +2775,9 @@ class _WorkspaceState extends State<Workspace>
   );
   Widget tableTaskActions(WorkTask task) {
     final plans = taskActions(task);
-    if (plans.isEmpty) return const SizedBox(width: 228);
+    if (plans.isEmpty) return const SizedBox(width: 140);
     return SizedBox(
-      width: 228,
+      width: 140,
       child: Row(
         children: [
           Expanded(
@@ -2544,7 +2787,7 @@ class _WorkspaceState extends State<Workspace>
             const SizedBox(width: 6),
             PopupMenuButton<TaskHandoffPlan>(
               key: Key('task-actions-more-${task.id}'),
-              tooltip: '다른 작업 처리',
+              tooltip: tr('다른 작업 처리'),
               enabled: !handoffOpen,
               icon: const Icon(Icons.more_horiz_rounded, size: 20),
               onSelected: confirmHandoff,
@@ -2553,7 +2796,7 @@ class _WorkspaceState extends State<Workspace>
                   PopupMenuItem(
                     value: plan,
                     child: Text(
-                      '${plan.buttonLabel} · ${plan.recipientLabel}',
+                      '${tr(plan.buttonLabel)} · ${plan.recipientLabel}',
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                     ),
@@ -2567,104 +2810,100 @@ class _WorkspaceState extends State<Workspace>
   }
 
   Widget changesPanel() => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
+    crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
-      heading(
-        '통합 전 변경 ${s.changes.length}건',
-        '작업에서 저장한 변경 내용입니다. 전송 진행 상황은 GitHub 동기화에서 확인하세요.',
+      WorkspaceSectionLabel(
+        title: tr('전송 전 변경'),
+        trailing: Text(
+          tr('{value0}건', args: {'value0': s.changes.length}),
+          style: WorkspaceUi.captionStyleOf(context),
+        ),
       ),
-      const SizedBox(height: 20),
+      const SizedBox(height: 12),
       if (s.changes.isEmpty)
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.all(60),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            border: Border.all(color: border),
-            borderRadius: BorderRadius.circular(12),
+        WorkspacePanel(
+          child: WorkspaceEmptyState(
+            icon: Icons.check_circle_outline_rounded,
+            title: tr('전송할 변경이 없습니다.'),
+            message: tr('저장한 작업의 변경사항을 여기서 확인할 수 있습니다.'),
           ),
-          child: const Column(
-            children: [
-              Icon(Icons.merge_outlined, size: 32, color: purple),
-              SizedBox(height: 18),
-              Text('아직 개인 변경이 없어요', style: TextStyle(fontSize: 15)),
-              SizedBox(height: 10),
-              Text(
-                '작업 등록이나 상태 변경을 하면 여기에 표시됩니다.',
-                style: TextStyle(fontSize: 11, color: muted),
-              ),
-            ],
-          ),
-        ),
-      ...s.changes.map(
-        (c) => Container(
-          margin: const EdgeInsets.only(bottom: 15),
-          padding: const EdgeInsets.all(23),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            border: Border.all(color: border),
-            borderRadius: BorderRadius.circular(10),
-          ),
+        )
+      else
+        WorkspacePanel(
+          padding: EdgeInsets.zero,
           child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              badge(c['kind'] == 'create' ? '신규 작업' : '수정 작업', color: purple),
-              const SizedBox(height: 10),
-              Text(
-                c['title'],
-                style: const TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              const SizedBox(height: 16),
-              ...(c['fields'] as List).map(
-                (f) => Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 7),
-                  child: Row(
-                    children: [
-                      SizedBox(
-                        width: 100,
-                        child: Text(
-                          f['label'],
-                          style: const TextStyle(fontSize: 11, color: muted),
-                        ),
-                      ),
-                      Expanded(
-                        child: Text(
-                          taskChangeValue(f['key'], f['before']),
-                          style: const TextStyle(fontSize: 11, color: muted),
-                        ),
-                      ),
-                      const Padding(
-                        padding: EdgeInsets.symmetric(horizontal: 13),
-                        child: Icon(
-                          Icons.arrow_forward,
-                          size: 14,
-                          color: muted,
-                        ),
-                      ),
-                      Expanded(
-                        child: Text(
-                          taskChangeValue(f['key'], f['after']),
-                          style: const TextStyle(fontSize: 11, color: purple),
-                        ),
-                      ),
-                    ],
+              for (var i = 0; i < s.changes.length; i++) ...[
+                if (i > 0) Divider(height: 1, color: colors.line),
+                ExpansionTile(
+                  shape: const Border(),
+                  collapsedShape: const Border(),
+                  tilePadding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 4,
                   ),
+                  childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                  leading: Icon(
+                    s.changes[i]['kind'] == 'create'
+                        ? Icons.add_circle_outline
+                        : Icons.edit_outlined,
+                    size: 18,
+                    color: muted,
+                  ),
+                  title: Text(
+                    s.changes[i]['title'],
+                    style: WorkspaceUi.sectionStyleOf(context),
+                  ),
+                  subtitle: Text(
+                    s.changes[i]['kind'] == 'create'
+                        ? tr('신규 작업')
+                        : tr('수정 작업'),
+                    style: WorkspaceUi.captionStyleOf(context),
+                  ),
+                  children: [
+                    for (final field in s.changes[i]['fields'] as List)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 8),
+                        child: Wrap(
+                          spacing: 12,
+                          runSpacing: 6,
+                          children: [
+                            SizedBox(
+                              width: 100,
+                              child: Text(
+                                field['label'],
+                                style: WorkspaceUi.captionStyleOf(context),
+                              ),
+                            ),
+                            Text(
+                              taskChangeValue(field['key'], field['before']),
+                              style: WorkspaceUi.captionStyleOf(context),
+                            ),
+                            Icon(
+                              Icons.arrow_forward_rounded,
+                              size: 14,
+                              color: muted,
+                            ),
+                            Text(
+                              taskChangeValue(field['key'], field['after']),
+                              style: TextStyle(fontSize: 11, color: ink),
+                            ),
+                          ],
+                        ),
+                      ),
+                  ],
                 ),
-              ),
+              ],
             ],
           ),
         ),
-      ),
       const SizedBox(height: 20),
       ExpansionTile(
         key: const Key('manual-transfer'),
         tilePadding: EdgeInsets.zero,
-        title: const Text('수동 가져오기 · 내보내기', style: TextStyle(fontSize: 13)),
-        subtitle: const Text(
-          '자동 동기화를 사용할 수 없을 때',
+        title: Text(tr('수동 가져오기 · 내보내기'), style: TextStyle(fontSize: 13)),
+        subtitle: Text(
+          tr('자동 동기화를 사용할 수 없을 때'),
           style: TextStyle(fontSize: 12, color: muted),
         ),
         childrenPadding: const EdgeInsets.only(bottom: 16),
@@ -2678,17 +2917,18 @@ class _WorkspaceState extends State<Workspace>
                 OutlinedButton.icon(
                   onPressed: fileBusy || !s.canImportManually ? null : import,
                   icon: const Icon(Icons.upload_outlined, size: 16),
-                  label: const Text('통합본 가져오기'),
+                  label: Text(tr('통합본 가져오기')),
                 ),
                 OutlinedButton.icon(
                   onPressed: fileBusy || s.changes.isEmpty ? null : export,
                   icon: const Icon(Icons.download_outlined, size: 16),
-                  label: const Text('변경안 내보내기'),
+                  label: Text(tr('변경안 내보내기')),
                 ),
               ],
             ),
           ),
-          if (!s.canImportManually) info('읽기 전용 · 수동 가져오기는 작업 변경 권한이 필요합니다.'),
+          if (!s.canImportManually)
+            info(tr('읽기 전용 · 수동 가져오기는 작업 변경 권한이 필요합니다.')),
         ],
       ),
     ],
@@ -2697,18 +2937,18 @@ class _WorkspaceState extends State<Workspace>
     margin: const EdgeInsets.only(top: 24),
     padding: const EdgeInsets.all(16),
     decoration: BoxDecoration(
-      color: const Color(0xfff1edf8),
+      color: colors.accentSurface,
       borderRadius: BorderRadius.circular(8),
     ),
     child: Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Icon(Icons.info_outline, size: 18, color: purple),
+        Icon(Icons.info_outline, size: 18, color: purple),
         const SizedBox(width: 10),
         Expanded(
           child: Text(
             text,
-            style: const TextStyle(fontSize: 11, color: muted, height: 1.8),
+            style: TextStyle(fontSize: 11, color: muted, height: 1.8),
           ),
         ),
       ],
@@ -2716,6 +2956,16 @@ class _WorkspaceState extends State<Workspace>
   );
   Widget settingsContent(SettingsSection section) => switch (section) {
     SettingsSection.general => generalSettings(),
+    SettingsSection.design => AppPreferencesScope(
+      preferences:
+          AppPreferencesScope.maybeOf(context) ?? _standalonePreferences,
+      child: const AppearanceSettings(),
+    ),
+    SettingsSection.language => AppPreferencesScope(
+      preferences:
+          AppPreferencesScope.maybeOf(context) ?? _standalonePreferences,
+      child: const LanguageSettings(),
+    ),
     SettingsSection.projectGeneral => projectGeneralSettings(),
     SettingsSection.roles || SettingsSection.assignments =>
       s.isProject && widget.session != null && widget.sync != null
@@ -2728,8 +2978,8 @@ class _WorkspaceState extends State<Workspace>
                 selectSettings(SettingsSection.team);
               },
             )
-          : settingsGroup('파트', [
-              ('프로젝트 필요', '프로젝트를 연결하면 파트를 관리할 수 있습니다.', ''),
+          : settingsGroup(tr('파트'), [
+              (tr('프로젝트 필요'), tr('프로젝트를 연결하면 파트를 관리할 수 있습니다.'), ''),
             ]),
     SettingsSection.team =>
       s.isProject && widget.session != null && widget.sync != null
@@ -2740,36 +2990,36 @@ class _WorkspaceState extends State<Workspace>
               initialMember: relatedMember,
               onOpenTasks: (id) => rememberView(() {
                 relatedMember = id;
-                page = 0;
+                page = 6;
                 scope = 'all';
                 search = '';
                 part = '';
               }),
             )
-          : info('프로젝트에 로그인하면 참여자와 파트, 가입 요청을 관리할 수 있습니다.'),
+          : info(tr('프로젝트에 로그인하면 참여자와 파트, 가입 요청을 관리할 수 있습니다.')),
     SettingsSection.workflow => info(
-      '확인중 → 진행중 → 완료. 작업은 직접 전달하고 필요할 때 잠글 수 있습니다.',
+      tr('확인중 → 진행중 → 검토중 → 완료. 전달하면 확인중으로 이동하며, 보류와 드랍에서 복귀할 수 있습니다.'),
     ),
     SettingsSection.github =>
       widget.sync != null
           ? GitHubPanel(sync: widget.sync!)
-          : info('프로젝트 저장소에 연결하면 동기화 상태와 전송 대기열을 확인할 수 있습니다.'),
+          : info(tr('프로젝트 저장소에 연결하면 동기화 상태와 전송 대기열을 확인할 수 있습니다.')),
     SettingsSection.changes => changesPanel(),
     SettingsSection.notifications => Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        settingsGroup('작업 알림', [
+        settingsGroup(tr('작업 알림'), [
           (
-            '앱 알림함',
-            '작업 배정, 검토 요청, 검토 결과를 확인합니다.',
-            '${s.unreadNotificationCount}개 읽지 않음',
+            tr('내 알림'),
+            tr('작업 배정, 검토 요청, 검토 결과를 확인합니다.'),
+            tr('{value0}개 읽지 않음', args: {'value0': s.unreadNotificationCount}),
           ),
         ]),
         const SizedBox(height: 16),
         OutlinedButton.icon(
           onPressed: notifications,
           icon: const Icon(Icons.notifications_none_rounded, size: 18),
-          label: const Text('앱 알림함 열기'),
+          label: Text(tr('알림 열기')),
         ),
       ],
     ),
@@ -2790,7 +3040,7 @@ class _WorkspaceState extends State<Workspace>
             if (busy) return;
             final name = controller.text.trim();
             if (name.isEmpty) {
-              update(() => error = '이름을 입력하세요.');
+              update(() => error = tr('이름을 입력하세요.'));
               return;
             }
             update(() {
@@ -2813,7 +3063,10 @@ class _WorkspaceState extends State<Workspace>
               if (ctx.mounted) {
                 update(() {
                   busy = false;
-                  error = '이름 저장 실패 · 초안은 유지됩니다. $e';
+                  error = tr(
+                    '이름 저장 실패 · 초안은 유지됩니다. {value0}',
+                    args: {'value0': e},
+                  );
                 });
               }
             }
@@ -2824,7 +3077,7 @@ class _WorkspaceState extends State<Workspace>
             busy: busy,
             onSave: save,
             child: IeumDialog(
-              title: const Text('이름 변경'),
+              title: Text(tr('이름 변경')),
               icon: Icons.edit_outlined,
               content: Column(
                 mainAxisSize: MainAxisSize.min,
@@ -2836,13 +3089,13 @@ class _WorkspaceState extends State<Workspace>
                     enabled: !busy,
                     maxLength: 40,
                     onChanged: (_) => update(() {}),
-                    decoration: const InputDecoration(labelText: '이름 / 닉네임'),
+                    decoration: InputDecoration(labelText: tr('이름 / 닉네임')),
                   ),
-                  const Text(
-                    '이 컴퓨터에 연결된 참여 프로젝트에 커밋으로 반영합니다. GitHub 아이디와 기존 브랜치는 유지됩니다. 프로젝트별 실패 결과는 별도로 표시합니다.',
+                  Text(
+                    tr('이 컴퓨터에서 연결한 프로젝트에 새 이름이 반영됩니다. GitHub 계정은 바뀌지 않습니다.'),
                   ),
                   if (controller.text.trim() != original)
-                    const Text('저장하지 않은 변경사항'),
+                    Text(tr('저장하지 않은 변경사항')),
                   if (error.isNotEmpty)
                     Text(error, style: const TextStyle(color: Colors.red)),
                 ],
@@ -2850,13 +3103,13 @@ class _WorkspaceState extends State<Workspace>
               actions: [
                 TextButton(
                   onPressed: busy ? null : () => Navigator.maybePop(ctx),
-                  child: const Text('취소'),
+                  child: Text(tr('취소')),
                 ),
                 FilledButton(
                   onPressed: busy || controller.text.trim() == original
                       ? null
                       : save,
-                  child: Text(busy ? '반영 중…' : '변경'),
+                  child: Text(busy ? tr('반영 중…') : tr('변경')),
                 ),
               ],
             ),
@@ -2876,31 +3129,49 @@ class _WorkspaceState extends State<Workspace>
         expectedProjectId: s.project!.id,
       ),
     );
-    return '이름을 변경했습니다.';
+    return tr('이름을 변경했습니다.');
   }
 
   Widget projectGeneralSettings() => Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
-      settingsGroup('프로젝트', [
-        ('프로젝트 이름', '현재 열려 있는 작업 공간입니다.', s.project?.name ?? '예시 작업 공간'),
+      ProjectResourceSettings(
+        store: s,
+        sync: widget.sync,
+        session: widget.session,
+      ),
+      const SizedBox(height: 32),
+      settingsGroup(tr('프로젝트'), [
         (
-          '데이터 저장 위치',
-          '이 컴퓨터의 작업과 전송 대기열을 보관합니다.',
-          s.filename == ':memory:' ? '테스트용 메모리 DB' : s.filename,
+          tr('프로젝트 이름'),
+          tr('현재 열려 있는 프로젝트입니다.'),
+          s.project?.name ?? tr('로컬 작업 공간'),
         ),
         (
-          'GitHub 저장소',
-          '팀의 작업과 통합본을 공유합니다.',
+          tr('데이터 저장 위치'),
+          tr('이 컴퓨터의 작업과 전송 대기열을 보관합니다.'),
+          s.filename == ':memory:' ? tr('임시 작업 공간') : s.filename,
+        ),
+        (
+          tr('GitHub 저장소'),
+          tr('팀의 작업 데이터를 공유하는 저장소입니다.'),
           widget.sync?.config.repository.isNotEmpty == true
               ? widget.sync!.config.slug
-              : '연결되지 않음',
+              : tr('연결되지 않음'),
         ),
       ]),
       const SizedBox(height: 32),
-      settingsGroup('현재 참여 상태', [
-        ('역할', '이 프로젝트에서 부여받은 권한입니다.', s.actor.roleLabel),
-        ('상태', '비활성화된 참여자는 작업·업로드가 제한됩니다.', s.actor.active ? '활성화' : '비활성화'),
+      settingsGroup(tr('현재 참여 상태'), [
+        (
+          tr('권한'),
+          tr('이 프로젝트에서 부여받은 권한입니다.'),
+          trRoleName(s.actor.role, s.actor.roleLabel),
+        ),
+        (
+          tr('상태'),
+          tr('비활성화된 참여자는 작업·업로드가 제한됩니다.'),
+          s.actor.active ? tr('활성화') : tr('비활성화'),
+        ),
       ]),
     ],
   );
@@ -2909,18 +3180,18 @@ class _WorkspaceState extends State<Workspace>
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
       settingsGroup(
-        '계정',
+        tr('계정'),
         [
-          ('이름', '참여 중인 모든 프로젝트에서 사용하는 표시 이름입니다.', s.actor.name),
-          ('GitHub 계정', '표시 이름과 별개의 로그인 식별자입니다.', s.actor.login),
+          (tr('이름'), tr('참여 중인 모든 프로젝트에서 사용하는 표시 이름입니다.'), s.actor.name),
+          (tr('GitHub 계정'), tr('표시 이름과 별개의 로그인 식별자입니다.'), s.actor.login),
         ],
         actions: {
           if (s.isProject && widget.session != null)
-            '이름': OutlinedButton.icon(
+            tr('이름'): OutlinedButton.icon(
               key: const Key('change-account-name'),
               onPressed: nameBusy ? null : renameAccount,
               icon: const Icon(Icons.edit_outlined, size: 16),
-              label: Text(nameBusy ? '이름 반영 중…' : '이름 변경'),
+              label: Text(nameBusy ? tr('이름 반영 중…') : tr('이름 변경')),
             ),
         },
       ),
@@ -2932,11 +3203,11 @@ class _WorkspaceState extends State<Workspace>
             style: const TextStyle(fontSize: 12),
           ),
         ),
-      const SizedBox(height: 28),
+      const SizedBox(height: 24),
       settingsGroup(
-        '앱 정보',
-        [('이음 버전', '새 버전을 확인하고 다운로드합니다.', appVersion)],
-        actions: {'이음 버전': const UpdateButton()},
+        tr('앱 정보'),
+        [(tr('이음 버전'), tr('새 버전을 확인하고 다운로드합니다.'), appVersion)],
+        actions: {tr('이음 버전'): const UpdateButton()},
       ),
     ],
   );
@@ -2950,25 +3221,21 @@ class _WorkspaceState extends State<Workspace>
     children: [
       Text(
         title,
-        style: const TextStyle(
-          fontSize: 13,
-          fontWeight: FontWeight.w600,
-          color: Color(0xff303632),
-        ),
+        style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: ink),
       ),
       const SizedBox(height: 14),
       Container(
         width: double.infinity,
         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
         decoration: BoxDecoration(
-          color: Colors.white,
-          border: Border.all(color: const Color(0xffe5e8e6)),
-          borderRadius: BorderRadius.circular(16),
+          color: surface,
+          border: Border.all(color: colors.line),
+          borderRadius: BorderRadius.circular(WorkspaceUi.radius),
         ),
         child: Column(
           children: [
             for (var i = 0; i < rows.length; i++) ...[
-              if (i > 0) const Divider(height: 1, color: Color(0xffeceeec)),
+              if (i > 0) Divider(height: 1, color: border),
               Padding(
                 padding: const EdgeInsets.symmetric(vertical: 16),
                 child: settingRow(rows[i], action: actions[rows[i].$1]),
@@ -2996,22 +3263,14 @@ class _WorkspaceState extends State<Workspace>
               const SizedBox(height: 5),
               Text(
                 row.$2,
-                style: const TextStyle(
-                  fontSize: 11,
-                  color: Color(0xff7d8380),
-                  height: 1.5,
-                ),
+                style: TextStyle(fontSize: 11, color: muted, height: 1.5),
               ),
             ],
           );
           final valueText = SelectableText(
             row.$3,
             textAlign: TextAlign.left,
-            style: const TextStyle(
-              fontSize: 12,
-              color: Color(0xff666e68),
-              height: 1.5,
-            ),
+            style: TextStyle(fontSize: 12, color: muted, height: 1.5),
           );
           final value = Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -3040,15 +3299,18 @@ class _WorkspaceState extends State<Workspace>
       context: ctx,
       builder: (dialogContext) => AlertDialog(
         scrollable: true,
-        title: const Text('작업을 삭제할까요?'),
+        title: Text(tr('작업을 삭제할까요?')),
         content: Text(
-          '“${task.title}”\n\n목록·칸반·일정에서 삭제됩니다. GitHub 동기화 후 팀에도 반영됩니다. 앱에서 복원할 수 없습니다.',
+          tr(
+            '“{value0}”\n\n목록·칸반·일정에서 삭제됩니다. GitHub 동기화 후 팀에도 반영됩니다. 앱에서 복원할 수 없습니다.',
+            args: {'value0': task.title},
+          ),
         ),
         actions: [
           TextButton(
             key: const Key('task-delete-cancel'),
             onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('취소'),
+            child: Text(tr('취소')),
           ),
           FilledButton(
             key: const Key('task-delete-confirm'),
@@ -3056,7 +3318,7 @@ class _WorkspaceState extends State<Workspace>
               backgroundColor: const Color(0xffc44848),
             ),
             onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('삭제'),
+            child: Text(tr('삭제')),
           ),
         ],
       ),
@@ -3065,8 +3327,99 @@ class _WorkspaceState extends State<Workspace>
     action(() {
       s.deleteTask(task.id, expectedVersion: task.version);
       Navigator.pop(ctx);
-      message('작업을 삭제했습니다.');
+      message(tr('작업을 삭제했습니다.'));
     });
+  }
+
+  Widget taskDetailProperties(String title, Map<String, String> values) =>
+      Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(title, style: WorkspaceUi.sectionStyleOf(context)),
+          const SizedBox(height: 14),
+          for (final entry in values.entries)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  SizedBox(
+                    width: 100,
+                    child: Text(
+                      entry.key,
+                      style: WorkspaceUi.captionStyleOf(context),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: SelectableText(
+                      entry.value.isEmpty ? tr('미정') : entry.value,
+                      style: const TextStyle(fontSize: 12, height: 1.5),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+        ],
+      );
+
+  Widget taskDetailAssignment(WorkTask task, TaskHandoffPlan? transfer) {
+    final groupAssignment = taskAssigneeId(task).isEmpty;
+    return Container(
+      key: ValueKey('task-detail-assignment-${task.id}'),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: colors.subtle,
+        borderRadius: BorderRadius.circular(WorkspaceUi.radius),
+      ),
+      child: Row(
+        children: [
+          groupAssignment
+              ? CircleAvatar(
+                  radius: 18,
+                  backgroundColor: colors.subtle,
+                  child: Icon(Icons.groups_outlined, size: 20, color: muted),
+                )
+              : avatar(s.member(taskAssigneeId(task)), size: 36),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(tr('담당자'), style: WorkspaceUi.captionStyleOf(context)),
+                const SizedBox(height: 3),
+                Tooltip(
+                  message: taskAssigneeLabel(task),
+                  child: Text(
+                    taskAssigneeLabel(task),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  taskPartLabel(task),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: WorkspaceUi.captionStyleOf(context),
+                ),
+              ],
+            ),
+          ),
+          if (transfer != null) ...[
+            const SizedBox(width: 12),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 120),
+              child: handoffButton(transfer, secondary: true),
+            ),
+          ],
+        ],
+      ),
+    );
   }
 
   Widget detailBody(BuildContext ctx, WorkTask t) {
@@ -3075,210 +3428,77 @@ class _WorkspaceState extends State<Workspace>
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text('삭제된 작업입니다.'),
+            Text(tr('삭제된 작업입니다.')),
             TextButton(
               onPressed: () => Navigator.pop(ctx),
-              child: const Text('닫기'),
+              child: Text(tr('닫기')),
             ),
           ],
         ),
       );
     }
-    final canEdit = s.canEdit(t);
     final lockReason = !s.canEditContent(t) ? s.editLockReason(t) : '';
     final history = s.activityFor(t.id);
-    return ListView(
-      padding: const EdgeInsets.all(31),
+    final handoffs = s.availableHandoffs(t);
+    final transfers = s.availableTransfers(t);
+    final transfer = transfers.firstOrNull;
+    final primary = handoffs
+        .where(
+          (p) => const {
+            'manual-start',
+            'manual-resume',
+            'manual-restore',
+          }.contains(p.routeId),
+        )
+        .firstOrNull;
+    final statusActions = handoffs
+        .where((p) => p.routeId != primary?.routeId)
+        .toList();
+    return Column(
       children: [
-        Row(
-          children: [
-            Expanded(
-              child: Text(
-                t.id,
-                style: const TextStyle(fontSize: 10, color: muted),
-              ),
-            ),
-            IconButton(
-              tooltip: '작업 상세 닫기',
-              onPressed: () => Navigator.pop(ctx),
-              icon: const Icon(Icons.close, size: 20),
-            ),
-          ],
-        ),
-        const SizedBox(height: 22),
-        Align(
-          alignment: Alignment.centerLeft,
-          child: badge(
-            boardStatuses[boardKey(t)]!,
-            color: statusColor(boardKey(t)),
-          ),
-        ),
-        const SizedBox(height: 18),
-        Text(
-          t.title,
-          style: const TextStyle(
-            fontSize: 23,
-            fontWeight: FontWeight.w600,
-            height: 1.5,
-          ),
-        ),
-        const SizedBox(height: 26),
-        ...{
-          '작업 파트': t.part,
-          '잠금': t.isLocked ? '${s.member(t.lockedBy).name}만 수정 가능' : '잠금 없음',
-          '등록 담당자': s.member(t.assigneeId).name,
-          if (s.project?.workflowSheet == null)
-            '검토 담당자': s.member(t.reviewerId).name,
-          '현재 처리자': s.isOpenTaskStage(t) ? '모든 작업자' : s.currentActorLabel(t),
-          '현재 파트': workflowCurrentPartLabel(t, s.project),
-          '처리 목적': purposeLabel(t),
-          if (t.workflowSender.isNotEmpty)
-            '직전 전달자': s.member(t.workflowSender).name,
-          if (!const {'todo', 'doing', 'done'}.contains(t.status))
-            '세부 상태': s.workflowStatusName(t.status),
-          '우선순위': priorities[t.priority]!,
-          '작업 지정일': t.assignedDate,
-          '마감일': t.dueDate.isEmpty ? '미정' : t.dueDate,
-          '완료일': t.completedDate.isEmpty ? '—' : t.completedDate,
-        }.entries.map(
-          (e) => Padding(
-            padding: const EdgeInsets.only(bottom: 18),
-            child: Row(
-              children: [
-                SizedBox(
-                  width: 115,
-                  child: Text(
-                    e.key,
-                    style: const TextStyle(fontSize: 11, color: muted),
-                  ),
-                ),
-                Expanded(
-                  child: Text(e.value, style: const TextStyle(fontSize: 12)),
-                ),
-              ],
-            ),
-          ),
-        ),
-        const SizedBox(height: 13),
-        const Text(
-          '작업 설명',
-          style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
-        ),
-        const SizedBox(height: 12),
-        Text(
-          t.description.isEmpty ? '작성된 설명이 없습니다.' : t.description,
-          style: const TextStyle(fontSize: 12, color: muted, height: 1.9),
-        ),
-        if (t.reworkReason.isNotEmpty)
-          Container(
-            margin: const EdgeInsets.only(top: 20),
-            padding: const EdgeInsets.all(16),
-            color: const Color(0xfffaf0f3),
-            child: Text(
-              '최근 전달 코멘트\n${t.reworkReason}',
-              style: TextStyle(
-                fontSize: 11,
-                height: 1.9,
-                color: statusColor('rework'),
-              ),
-            ),
-          ),
-        const Divider(height: 43, color: border),
-        if (lockReason.isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 18),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Icon(Icons.lock_outline, size: 16, color: muted),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    lockReason,
-                    style: const TextStyle(
-                      fontSize: 11,
-                      color: muted,
-                      height: 1.6,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        Wrap(
-          spacing: 10,
-          runSpacing: 10,
-          children: [
-            if (t.isArchived)
-              const Chip(
-                label: Text('보관된 작업'),
-                avatar: Icon(Icons.inventory_2_outlined, size: 16),
-              ),
+        TaskDetailToolbar(
+          taskId: t.id,
+          displayId: shortId(t.id),
+          title: t.title,
+          statusKey: boardKey(t),
+          statusLabel: boardStatuses[boardKey(t)]!,
+          onClose: () => Navigator.pop(ctx),
+          onEdit: s.canEdit(t) ? () => edit(t) : null,
+          primaryAction: primary == null ? null : handoffButton(primary),
+          statusActions: statusActions,
+          onStatusSelected: confirmHandoff,
+          menuActions: [
             if (s.canPin(t))
-              OutlinedButton.icon(
+              TaskDetailMenuAction(
                 key: Key('task-pin-detail-${t.id}'),
+                label: t.isPinned ? tr('상단 고정 해제') : tr('상단에 고정'),
+                icon: t.isPinned
+                    ? Icons.push_pin_rounded
+                    : Icons.push_pin_outlined,
                 onPressed: () => toggleTaskPin(t),
-                icon: Icon(
-                  t.isPinned ? Icons.push_pin_rounded : Icons.push_pin_outlined,
-                  size: 16,
-                ),
-                label: Text(t.isPinned ? '상단 고정 해제' : '상단에 고정'),
               ),
             if (s.canSetTaskLock(t))
-              OutlinedButton.icon(
+              TaskDetailMenuAction(
                 key: Key('task-lock-${t.id}'),
-                onPressed: () => action(() {
-                  s.setTaskLocked(
+                label: t.isLocked ? tr('잠금 해제') : tr('나만 수정하도록 잠금'),
+                icon: t.isLocked
+                    ? Icons.lock_open_rounded
+                    : Icons.lock_outline_rounded,
+                onPressed: () => action(
+                  () => s.setTaskLocked(
                     t.id,
                     !t.isLocked,
                     expectedVersion: t.version,
-                  );
-                }),
-                icon: Icon(
-                  t.isLocked
-                      ? Icons.lock_open_rounded
-                      : Icons.lock_outline_rounded,
-                  size: 16,
+                  ),
                 ),
-                label: Text(t.isLocked ? '잠금 해제' : '내 작업으로 잠금'),
-              ),
-            if (canEdit)
-              OutlinedButton(
-                onPressed: () => edit(t),
-                child: Text(s.canEditContent(t) ? '작업 수정' : '배정 · 일정 변경'),
-              ),
-            if (s.manualWorkflow && s.availableHandoffs(t).isNotEmpty)
-              SizedBox(
-                width: 210,
-                child: IeumSelect(
-                  key: Key('task-manual-stage-${t.id}'),
-                  value: t.status,
-                  values: {
-                    t.status: s.workflowStatusName(t.status),
-                    for (final plan in s.availableHandoffs(t))
-                      plan.destinationId: plan.destinationName,
-                  },
-                  label: '작업 단계',
-                  icon: Icons.view_kanban_outlined,
-                  onChanged: (target) => move(t, target),
-                ),
-              )
-            else if (!s.manualWorkflow)
-              for (final plan in s.availableHandoffs(t)) handoffButton(plan),
-            for (final plan in s.availableTransfers(t)) handoffButton(plan),
-            if (s.canDelete(t))
-              OutlinedButton.icon(
-                key: Key('task-delete-${t.id}'),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: const Color(0xffc44848),
-                ),
-                onPressed: () => confirmTaskDeletion(ctx, t),
-                icon: const Icon(Icons.delete_outline, size: 16),
-                label: const Text('삭제'),
               ),
             if (s.canArchive(t))
-              OutlinedButton.icon(
+              TaskDetailMenuAction(
                 key: Key('task-archive-${t.id}'),
+                label: t.isArchived ? tr('보관함에서 복원') : tr('보관함으로 이동'),
+                icon: t.isArchived
+                    ? Icons.unarchive_outlined
+                    : Icons.inventory_2_outlined,
                 onPressed: () => action(() {
                   s.setArchived(
                     t.id,
@@ -3287,36 +3507,192 @@ class _WorkspaceState extends State<Workspace>
                   );
                   Navigator.pop(ctx);
                   message(
-                    t.isArchived
-                        ? '작업을 복원했습니다.'
-                        : '작업을 보관함으로 옮겼습니다. 보관함에서 복원할 수 있습니다.',
+                    t.isArchived ? tr('작업을 복원했습니다.') : tr('작업을 보관함으로 옮겼습니다.'),
                   );
                 }),
-                icon: Icon(
-                  t.isArchived
-                      ? Icons.unarchive_outlined
-                      : Icons.inventory_2_outlined,
-                  size: 16,
-                ),
-                label: Text(t.isArchived ? '복원' : '보관'),
+              ),
+            if (s.canDelete(t))
+              TaskDetailMenuAction(
+                key: Key('task-delete-${t.id}'),
+                label: tr('작업 삭제'),
+                icon: Icons.delete_outline,
+                destructive: true,
+                onPressed: () => confirmTaskDeletion(ctx, t),
               ),
           ],
         ),
-        const SizedBox(height: 30),
-        TaskCommentsPanel(key: ValueKey('comments-${t.id}'), store: s, task: t),
-        const SizedBox(height: 30),
-        const Text(
-          '활동 기록',
-          style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
-        ),
-        const SizedBox(height: 13),
-        ...history.map(
-          (a) => Padding(
-            padding: const EdgeInsets.symmetric(vertical: 9),
-            child: Text(
-              '${s.member(a['actorId']).name} · ${a['message']}',
-              style: const TextStyle(fontSize: 11, color: muted),
-            ),
+        Expanded(
+          child: ListView(
+            key: ValueKey('task-detail-content-${t.id}'),
+            padding: const EdgeInsets.all(24),
+            children: [
+              taskDetailAssignment(t, transfer),
+              const SizedBox(height: 24),
+              Text(
+                tr('설명'),
+                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+              ),
+              const SizedBox(height: 12),
+              if (t.description.isEmpty)
+                Text(
+                  tr('작성된 설명이 없습니다.'),
+                  style: TextStyle(fontSize: 12, color: muted),
+                )
+              else
+                MarkdownContent(data: t.description),
+              const SizedBox(height: 24),
+              TaskResourcesPanel(
+                key: ValueKey('task-resources-${t.id}'),
+                store: s,
+                taskId: t.id,
+                sync: widget.sync,
+              ),
+              const SizedBox(height: 24),
+              taskDetailProperties(tr('작업 정보'), {
+                tr('우선순위'): priorities[t.priority]!,
+                tr('요청 유형'): purposeLabel(t),
+                tr('등록 파트'): t.part,
+                tr('잠금'): t.isLocked
+                    ? tr(
+                        '설정됨 · {value0}',
+                        args: {'value0': s.member(t.lockedBy).name},
+                      )
+                    : tr('설정되지 않음'),
+                if (s.project?.workflowSheet == null)
+                  tr('검토 담당자'): s.member(t.reviewerId).name,
+                if (!boardStatuses.containsKey(t.status))
+                  tr('세부 상태'): trStageName(
+                    t.status,
+                    s.workflowStatusName(t.status),
+                  ),
+              }),
+              Divider(height: 32, color: colors.line),
+              taskDetailProperties(tr('일정'), {
+                tr('시작일'): displayDate(t.assignedDate),
+                tr('마감일'): displayDate(t.dueDate),
+                tr('완료일'): t.completedDate.isEmpty
+                    ? '—'
+                    : displayDate(t.completedDate),
+              }),
+              Divider(height: 32, color: colors.line),
+              taskDetailProperties(tr('작성 기록'), {
+                tr('작성자'): t.creatorId.isEmpty
+                    ? tr('기록 없음')
+                    : s.member(t.creatorId).name,
+                tr('작성일'): displayDateTime(t.createdAt),
+                if (t.workflowSender.isNotEmpty)
+                  tr('마지막 전달자'): s.member(t.workflowSender).name,
+              }),
+              if (t.reworkReason.isNotEmpty)
+                Container(
+                  margin: const EdgeInsets.only(top: 12),
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: colors.subtle,
+                    borderRadius: BorderRadius.circular(WorkspaceUi.radius),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        tr('전달 메시지'),
+                        style: WorkspaceUi.sectionStyleOf(context),
+                      ),
+                      const SizedBox(height: 8),
+                      SelectableText(
+                        t.reworkReason,
+                        style: TextStyle(
+                          fontSize: 12,
+                          height: 1.6,
+                          color: muted,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              Divider(height: 43, color: border),
+              if (lockReason.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 18),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(Icons.lock_outline, size: 16, color: muted),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          lockReason,
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: muted,
+                            height: 1.6,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              TaskCommentsPanel(
+                key: ValueKey('comments-${t.id}'),
+                store: s,
+                task: t,
+              ),
+              if (t.transitionHistory.isNotEmpty) ...[
+                Divider(height: 36, color: border),
+                Text(
+                  tr('상태 · 전달 기록'),
+                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(height: 12),
+                for (final event in t.transitionHistory.reversed)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 14),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '${s.member(event['actorId']).name} · ${trStageName(event['from'], s.workflowStatusName(event['from']))} → ${trStageName(event['to'], s.workflowStatusName(event['to']))}',
+                          style: const TextStyle(fontSize: 12),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          '${tr(workflowPurposeLabels[event['purpose']] ?? '작업')} · ${event['recipientId'] == ''
+                              ? event['recipientGroup'] == ''
+                                    ? tr('모든 작업자')
+                                    : workflowCurrentPartLabel(t.copy({'workflowTarget': event['recipientGroup'], 'workflowPerson': ''}), s.project)
+                              : s.member(event['recipientId']).name} · ${displayDateTime(event['createdAt'])}',
+                          style: TextStyle(fontSize: 10, color: muted),
+                        ),
+                        if ((event['comment'] as String).isNotEmpty)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 5),
+                            child: SelectableText(
+                              event['comment'],
+                              style: TextStyle(fontSize: 11, color: muted),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+              ],
+
+              if (history.isNotEmpty) const SizedBox(height: 30),
+              if (history.isNotEmpty)
+                Text(
+                  tr('활동 기록'),
+                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                ),
+              const SizedBox(height: 13),
+              ...history.map(
+                (a) => Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 9),
+                  child: Text(
+                    '${s.member(a['actorId']).name} · ${displayActivityMessage(a['message'])}',
+                    style: TextStyle(fontSize: 11, color: muted),
+                  ),
+                ),
+              ),
+            ],
           ),
         ),
       ],

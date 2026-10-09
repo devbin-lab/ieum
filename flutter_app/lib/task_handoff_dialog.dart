@@ -1,11 +1,14 @@
+import 'app_localizations.dart';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'popup_ui.dart';
 import 'store.dart';
 import 'task_handoff.dart';
+import 'workspace_ui.dart';
 
-const _purposeLabels = {'work': '작성', 'review': '검토', 'revision': '수정'};
+const _purposeLabels = {'work': '작업', 'review': '검토', 'revision': '수정'};
 
 class TaskHandoffConfirmation {
   const TaskHandoffConfirmation(this.plan, this.reason);
@@ -100,10 +103,11 @@ class _TaskHandoffDialogState extends State<TaskHandoffDialog> {
         final plan = selectedPlan;
         final current = !invalidated && widget.store.isHandoffCurrent(plan);
         return IeumDialog(
-          title: Text(
-            plan.transitionName.isEmpty ? '작업 전달 확인' : '${plan.buttonLabel} 확인',
-          ),
-          icon: Icons.arrow_forward,
+          title: Text(plan.requiresRecipient ? tr('작업 전달') : tr('상태 변경')),
+          closeTooltip: tr('확인 창 닫기'),
+          icon: plan.requiresRecipient
+              ? Icons.arrow_forward_rounded
+              : Icons.swap_horiz_rounded,
           width: 480,
           content: Column(
             mainAxisSize: MainAxisSize.min,
@@ -117,8 +121,51 @@ class _TaskHandoffDialogState extends State<TaskHandoffDialog> {
                   fontWeight: FontWeight.w600,
                 ),
               ),
+              const SizedBox(height: 14),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 12,
+                ),
+                decoration: BoxDecoration(
+                  color: WorkspaceUi.colors(context).subtle,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.swap_horiz_rounded,
+                      size: 17,
+                      color: WorkspaceUi.colors(context).muted,
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        plan.maintainsStatus
+                            ? tr(
+                                '{v0} 유지',
+                                args: {
+                                  'v0': trStageName(
+                                    plan.sourceId,
+                                    plan.sourceName,
+                                  ),
+                                },
+                              )
+                            : '${trStageName(plan.sourceId, plan.sourceName)} → ${trStageName(plan.destinationId, plan.destinationName)}',
+                        key: const Key('task-handoff-route'),
+                        style: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
               if (plan.requiresRecipient) ...[
-                const SizedBox(height: 18),
+                const SizedBox(height: 24),
+                WorkspaceSectionLabel(title: tr('전달 대상')),
+                const SizedBox(height: 12),
                 IgnorePointer(
                   ignoring: !current,
                   child: Opacity(
@@ -128,11 +175,11 @@ class _TaskHandoffDialogState extends State<TaskHandoffDialog> {
                       children: [
                         IeumSelect(
                           key: const Key('task-handoff-receiver-group'),
-                          label: '받는 파트',
+                          label: tr('파트'),
                           icon: Icons.groups_outlined,
                           value: plan.receiverGroup,
                           values: {
-                            '': '개별 담당자 선택',
+                            '': tr('전체 파트'),
                             ...plan.receiverGroupOptions,
                           },
                           onChanged: (group) => selectReceiver(group, ''),
@@ -140,13 +187,21 @@ class _TaskHandoffDialogState extends State<TaskHandoffDialog> {
                         const SizedBox(height: 12),
                         IeumSelect(
                           key: const Key('task-handoff-receiver-person'),
-                          label: '받는 담당자',
+                          label: tr('담당자'),
                           icon: Icons.person_outline_rounded,
                           value: plan.receiverPerson,
                           values: {
                             '': plan.receiverGroup.isEmpty
-                                ? '담당자를 선택하세요'
-                                : '${plan.receiverGroupOptions[plan.receiverGroup] ?? '파트'} 전체',
+                                ? tr('담당자를 선택하세요')
+                                : tr(
+                                    '{v0} 전체',
+                                    args: {
+                                      'v0':
+                                          plan.receiverGroupOptions[plan
+                                              .receiverGroup] ??
+                                          tr('파트'),
+                                    },
+                                  ),
                             ...plan.availableReceiverPeople,
                           },
                           onChanged: (person) =>
@@ -159,8 +214,16 @@ class _TaskHandoffDialogState extends State<TaskHandoffDialog> {
                 const SizedBox(height: 12),
                 Text(
                   plan.maintainsStatus
-                      ? '상태를 유지하고 담당자만 변경합니다. 코멘트와 전달 이력이 함께 남습니다.'
-                      : '선택한 대상의 ${plan.destinationName} 단계로 전달됩니다. 코멘트와 전달 이력이 함께 남습니다.',
+                      ? tr('작업 상태를 유지한 채 담당자에게 전달합니다.')
+                      : tr(
+                          '{v0} 상태로 변경하고 담당자에게 전달합니다.',
+                          args: {
+                            'v0': trStageName(
+                              plan.destinationId,
+                              plan.destinationName,
+                            ),
+                          },
+                        ),
                   key: const Key('task-handoff-recipient-help'),
                   style: const TextStyle(
                     fontSize: 12,
@@ -175,12 +238,15 @@ class _TaskHandoffDialogState extends State<TaskHandoffDialog> {
                   key: const Key('task-handoff-lock'),
                   contentPadding: EdgeInsets.zero,
                   controlAffinity: ListTileControlAffinity.leading,
-                  title: const Text('잠근 채 전달', style: TextStyle(fontSize: 13)),
+                  title: Text(
+                    tr('받는 담당자만 수정 허용'),
+                    style: TextStyle(fontSize: 13),
+                  ),
                   subtitle: Text(
                     plan.lockOnHandoff
-                        ? '특정 담당자 한 명을 선택하세요. 받는 담당자만 수정할 수 있습니다.'
-                        : '잠금 없이 전달하면 모든 활성 참여자가 수정할 수 있습니다.',
-                    style: const TextStyle(fontSize: 11),
+                        ? tr('담당자를 한 명 선택하면 작업이 잠깁니다.')
+                        : tr('잠금 없이 전달하면 모든 참여자가 수정할 수 있습니다.'),
+                    style: WorkspaceUi.captionStyleOf(context),
                   ),
                   value: plan.lockOnHandoff,
                   onChanged: current
@@ -196,10 +262,10 @@ class _TaskHandoffDialogState extends State<TaskHandoffDialog> {
                   ignoring: !current,
                   child: IeumSelect(
                     key: const Key('task-handoff-purpose'),
-                    label: '처리 목적',
+                    label: tr('요청 유형'),
                     icon: Icons.assignment_outlined,
                     value: plan.purpose.isEmpty ? 'work' : plan.purpose,
-                    values: _purposeLabels,
+                    values: translatedLabels(_purposeLabels),
                     onChanged: (value) => setState(() {
                       selectedPlan = selectedPlan.withPurpose(value);
                     }),
@@ -208,8 +274,8 @@ class _TaskHandoffDialogState extends State<TaskHandoffDialog> {
               ],
               if (plan.isCompletion) ...[
                 const SizedBox(height: 14),
-                const Text(
-                  '완료하면 작업 전체의 처리가 끝납니다. 최종 결과를 확인한 뒤 완료하세요.',
+                Text(
+                  tr('작업을 완료합니다. 최종 결과를 확인하세요.'),
                   key: Key('task-handoff-completion-help'),
                   style: TextStyle(
                     fontSize: 12,
@@ -218,57 +284,40 @@ class _TaskHandoffDialogState extends State<TaskHandoffDialog> {
                   ),
                 ),
               ],
-              const SizedBox(height: 18),
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: const Color(0xfff7f5fb),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Column(
+              if (plan.requiresRecipient ||
+                  !plan.canSelectPurpose && plan.purpose.isNotEmpty) ...[
+                const SizedBox(height: 16),
+                Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      plan.routeLabel,
-                      key: const Key('task-handoff-route'),
-                      style: const TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
+                    if (plan.requiresRecipient)
+                      Text(
+                        tr('담당자 · {v0}', args: {'v0': plan.recipientLabel}),
+                        key: const Key('task-handoff-recipient'),
+                        style: const TextStyle(fontSize: 13, height: 1.5),
                       ),
-                    ),
-                    const SizedBox(height: 10),
-                    Text(
-                      '다음 처리: ${plan.recipientLabel}',
-                      key: const Key('task-handoff-recipient'),
-                      style: const TextStyle(fontSize: 13, height: 1.5),
-                    ),
                     if (!plan.canSelectPurpose && plan.purpose.isNotEmpty) ...[
                       const SizedBox(height: 8),
                       Text(
-                        '처리 목적: ${_purposeLabels[plan.purpose] ?? plan.purpose}',
+                        tr(
+                          '요청 유형 · {v0}',
+                          args: {
+                            'v0': tr(
+                              _purposeLabels[plan.purpose] ?? plan.purpose,
+                            ),
+                          },
+                        ),
                         key: const Key('task-handoff-purpose-summary'),
                         style: const TextStyle(fontSize: 12, height: 1.5),
                       ),
                     ],
                   ],
                 ),
-              ),
-              if (plan.maintainsStatus) ...[
-                const SizedBox(height: 12),
-                const Text(
-                  '담당자 배정은 내 할 일과 알림에 적용됩니다. 잠금이 없으면 다른 활성 참여자도 작업 내용을 수정할 수 있습니다.',
-                  key: Key('task-handoff-collaboration-help'),
-                  style: TextStyle(
-                    fontSize: 12,
-                    height: 1.6,
-                    color: Color(0xff6e687b),
-                  ),
-                ),
               ],
-              if (plan.editWarning.isNotEmpty) ...[
+              if (plan.editWarning.isNotEmpty && !plan.requiresRecipient) ...[
                 const SizedBox(height: 16),
                 Text(
-                  plan.editWarning,
+                  trError(plan.editWarning),
                   key: const Key('task-handoff-edit-warning'),
                   style: const TextStyle(
                     fontSize: 12,
@@ -289,20 +338,20 @@ class _TaskHandoffDialogState extends State<TaskHandoffDialog> {
                   onChanged: (_) => setState(() {}),
                   decoration: InputDecoration(
                     labelText: plan.isRejection
-                        ? '반려 코멘트 · 필수'
+                        ? tr('반려 사유 · 필수')
                         : plan.needsComment
-                        ? '코멘트 · 필수'
-                        : '코멘트 · 선택',
+                        ? tr('댓글 · 필수')
+                        : tr('댓글 · 선택'),
                     hintText: plan.isRejection
-                        ? '보완할 내용을 입력하세요.'
-                        : '전달할 내용을 입력하세요.',
+                        ? tr('보완할 내용을 입력하세요.')
+                        : tr('함께 전달할 내용을 입력하세요.'),
                   ),
                 ),
               ],
               if (!current) ...[
                 const SizedBox(height: 16),
-                const Text(
-                  '작업 또는 프로젝트 설정이 변경되었습니다. 다시 확인하세요.',
+                Text(
+                  tr('작업 정보가 변경되었습니다. 창을 닫고 다시 시도하세요.'),
                   key: Key('task-handoff-stale'),
                   style: TextStyle(
                     fontSize: 12,
@@ -317,7 +366,7 @@ class _TaskHandoffDialogState extends State<TaskHandoffDialog> {
             TextButton(
               key: const Key('task-handoff-cancel'),
               onPressed: () => Navigator.pop(context),
-              child: const Text('취소'),
+              child: Text(tr('취소')),
             ),
             FilledButton(
               key: const Key('task-handoff-confirm'),
@@ -327,7 +376,13 @@ class _TaskHandoffDialogState extends State<TaskHandoffDialog> {
                       (!plan.needsComment || comment.text.trim().isNotEmpty)
                   ? confirm
                   : null,
-              child: const Text('최종 확인'),
+              child: Text(
+                plan.requiresRecipient
+                    ? tr('전달')
+                    : plan.isCompletion
+                    ? tr('완료')
+                    : tr('변경'),
+              ),
             ),
           ],
         );

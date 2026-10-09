@@ -194,7 +194,7 @@ void main() {
   );
 
   testWidgets(
-    'selecting an alert opens its details on the right and on narrow screens',
+    'notification preview fills the right half and opens the linked task',
     (tester) async {
       tester.view.devicePixelRatio = 1;
       addTearDown(tester.view.resetDevicePixelRatio);
@@ -209,6 +209,7 @@ void main() {
       };
       String? selected;
       String? marked;
+      String? opened;
       Widget app() => MaterialApp(
         home: Scaffold(
           body: StatefulBuilder(
@@ -224,43 +225,64 @@ void main() {
               onMentionsChanged: (_) {},
               onResetFilters: () {},
               onRefresh: () {},
-              onRead: (n) => marked = n['id'] as String,
+              onRead: (n) => setState(() {
+                marked = n['id'] as String;
+                detailed['read'] = true;
+              }),
               onReadVisible: (_) {},
               onSelect: (n) =>
                   setState(() => selected = '${n['projectPath']}:${n['id']}'),
               onCloseDetail: () => setState(() => selected = null),
+              onOpenTask: (n) => opened = n['taskId'] as String,
             ),
           ),
         ),
       );
       await tester.pumpWidget(app());
       await tester.pumpAndSettle();
+      expect(find.byKey(const Key('notification-detail')), findsNothing);
+      expect(find.text('상세 내용을 보기 위해 알림을 선택하세요.'), findsOneWidget);
       expect(
-        find.byKey(const Key('notification-detail-empty')),
+        find.byKey(const Key('notification-center-divider')),
         findsOneWidget,
       );
       await tester.tap(find.byKey(const Key('notification-alpha-review')));
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('notification-detail')), findsOneWidget);
+      expect(find.byType(Dialog), findsNothing);
+      expect(
+        tester.getRect(find.byKey(const Key('notification-detail'))).left,
+        greaterThan(600),
+      );
+      expect(
+        tester
+            .getRect(find.byKey(const Key('notification-center-divider')))
+            .center
+            .dx,
+        600,
+      );
       expect(find.text('공격 패턴의 순서와 검토 기준을 확인합니다.'), findsOneWidget);
       expect(find.text('검토'), findsOneWidget);
-      await tester.tap(find.byKey(const Key('notification-detail-mark-read')));
       expect(marked, 'review');
+      expect(
+        find.byKey(const Key('notification-detail-mark-read')),
+        findsNothing,
+      );
+      await tester.tap(find.byKey(const Key('notification-open-task')));
+      expect(opened, 'TASK-REVIEW');
       await tester.tap(find.byKey(const Key('notification-detail-close')));
       await tester.pumpAndSettle();
-      expect(
-        find.byKey(const Key('notification-detail-empty')),
-        findsOneWidget,
-      );
+      expect(find.byKey(const Key('notification-detail')), findsNothing);
 
       tester.view.physicalSize = const Size(540, 820);
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('notification-alpha-review')));
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('notification-detail')), findsOneWidget);
+      expect(find.byType(Dialog), findsOneWidget);
       expect(
         find.byKey(const Key('notification-project-filter')),
-        findsNothing,
+        findsOneWidget,
       );
       await tester.tap(find.byKey(const Key('notification-detail-back')));
       await tester.pumpAndSettle();
@@ -269,6 +291,13 @@ void main() {
         findsOneWidget,
       );
       expect(tester.takeException(), isNull);
+      opened = null;
+      await tester.tap(find.byKey(const Key('notification-alpha-review')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('notification-open-task')));
+      await tester.pumpAndSettle();
+      expect(opened, 'TASK-REVIEW');
+      expect(find.byType(Dialog), findsNothing);
     },
   );
 
@@ -308,25 +337,80 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    expect(find.text('3개 · 안 읽음 2개'), findsOneWidget);
+    expect(find.text('3개'), findsOneWidget);
+    expect(find.text('안 읽음 2개'), findsOneWidget);
     expect(find.text('오늘'), findsOneWidget);
     expect(find.text('어제'), findsOneWidget);
     await tester.tap(find.byKey(const Key('notification-project-filter')));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('option-alpha')));
     await tester.pumpAndSettle();
-    expect(find.text('2개 · 안 읽음 1개'), findsOneWidget);
+    expect(find.text('2개'), findsOneWidget);
+    expect(find.text('안 읽음 1개'), findsOneWidget);
     expect(find.text(records[2]['title'] as String), findsNothing);
     await tester.tap(find.byKey(const Key('notification-mentions-filter')));
     await tester.pumpAndSettle();
-    expect(find.text('1개 · 안 읽음 1개'), findsOneWidget);
+    expect(find.text('1개'), findsOneWidget);
+    expect(find.text('안 읽음 1개'), findsOneWidget);
     await tester.tap(find.byKey(const Key('notification-project-filter')));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('option-empty')));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('reset-notification-filters')));
     await tester.pumpAndSettle();
-    expect(find.text('3개 · 안 읽음 2개'), findsOneWidget);
+    expect(find.text('3개'), findsOneWidget);
+    expect(find.text('안 읽음 2개'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+  testWidgets(
+    'notification view divides the workspace evenly and keeps filters stationary',
+    (tester) async {
+      tester.view.physicalSize = const Size(1200, 700);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final longHistory = [
+        for (var i = 0; i < 30; i++)
+          {...records.first, 'id': 'entry-$i', 'title': '기획 문서 업데이트 $i'},
+      ];
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: NotificationInbox(
+              notifications: longHistory,
+              projects: const {'all': '모든 프로젝트'},
+              selectedProject: 'all',
+              unreadOnly: false,
+              mentionsOnly: false,
+              onProjectChanged: (_) {},
+              onUnreadChanged: (_) {},
+              onMentionsChanged: (_) {},
+              onResetFilters: () {},
+              onRefresh: () {},
+              onRead: (_) {},
+              onReadVisible: (_) {},
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final divider = tester.getRect(
+        find.byKey(const Key('notification-center-divider')),
+      );
+      expect(divider.center.dx, 600);
+      final projectFilter = find.byKey(
+        const Key('notification-project-filter'),
+      );
+      final before = tester.getRect(projectFilter);
+      expect(before.width, lessThan(600));
+      await tester.drag(
+        find.byKey(const PageStorageKey('notification-list-scroll')),
+        const Offset(0, -420),
+      );
+      await tester.pumpAndSettle();
+      expect(tester.getRect(projectFilter), before);
+      expect(find.text('상세 내용을 보기 위해 알림을 선택하세요.'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
 }

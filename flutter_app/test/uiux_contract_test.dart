@@ -598,7 +598,7 @@ void main() {
       button.onPressed!();
       button.onPressed!();
       await tester.pumpAndSettle();
-      expect(find.text('파트·상태 변경 확인'), findsOneWidget);
+      expect(find.text('참여자 설정 변경'), findsOneWidget);
       await tester.tap(find.widgetWithText(TextButton, '취소').last);
       await tester.pumpAndSettle();
       expect(
@@ -760,7 +760,7 @@ void main() {
         ),
       );
       expect(find.byKey(const Key('settings-general')), findsNothing);
-      expect(find.text('프로젝트 A · 이 프로젝트에만 적용'), findsOneWidget);
+      expect(find.text('프로젝트 A · 프로젝트 설정'), findsOneWidget);
     },
   );
 
@@ -849,7 +849,7 @@ void main() {
         );
         await tester.pumpAndSettle();
         expect(tester.takeException(), isNull);
-        expect(find.textContaining('목록 새로고침 실패'), findsNothing);
+        expect(find.textContaining('참여자 목록을 새로고침하지 못했습니다.'), findsNothing);
       }
 
       for (final size in [
@@ -867,7 +867,7 @@ void main() {
         await tester.pump();
         await tester.sendKeyEvent(LogicalKeyboardKey.enter);
         await tester.pumpAndSettle();
-        expect(find.text('관련 업무 0건'), findsOneWidget);
+        expect(find.text('관련 작업 0건'), findsOneWidget);
         if (size.width >= 1024) {
           if (Platform.environment['IEUM_CAPTURE_UIUX'] == '1') {
             await tester.runAsync(() async {
@@ -903,8 +903,8 @@ void main() {
       expect(find.byKey(const Key('participant-gh-1')), findsNothing);
       await tester.tap(find.byKey(const Key('participant-gh-2')));
       await tester.pump();
-      await tester.ensureVisible(find.text('관련 업무 보기'));
-      await tester.tap(find.text('관련 업무 보기'));
+      await tester.ensureVisible(find.text('관련 작업 보기'));
+      await tester.tap(find.text('관련 작업 보기'));
       await tester.pump();
       expect(related, 'gh-2');
       await tester.enterText(
@@ -912,7 +912,7 @@ void main() {
         '없는참여자',
       );
       await tester.pump();
-      expect(find.textContaining('상세를 닫았습니다'), findsOneWidget);
+      expect(find.byKey(const Key('close-participant-detail')), findsNothing);
       expect(find.textContaining('검색 결과가 없습니다.'), findsOneWidget);
       await tester.tap(find.byKey(const Key('participant-filter-reset')));
       await tester.pump();

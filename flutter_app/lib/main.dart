@@ -15,6 +15,7 @@ import 'update_ui.dart';
 import 'startup_health.dart';
 import 'window_layout.dart';
 import 'github_oauth.dart';
+import 'app_preferences.dart';
 
 import 'package:screen_retriever/screen_retriever.dart';
 
@@ -84,6 +85,10 @@ Future<void> main() async {
         Platform.environment['IEUM_FLUTTER_DATA_DIR'] ??
         '${Platform.environment['APPDATA'] ?? (await getApplicationSupportDirectory()).path}${Platform.pathSeparator}Ieum-Flutter-Prototype';
     await Directory(base).create(recursive: true);
+    final preferences = AppPreferences(
+      file: File('$base${Platform.pathSeparator}app-preferences.json'),
+    );
+    await preferences.load();
     final placeholder = TaskStore(':memory:');
     runApp(
       UpdateScope(
@@ -96,6 +101,7 @@ Future<void> main() async {
         },
         child: IeumApp(
           store: placeholder,
+          preferences: preferences,
           home: ProjectGate(
             session: session,
             preferences: File(

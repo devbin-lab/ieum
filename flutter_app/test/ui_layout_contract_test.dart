@@ -154,9 +154,9 @@ void main() {
         final save = find.byKey(const Key('task-save'));
         expect(save.hitTestable(), findsOneWidget);
         expect(tester.getRect(save).bottom, lessThan(size.height));
-        expect(find.byTooltip('작업 등록 닫기').hitTestable(), findsOneWidget);
+        expect(find.byTooltip('새 작업 창 닫기').hitTestable(), findsOneWidget);
         expect(tester.takeException(), isNull);
-        await tester.tap(find.byTooltip('작업 등록 닫기'));
+        await tester.tap(find.byTooltip('새 작업 창 닫기'));
         await tester.pumpAndSettle();
         await tester.pumpWidget(const SizedBox());
       }

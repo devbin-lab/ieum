@@ -1,3 +1,5 @@
+import 'app_localizations.dart';
+
 import 'package:flutter/material.dart';
 
 import 'app_update.dart';
@@ -27,7 +29,7 @@ class UpdateButton extends StatelessWidget {
       return TextButton.icon(
         key: const Key('app-update-button'),
         icon: const Icon(Icons.open_in_new_rounded, size: 15),
-        label: const Text('Linux 업데이트 다운로드', style: TextStyle(fontSize: 11)),
+        label: Text(tr('Linux 업데이트 다운로드'), style: TextStyle(fontSize: 11)),
         onPressed: () async {
           try {
             await openDesktopUrl(
@@ -38,7 +40,10 @@ class UpdateButton extends StatelessWidget {
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(
                   content: Text(
-                    'https://github.com/$updateRepository/releases/latest 에서 Linux 빌드를 받으세요.',
+                    tr(
+                      'https://github.com/{v0}/releases/latest 에서 Linux 빌드를 받으세요.',
+                      args: {'v0': updateRepository},
+                    ),
                   ),
                 ),
               );
@@ -51,10 +56,16 @@ class UpdateButton extends StatelessWidget {
     final updater = scope.notifier!;
     return Tooltip(
       message: updater.ready
-          ? '${ReleaseVersion(updater.readyVersion).label} · 다음 실행 때 자동 적용'
+          ? tr(
+              '{v0} · 다음 실행 때 자동 적용',
+              args: {'v0': ReleaseVersion(updater.readyVersion).label},
+            )
           : updater.lastError.isEmpty
-          ? '현재 ${ReleaseVersion(updater.currentVersion).label} · 클릭하여 확인'
-          : updater.lastError,
+          ? tr(
+              '현재 {v0} · 클릭하여 확인',
+              args: {'v0': ReleaseVersion(updater.currentVersion).label},
+            )
+          : trError(updater.lastError),
       child: TextButton.icon(
         key: const Key('app-update-button'),
         onPressed: updater.busy
@@ -79,7 +90,7 @@ class UpdateButton extends StatelessWidget {
                     : Icons.system_update_alt_rounded,
                 size: 15,
               ),
-        label: Text(updater.message, style: const TextStyle(fontSize: 10)),
+        label: Text(tr(updater.message), style: const TextStyle(fontSize: 10)),
       ),
     );
   }

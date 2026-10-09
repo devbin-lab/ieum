@@ -2,10 +2,8 @@ import 'dart:math';
 
 import 'package:flutter/material.dart';
 
-const _accent = Color(0xff7963d5),
-    _text = Color(0xff302b3c),
-    _muted = Color(0xff6e687b),
-    _line = Color(0xffe9e5ef);
+import 'workspace_ui.dart';
+import 'app_localizations.dart';
 
 /// Anchored, keyboard-accessible selection menu shared by every dropdown.
 class IeumSelect extends StatefulWidget {
@@ -47,6 +45,21 @@ class _IeumSelectState extends State<IeumSelect> {
         max(constraints.maxWidth, 200.0),
         MediaQuery.sizeOf(context).width - 32,
       );
+      final verticalPadding =
+          constraints.hasBoundedHeight && widget.label == null
+          ? min(
+              9.0,
+              max(
+                0.0,
+                (constraints.maxHeight -
+                        max(
+                          18.0,
+                          MediaQuery.textScalerOf(context).scale(12) * 1.5,
+                        )) /
+                    2,
+              ),
+            )
+          : 9.0;
       return Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -54,10 +67,10 @@ class _IeumSelectState extends State<IeumSelect> {
           if (widget.label != null) ...[
             Text(
               widget.label!,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 10,
                 fontWeight: FontWeight.w600,
-                color: _muted,
+                color: WorkspaceUi.colors(context).muted,
               ),
             ),
             const SizedBox(height: 7),
@@ -72,11 +85,15 @@ class _IeumSelectState extends State<IeumSelect> {
               if (mounted) setState(() => open = false);
             },
             style: MenuStyle(
-              backgroundColor: const WidgetStatePropertyAll(Colors.white),
+              backgroundColor: WidgetStatePropertyAll(
+                WorkspaceUi.colors(context).surface,
+              ),
               surfaceTintColor: const WidgetStatePropertyAll(
                 Colors.transparent,
               ),
-              shadowColor: WidgetStatePropertyAll(_text.withValues(alpha: .18)),
+              shadowColor: WidgetStatePropertyAll(
+                WorkspaceUi.colors(context).ink.withValues(alpha: .18),
+              ),
               elevation: const WidgetStatePropertyAll(16),
               padding: const WidgetStatePropertyAll(EdgeInsets.all(6)),
               minimumSize: WidgetStatePropertyAll(Size(width, 0)),
@@ -84,7 +101,7 @@ class _IeumSelectState extends State<IeumSelect> {
               shape: WidgetStatePropertyAll(
                 RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12),
-                  side: const BorderSide(color: _line),
+                  side: BorderSide(color: WorkspaceUi.colors(context).line),
                 ),
               ),
             ),
@@ -108,19 +125,22 @@ class _IeumSelectState extends State<IeumSelect> {
                       ),
                     ),
                     foregroundColor: WidgetStatePropertyAll(
-                      entry.key == widget.value ? _accent : _text,
+                      entry.key == widget.value
+                          ? WorkspaceUi.colors(context).accent
+                          : WorkspaceUi.colors(context).ink,
                     ),
                     backgroundColor: WidgetStateProperty.resolveWith((states) {
                       if (entry.key == widget.value) {
-                        return const Color(0xfff0ebfc);
+                        return WorkspaceUi.colors(context).accentSurface;
                       }
                       return states.contains(WidgetState.hovered) ||
                               states.contains(WidgetState.focused)
-                          ? const Color(0xfff7f5fb)
+                          ? WorkspaceUi.colors(context).subtle
                           : Colors.transparent;
                     }),
                     textStyle: WidgetStatePropertyAll(
                       TextStyle(
+                        fontFamily: 'Malgun Gothic',
                         fontSize: 12,
                         fontWeight: entry.key == widget.value
                             ? FontWeight.w600
@@ -139,7 +159,7 @@ class _IeumSelectState extends State<IeumSelect> {
                     Icons.check_rounded,
                     size: 16,
                     color: entry.key == widget.value
-                        ? _accent
+                        ? WorkspaceUi.colors(context).accent
                         : Colors.transparent,
                   ),
                   child: Text(entry.value, overflow: TextOverflow.ellipsis),
@@ -150,10 +170,14 @@ class _IeumSelectState extends State<IeumSelect> {
               expanded: open,
               label: widget.label,
               child: Material(
-                color: Colors.white,
+                color: WorkspaceUi.colors(context).surface,
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(8),
-                  side: BorderSide(color: open ? _accent : _line),
+                  side: BorderSide(
+                    color: open
+                        ? WorkspaceUi.colors(context).accent
+                        : WorkspaceUi.colors(context).line,
+                  ),
                 ),
                 clipBehavior: Clip.antiAlias,
                 child: InkWell(
@@ -161,23 +185,31 @@ class _IeumSelectState extends State<IeumSelect> {
                   onTap: () => controller.isOpen
                       ? controller.close()
                       : controller.open(),
-                  hoverColor: const Color(0xfff8f6fc),
+                  hoverColor: WorkspaceUi.colors(context).subtle,
                   child: Padding(
-                    padding: const EdgeInsets.symmetric(
+                    padding: EdgeInsets.symmetric(
                       horizontal: 12,
-                      vertical: 12,
+                      vertical: verticalPadding,
                     ),
                     child: Row(
                       children: [
                         if (widget.icon != null) ...[
-                          Icon(widget.icon, size: 15, color: _accent),
+                          Icon(
+                            widget.icon,
+                            size: 15,
+                            color: WorkspaceUi.colors(context).accent,
+                          ),
                           const SizedBox(width: 8),
                         ],
                         Expanded(
                           child: Text(
                             widget.values[widget.value] ?? '',
+                            maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(fontSize: 12, color: _text),
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: WorkspaceUi.colors(context).ink,
+                            ),
                           ),
                         ),
                         const SizedBox(width: 6),
@@ -186,7 +218,9 @@ class _IeumSelectState extends State<IeumSelect> {
                               ? Icons.keyboard_arrow_up_rounded
                               : Icons.keyboard_arrow_down_rounded,
                           size: 18,
-                          color: open ? _accent : _muted,
+                          color: open
+                              ? WorkspaceUi.colors(context).accent
+                              : WorkspaceUi.colors(context).muted,
                         ),
                       ],
                     ),
@@ -232,38 +266,44 @@ class IeumDialog extends StatelessWidget {
         children: [
           Container(
             padding: const EdgeInsets.fromLTRB(24, 16, 12, 16),
-            decoration: const BoxDecoration(
-              color: Color(0xfff7f4fd),
-              border: Border(bottom: BorderSide(color: _line)),
+            decoration: BoxDecoration(
+              color: WorkspaceUi.colors(context).background,
+              border: Border(
+                bottom: BorderSide(color: WorkspaceUi.colors(context).line),
+              ),
             ),
             child: Row(
               children: [
                 Container(
                   padding: const EdgeInsets.all(9),
                   decoration: BoxDecoration(
-                    color: const Color(0xffece5fb),
+                    color: WorkspaceUi.colors(context).accentSurface,
                     borderRadius: BorderRadius.circular(10),
                   ),
-                  child: Icon(icon, size: 19, color: _accent),
+                  child: Icon(
+                    icon,
+                    size: 19,
+                    color: WorkspaceUi.colors(context).accent,
+                  ),
                 ),
                 const SizedBox(width: 13),
                 Expanded(
                   child: DefaultTextStyle.merge(
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 17,
                       fontWeight: FontWeight.w700,
-                      color: _text,
+                      color: WorkspaceUi.colors(context).ink,
                     ),
                     child: title,
                   ),
                 ),
                 IconButton(
-                  tooltip: closeTooltip,
+                  tooltip: tr(closeTooltip),
                   onPressed: () => Navigator.pop(context),
-                  icon: const Icon(
+                  icon: Icon(
                     Icons.close_rounded,
                     size: 19,
-                    color: _muted,
+                    color: WorkspaceUi.colors(context).muted,
                   ),
                 ),
               ],
@@ -278,9 +318,11 @@ class IeumDialog extends StatelessWidget {
           if (actions.isNotEmpty)
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-              decoration: const BoxDecoration(
-                color: Color(0xfffcfbfe),
-                border: Border(top: BorderSide(color: _line)),
+              decoration: BoxDecoration(
+                color: WorkspaceUi.colors(context).background,
+                border: Border(
+                  top: BorderSide(color: WorkspaceUi.colors(context).line),
+                ),
               ),
               child: Wrap(
                 alignment: WrapAlignment.end,
@@ -333,7 +375,7 @@ class _IeumDateDialogState extends State<IeumDateDialog> {
     final rows = ((offset + days) / 7).ceil();
     final today = DateUtils.dateOnly(DateTime.now());
     return IeumDialog(
-      title: const Text('날짜 선택'),
+      title: Text(tr('날짜 선택')),
       icon: Icons.calendar_month_outlined,
       width: 430,
       content: Column(
@@ -343,7 +385,7 @@ class _IeumDateDialogState extends State<IeumDateDialog> {
             children: [
               IconButton(
                 key: const Key('calendar-previous'),
-                tooltip: '이전 달',
+                tooltip: tr('이전 달'),
                 onPressed: month.year == 2000 && month.month == 1
                     ? null
                     : () => shiftMonth(-1),
@@ -353,7 +395,10 @@ class _IeumDateDialogState extends State<IeumDateDialog> {
                 child: IeumSelect(
                   key: const Key('calendar-year'),
                   value: '${month.year}',
-                  values: {for (int y = 2000; y <= 2100; y++) '$y': '$y년'},
+                  values: {
+                    for (int y = 2000; y <= 2100; y++)
+                      '$y': tr('{year}년', args: {'year': '$y'}),
+                  },
                   onChanged: (v) => setState(
                     () => month = DateTime(int.parse(v), month.month),
                   ),
@@ -364,7 +409,10 @@ class _IeumDateDialogState extends State<IeumDateDialog> {
                 child: IeumSelect(
                   key: const Key('calendar-month'),
                   value: '${month.month}',
-                  values: {for (int m = 1; m <= 12; m++) '$m': '$m월'},
+                  values: {
+                    for (int m = 1; m <= 12; m++)
+                      '$m': tr('{month}월', args: {'month': '$m'}),
+                  },
                   onChanged: (v) => setState(
                     () => month = DateTime(month.year, int.parse(v)),
                   ),
@@ -372,7 +420,7 @@ class _IeumDateDialogState extends State<IeumDateDialog> {
               ),
               IconButton(
                 key: const Key('calendar-next'),
-                tooltip: '다음 달',
+                tooltip: tr('다음 달'),
                 onPressed: month.year == 2100 && month.month == 12
                     ? null
                     : () => shiftMonth(1),
@@ -387,8 +435,11 @@ class _IeumDateDialogState extends State<IeumDateDialog> {
                 Expanded(
                   child: Center(
                     child: Text(
-                      day,
-                      style: const TextStyle(fontSize: 11, color: _muted),
+                      tr(day),
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: WorkspaceUi.colors(context).muted,
+                      ),
                     ),
                   ),
                 ),
@@ -415,12 +466,15 @@ class _IeumDateDialogState extends State<IeumDateDialog> {
                   selected = today;
                   month = DateTime(today.year, today.month);
                 }),
-                child: const Text('오늘'),
+                child: Text(tr('오늘')),
               ),
               const Spacer(),
               Text(
                 '${selected.year}.${selected.month.toString().padLeft(2, '0')}.${selected.day.toString().padLeft(2, '0')}',
-                style: const TextStyle(fontSize: 12, color: _accent),
+                style: TextStyle(
+                  fontSize: 12,
+                  color: WorkspaceUi.colors(context).accent,
+                ),
               ),
             ],
           ),
@@ -429,12 +483,12 @@ class _IeumDateDialogState extends State<IeumDateDialog> {
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(context),
-          child: const Text('취소'),
+          child: Text(tr('취소')),
         ),
         FilledButton(
           key: const Key('calendar-confirm'),
           onPressed: () => Navigator.pop(context, selected),
-          child: const Text('날짜 적용'),
+          child: Text(tr('날짜 적용')),
         ),
       ],
     );
@@ -447,11 +501,11 @@ class _IeumDateDialogState extends State<IeumDateDialog> {
     return SizedBox(
       height: 36,
       child: Material(
-        color: chosen ? _accent : Colors.transparent,
+        color: chosen ? WorkspaceUi.colors(context).accent : Colors.transparent,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(9),
           side: DateUtils.isSameDay(date, today)
-              ? const BorderSide(color: _accent)
+              ? BorderSide(color: WorkspaceUi.colors(context).accent)
               : BorderSide.none,
         ),
         child: InkWell(
@@ -459,7 +513,14 @@ class _IeumDateDialogState extends State<IeumDateDialog> {
           borderRadius: BorderRadius.circular(9),
           onTap: () => setState(() => selected = date),
           child: Semantics(
-            label: '${date.year}년 ${date.month}월 $day일',
+            label: tr(
+              '{year}년 {month}월 {day}일',
+              args: {
+                'year': '${date.year}',
+                'month': '${date.month}',
+                'day': '$day',
+              },
+            ),
             selected: chosen,
             button: true,
             child: Center(
@@ -469,10 +530,10 @@ class _IeumDateDialogState extends State<IeumDateDialog> {
                   fontSize: 12,
                   fontWeight: chosen ? FontWeight.w700 : FontWeight.w400,
                   color: chosen
-                      ? Colors.white
+                      ? WorkspaceUi.colors(context).onAccent
                       : date.weekday == DateTime.sunday
                       ? const Color(0xffc47c89)
-                      : _text,
+                      : WorkspaceUi.colors(context).ink,
                 ),
               ),
             ),

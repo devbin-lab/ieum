@@ -368,19 +368,27 @@ void main() {
       );
       final plan = workerStore.planHandoff(
         current,
-        current.status,
+        'todo',
         routeId: 'manual-handoff',
         receiverPerson: store.project!.ownerId,
+        purpose: 'review',
       );
       workerStore.confirmHandoff(plan);
       await idle(workerSync);
-      expect(workerStore.baseline[value.id]!.status, 'doing');
+      expect(workerStore.baseline[value.id]!.status, 'todo');
       expect(workerStore.baseline[value.id]!.lockedBy, store.project!.ownerId);
       expect(workerStore.canEdit(workerStore.find(value.id)), isFalse);
       expect(api.prs.every((p) => p['merged'] == true), isTrue);
       api.identityId = 1;
       api.identityLogin = 'tester';
       await sync.pullLatest();
+      store.transition(
+        value.id,
+        'review',
+        expectedVersion: store.find(value.id).version,
+      );
+      await idle(sync);
+      expect(store.baseline[value.id]!.status, 'review');
       store.transition(
         value.id,
         'done',

@@ -2,9 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:window_manager/window_manager.dart';
 
-const _titlebarSurface = Color(0xffe6e8e7);
-const _titlebarHover = Color(0xffd6dad8);
-const _titlebarIcon = Color(0xff505753);
+import 'workspace_ui.dart';
+import 'app_localizations.dart';
 
 /// Lives above the navigator so window controls remain available in dialogs.
 class DesktopFrame extends StatefulWidget {
@@ -147,7 +146,7 @@ class _IeumTitleBarState extends State<IeumTitleBar> with WindowListener {
     color: Colors.transparent,
     child: Container(
       key: const Key('window-titlebar'),
-      color: _titlebarSurface,
+      color: WorkspaceUi.colors(context).chrome,
       child: SizedBox(
         height: 36,
         child: Row(
@@ -162,13 +161,13 @@ class _IeumTitleBarState extends State<IeumTitleBar> with WindowListener {
                     children: [
                       _historyButton(
                         key: const Key('titlebar-back'),
-                        label: '뒤로가기',
+                        label: tr('뒤로가기'),
                         forward: false,
                         onPressed: controller.backAction,
                       ),
                       _historyButton(
                         key: const Key('titlebar-forward'),
-                        label: '앞으로가기',
+                        label: tr('앞으로가기'),
                         forward: true,
                         onPressed: controller.forwardAction,
                       ),
@@ -188,13 +187,13 @@ class _IeumTitleBarState extends State<IeumTitleBar> with WindowListener {
             ),
             _WindowButton(
               key: const Key('window-minimize'),
-              label: '최소화',
+              label: tr('최소화'),
               icon: Icons.remove_rounded,
               onPressed: windowManager.minimize,
             ),
             _WindowButton(
               key: const Key('window-maximize'),
-              label: maximized ? '이전 크기로 복원' : '최대화',
+              label: tr(maximized ? '이전 크기로 복원' : '최대화'),
               icon: maximized
                   ? Icons.filter_none_rounded
                   : Icons.crop_square_rounded,
@@ -202,7 +201,7 @@ class _IeumTitleBarState extends State<IeumTitleBar> with WindowListener {
             ),
             _WindowButton(
               key: const Key('window-close'),
-              label: '닫기',
+              label: tr('닫기'),
               icon: Icons.close_rounded,
               close: true,
               onPressed: windowManager.close,
@@ -230,8 +229,8 @@ class _IeumTitleBarState extends State<IeumTitleBar> with WindowListener {
         painter: HistoryArrowPainter(
           forward: forward,
           color: onPressed == null
-              ? const Color(0xff69778d)
-              : const Color(0xffe2eaf8),
+              ? WorkspaceUi.colors(context).chromeInk.withValues(alpha: .38)
+              : WorkspaceUi.colors(context).chromeInk,
         ),
       ),
     ),
@@ -240,7 +239,7 @@ class _IeumTitleBarState extends State<IeumTitleBar> with WindowListener {
   Widget _sidebarButton(SidebarTitlebarController controller) =>
       _TitlebarButton(
         key: const Key('titlebar-sidebar-toggle'),
-        label: controller.open ? '사이드바 접기' : '사이드바 펼치기',
+        label: tr(controller.open ? '사이드바 접기' : '사이드바 펼치기'),
         width: 44,
         onPressed: controller.action,
         child: SizedBox(
@@ -252,7 +251,10 @@ class _IeumTitleBarState extends State<IeumTitleBar> with WindowListener {
             curve: Curves.easeInOutCubic,
             builder: (context, progress, _) => CustomPaint(
               key: const Key('titlebar-sidebar-glyph'),
-              painter: SidebarGlyphPainter(progress),
+              painter: SidebarGlyphPainter(
+                progress,
+                color: WorkspaceUi.colors(context).chromeInk,
+              ),
             ),
           ),
         ),
@@ -322,11 +324,11 @@ class _TitlebarButtonState extends State<_TitlebarButton> {
                 child: DecoratedBox(
                   decoration: BoxDecoration(
                     color: hovered && widget.onPressed != null
-                        ? _titlebarHover
+                        ? WorkspaceUi.colors(context).chromeHover
                         : Colors.transparent,
                     borderRadius: BorderRadius.circular(7),
                     border: focused && widget.onPressed != null
-                        ? Border.all(color: const Color(0xff8faee8))
+                        ? Border.all(color: WorkspaceUi.colors(context).accent)
                         : null,
                   ),
                   child: SizedBox(
@@ -375,7 +377,12 @@ class HistoryArrowPainter extends CustomPainter {
 }
 
 class SidebarGlyphPainter extends CustomPainter {
-  const SidebarGlyphPainter(this.progress);
+  const SidebarGlyphPainter(
+    this.progress, {
+    this.color = const Color(0xff505753),
+  });
+
+  final Color color;
 
   /// 0 = folded, 1 = expanded.
   final double progress;
@@ -383,7 +390,7 @@ class SidebarGlyphPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final line = Paint()
-      ..color = _titlebarIcon
+      ..color = color
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.25;
     canvas.drawRRect(
@@ -404,7 +411,7 @@ class SidebarGlyphPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant SidebarGlyphPainter oldDelegate) =>
-      oldDelegate.progress != progress;
+      oldDelegate.progress != progress || oldDelegate.color != color;
 }
 
 class _WindowButton extends StatefulWidget {
@@ -441,12 +448,16 @@ class _WindowButtonState extends State<_WindowButton> {
           height: 36,
           child: InkWell(
             onTap: widget.onPressed,
-            hoverColor: widget.close ? const Color(0xffd54c64) : _titlebarHover,
+            hoverColor: widget.close
+                ? const Color(0xffd54c64)
+                : WorkspaceUi.colors(context).chromeHover,
             child: Center(
               child: Icon(
                 widget.icon,
                 size: 17,
-                color: widget.close && hovered ? Colors.white : _titlebarIcon,
+                color: widget.close && hovered
+                    ? Colors.white
+                    : WorkspaceUi.colors(context).chromeInk,
               ),
             ),
           ),

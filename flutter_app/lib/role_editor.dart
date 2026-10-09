@@ -1,3 +1,5 @@
+import 'app_localizations.dart';
+
 import 'package:flutter/material.dart';
 import 'package:uuid/uuid.dart';
 
@@ -40,7 +42,7 @@ Future<ProjectRole?> showProjectRoleDialog(
       builder: (ctx, update) {
         Future<void> save() async {
           if (busy || name.text.trim().isEmpty) {
-            update(() => error = '파트 이름을 입력하세요.');
+            update(() => error = tr('파트 이름을 입력하세요.'));
             return;
           }
           final draft = ProjectRole(id, name.text.trim(), Set.of(permissions));
@@ -72,7 +74,7 @@ Future<ProjectRole?> showProjectRoleDialog(
           busy: busy,
           onSave: save,
           child: IeumDialog(
-            title: Text(role == null ? '파트 추가' : '파트 수정'),
+            title: Text(role == null ? tr('파트 추가') : tr('파트 수정')),
             icon: Icons.groups_outlined,
             content: SizedBox(
               width: 480,
@@ -86,19 +88,19 @@ Future<ProjectRole?> showProjectRoleDialog(
                     maxLength: 40,
                     enabled: !busy,
                     onChanged: (_) => update(() {}),
-                    decoration: const InputDecoration(
-                      labelText: '파트 이름',
-                      hintText: '예: 기획, PD, 검토 담당',
+                    decoration: InputDecoration(
+                      labelText: tr('파트 이름'),
+                      hintText: tr('예: 기획, PD, 검토 담당'),
                     ),
                   ),
                   const SizedBox(height: 12),
-                  const Text(
-                    '작업 등록·진행·검토·통합은 기본 허용됩니다. 작업 전달 조건은 자동화 시트에서 설정합니다.',
+                  Text(
+                    tr('작업 등록·진행·검토·통합은 기본 허용됩니다. 작업 전달 조건은 자동화 시트에서 설정합니다.'),
                     style: TextStyle(fontSize: 12),
                   ),
                   const SizedBox(height: 14),
-                  const Text(
-                    '관리 권한',
+                  Text(
+                    tr('관리 권한'),
                     style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
                   ),
                   RolePermissionGroups(
@@ -121,10 +123,16 @@ Future<ProjectRole?> showProjectRoleDialog(
                           }),
                   ),
                   const SizedBox(height: 14),
-                  if (dirty()) const Text('저장하지 않은 변경사항'),
+                  if (dirty()) Text(tr('저장하지 않은 변경사항')),
                   if (error.isNotEmpty)
-                    Text(error, style: const TextStyle(color: Colors.red)),
-                  if (base != null) Text('저장된 파트: ${base!.name}'),
+                    Text(
+                      trError(error),
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.error,
+                      ),
+                    ),
+                  if (base != null)
+                    Text(tr('저장된 파트: {v0}', args: {'v0': base!.name})),
                   if (error.isNotEmpty && onReload != null)
                     TextButton(
                       onPressed: busy
@@ -136,8 +144,9 @@ Future<ProjectRole?> showProjectRoleDialog(
                                 if (ctx.mounted) {
                                   update(() {
                                     base = latest;
-                                    error =
-                                        '최신 저장값을 확인했습니다. 초안을 비교한 뒤 다시 저장하세요.';
+                                    error = tr(
+                                      '최신 저장값을 확인했습니다. 초안을 비교한 뒤 다시 저장하세요.',
+                                    );
                                   });
                                 }
                               } catch (e) {
@@ -146,7 +155,7 @@ Future<ProjectRole?> showProjectRoleDialog(
                                 if (ctx.mounted) update(() => busy = false);
                               }
                             },
-                      child: const Text('최신 값 확인 · 초안 유지'),
+                      child: Text(tr('최신 값 확인 · 초안 유지')),
                     ),
                 ],
               ),
@@ -154,17 +163,17 @@ Future<ProjectRole?> showProjectRoleDialog(
             actions: [
               TextButton(
                 onPressed: busy ? null : () => Navigator.maybePop(ctx),
-                child: const Text('취소'),
+                child: Text(tr('취소')),
               ),
               FilledButton(
                 key: const Key('save-role'),
                 onPressed: busy || !dirty() ? null : save,
                 child: Text(
                   busy
-                      ? '저장소 반영 중…'
+                      ? tr('저장소 반영 중…')
                       : error.isEmpty
-                      ? '저장'
-                      : '다시 저장',
+                      ? tr('저장')
+                      : tr('다시 저장'),
                 ),
               ),
             ],

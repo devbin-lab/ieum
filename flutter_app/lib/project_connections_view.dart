@@ -1,16 +1,15 @@
+import 'app_localizations.dart';
+
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
 
 import 'github_sync.dart';
 import 'store.dart';
+import 'sync_recovery_ui.dart';
+import 'workspace_ui.dart';
 
-const _ink = Color(0xff253047);
-const _muted = Color(0xff737e90);
-const _line = Color(0xffe3e7ed);
-const _accent = Color(0xff7467c6);
-
-/// A read-only overview of the real project and its local synchronization queue.
+/// An overview of the real project and its local synchronization queue.
 /// Configuration and conflict resolution stay in their dedicated settings view.
 class ProjectConnectionsView extends StatefulWidget {
   const ProjectConnectionsView({
@@ -42,7 +41,12 @@ class _ProjectConnectionsViewState extends State<ProjectConnectionsView> {
     final sync = widget.sync;
     if (sync == null || _syncing || sync.busy || sync.pulling) return;
     if (sync.retryAt?.isAfter(DateTime.now()) == true) {
-      setState(() => _message = '${_time(sync.retryAt!)} 이후 다시 시도할 수 있습니다.');
+      setState(
+        () => _message = tr(
+          '{v0} 이후 다시 시도할 수 있습니다.',
+          args: {'v0': _time(sync.retryAt!)},
+        ),
+      );
       return;
     }
     setState(() {
@@ -56,7 +60,7 @@ class _ProjectConnectionsViewState extends State<ProjectConnectionsView> {
         setState(() {
           _message = error is GitHubFailure
               ? error.message
-              : '동기화를 완료하지 못했습니다. 연결 설정에서 원인을 확인해 주세요.';
+              : tr('동기화를 완료하지 못했습니다. 연결 설정을 확인해 주세요.');
         });
       }
     } finally {
@@ -83,7 +87,7 @@ class _ProjectConnectionsViewState extends State<ProjectConnectionsView> {
         config?.validate();
       } catch (_) {
         config = null;
-        configError = '저장된 연결 설정을 읽지 못했습니다. 연결 설정을 확인해 주세요.';
+        configError = tr('저장된 연결 설정을 읽지 못했습니다. 연결 설정을 확인해 주세요.');
       }
       final connected = config?.slug.isNotEmpty == true;
       final enabled = connected && config!.enabled && sync != null;
@@ -99,245 +103,293 @@ class _ProjectConnectionsViewState extends State<ProjectConnectionsView> {
         if (_message.isNotEmpty) _message,
         if (store.meta('github.lastPullError').isNotEmpty)
           store.meta('github.lastPullError'),
-        if (store.meta('github.recoveryNotice').isNotEmpty)
-          store.meta('github.recoveryNotice'),
         ...queue.errors,
         ...?sync?.autoMergeErrors.values.take(3),
       };
       return LayoutBuilder(
         builder: (context, constraints) {
-          final padding = constraints.maxWidth < 640 ? 18.0 : 32.0;
-          final available = constraints.maxWidth - padding * 2;
-          final columns = available >= 820
-              ? 4
-              : available >= 370
-              ? 2
-              : 1;
-          final metricWidth = (available - 12 * (columns - 1)) / columns;
-          return ListView(
-            key: const Key('connections-content'),
-            padding: EdgeInsets.all(padding),
+          final padding = constraints.maxWidth < 600 ? 16.0 : 24.0;
+          final actions = <Widget>[
+            if (store.syncRecoveryCount() > 0)
+              SyncRecoveryHistoryButton(store: store),
+            if (enabled)
+              FilledButton.icon(
+                key: const Key('connections-sync-now'),
+                onPressed: busy || waiting ? null : _synchronize,
+                icon: busy
+                    ? const SizedBox(
+                        width: 15,
+                        height: 15,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.sync_rounded, size: 16),
+                label: Text(busy ? tr('동기화 중…') : tr('지금 동기화')),
+              ),
+            if (connected)
+              OutlinedButton.icon(
+                key: const Key('connections-open-settings'),
+                onPressed: widget.onOpenSettings,
+                icon: const Icon(Icons.tune_rounded, size: 16),
+                label: Text(tr('연결 설정')),
+              )
+            else
+              FilledButton.icon(
+                key: const Key('connections-open-settings'),
+                onPressed: widget.onOpenSettings,
+                icon: const Icon(Icons.add_link_rounded, size: 16),
+                label: Text(tr('저장소 연결')),
+              ),
+          ];
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              const Text(
-                '연결',
-                style: TextStyle(
-                  fontSize: 26,
-                  fontWeight: FontWeight.w700,
-                  color: _ink,
+              Padding(
+                padding: EdgeInsets.fromLTRB(padding, 24, padding, 20),
+                child: WorkspacePageHeader(
+                  title: tr('연결'),
+                  contextLabel: project?.name,
+                  actions: actions,
                 ),
               ),
-              const SizedBox(height: 8),
-              const Text(
-                '팀의 변경이 어디까지 반영되었는지 확인하세요.',
-                style: TextStyle(fontSize: 12, color: _muted),
-              ),
-              const SizedBox(height: 26),
-              _section(
-                icon: Icons.cloud_outlined,
-                title: connected ? 'GitHub 작업 공간' : '작업 공간 연결',
-                children: [
-                  Text(
-                    connected ? config!.slug : 'GitHub 저장소를 연결해 팀과 작업을 공유하세요.',
-                    key: const Key('connections-repository'),
-                    style: TextStyle(
-                      fontSize: connected ? 17 : 14,
-                      fontWeight: FontWeight.w600,
-                      color: _ink,
-                    ),
-                  ),
-                  if (connected) ...[
-                    const SizedBox(height: 8),
-                    Text(
-                      '통합 브랜치 · ${config!.base}',
-                      style: const TextStyle(fontSize: 12, color: _muted),
-                    ),
-                    const SizedBox(height: 14),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
+              Divider(height: 1, color: WorkspaceUi.colors(context).line),
+              Expanded(
+                child: ListView(
+                  key: const Key('connections-content'),
+                  padding: EdgeInsets.all(padding),
+                  children: [
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        _badge(
-                          busy
-                              ? '동기화 중'
-                              : waiting
-                              ? '요청 제한 대기'
-                              : enabled
-                              ? '자동 동기화 켜짐'
-                              : '자동 동기화 꺼짐',
-                          enabled && !waiting
-                              ? const Color(0xff4e8e77)
-                              : _muted,
+                        WorkspacePanel(
+                          child: connected
+                              ? _repositoryDetails(
+                                  config!,
+                                  enabled: enabled,
+                                  busy: busy,
+                                  waiting: waiting,
+                                  lastPull: lastPull,
+                                  retryAt: retryAt,
+                                )
+                              : WorkspaceEmptyState(
+                                  icon: Icons.cloud_outlined,
+                                  title: tr('연결된 저장소가 없습니다.'),
+                                  message: tr(
+                                    'GitHub 저장소를 연결하면 팀과 프로젝트 작업을 공유할 수 있습니다.',
+                                  ),
+                                ),
                         ),
-                        _badge(
-                          config.autoMerge ? '자동 통합' : '통합 승인 대기',
-                          _accent,
+                        const SizedBox(height: 24),
+                        WorkspaceSectionLabel(title: tr('동기화 상태')),
+                        const SizedBox(height: 12),
+                        WorkspacePanel(
+                          child: LayoutBuilder(
+                            builder: (context, bounds) {
+                              final columns = bounds.maxWidth >= 680
+                                  ? 4
+                                  : bounds.maxWidth >= 280
+                                  ? 2
+                                  : 1;
+                              final width =
+                                  (bounds.maxWidth - 20 * (columns - 1)) /
+                                  columns;
+                              return Wrap(
+                                spacing: 20,
+                                runSpacing: 22,
+                                children: [
+                                  _metric(
+                                    context,
+                                    width,
+                                    tr('전송 대기'),
+                                    queue.pending,
+                                    tr('기기에 저장된 변경'),
+                                    Icons.cloud_upload_outlined,
+                                  ),
+                                  _metric(
+                                    context,
+                                    width,
+                                    tr('반영 대기'),
+                                    queue.sent,
+                                    tr('저장소로 전송 완료'),
+                                    Icons.merge_outlined,
+                                  ),
+                                  _metric(
+                                    context,
+                                    width,
+                                    tr('전송 실패'),
+                                    queue.failed,
+                                    tr('연결 상태 확인 필요'),
+                                    Icons.error_outline,
+                                    warning: queue.failed > 0,
+                                  ),
+                                  _metric(
+                                    context,
+                                    width,
+                                    tr('변경 충돌'),
+                                    conflicts,
+                                    tr('내 변경이 보존됨'),
+                                    Icons.call_split,
+                                    warning: conflicts > 0,
+                                  ),
+                                ],
+                              );
+                            },
+                          ),
+                        ),
+                        SyncRecoveryNotice(store: store),
+                        if (issues.isNotEmpty || conflicts > 0) ...[
+                          const SizedBox(height: 16),
+                          Container(
+                            key: const Key('connections-attention'),
+                            padding: const EdgeInsets.all(18),
+                            decoration: BoxDecoration(
+                              color:
+                                  Theme.of(context).brightness ==
+                                      Brightness.dark
+                                  ? const Color(0xff443125)
+                                  : const Color(0xfffff8ee),
+                              border: Border.all(
+                                color:
+                                    Theme.of(context).brightness ==
+                                        Brightness.dark
+                                    ? const Color(0xff725438)
+                                    : const Color(0xffedddc4),
+                              ),
+                              borderRadius: BorderRadius.circular(
+                                WorkspaceUi.radius,
+                              ),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    Icon(
+                                      Icons.info_outline_rounded,
+                                      size: 17,
+                                      color: WorkspaceUi.colors(context)
+                                          .warning,
+                                    ),
+                                    SizedBox(width: 8),
+                                    Expanded(
+                                      child: Text(
+                                        tr('동기화 확인 필요'),
+                                        style: WorkspaceUi.sectionStyleOf(
+                                          context,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 10),
+                                if (conflicts > 0)
+                                  Padding(
+                                    padding: EdgeInsets.only(bottom: 8),
+                                    child: Text(
+                                      tr(
+                                        '같은 작업에 서로 다른 변경이 있습니다. 연결 설정에서 변경 사항을 비교할 수 있습니다.',
+                                      ),
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        height: 1.6,
+                                        color: WorkspaceUi.colors(context).ink,
+                                      ),
+                                    ),
+                                  ),
+                                for (final issue in issues.take(5))
+                                  Padding(
+                                    padding: const EdgeInsets.only(bottom: 6),
+                                    child: Text(
+                                      issue,
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        height: 1.6,
+                                        color: WorkspaceUi.colors(context)
+                                            .muted,
+                                      ),
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          ),
+                        ],
+                        const SizedBox(height: 24),
+                        WorkspaceSectionLabel(title: tr('프로젝트 참여자')),
+                        const SizedBox(height: 12),
+                        WorkspacePanel(
+                          child: LayoutBuilder(
+                            builder: (context, bounds) {
+                              final summary = Row(
+                                children: [
+                                  Container(
+                                    width: 40,
+                                    height: 40,
+                                    decoration: BoxDecoration(
+                                      color: WorkspaceUi.colors(context).subtle,
+                                      borderRadius: BorderRadius.circular(10),
+                                    ),
+                                    child: Icon(
+                                      Icons.group_outlined,
+                                      size: 21,
+                                      color: WorkspaceUi.colors(context).muted,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: Text(
+                                      tr(
+                                        '{v0}명 참여 중 · {v1}개 파트',
+                                        args: {
+                                          'v0':
+                                              project?.people
+                                                  .where(
+                                                    (person) =>
+                                                        person.canMutate,
+                                                  )
+                                                  .length ??
+                                              0,
+                                          'v1': project?.parts.length ?? 0,
+                                        },
+                                      ),
+                                      style: WorkspaceUi.sectionStyleOf(
+                                        context,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              );
+                              final button = OutlinedButton.icon(
+                                key: const Key('connections-open-members'),
+                                onPressed: widget.onOpenMembers,
+                                icon: const Icon(
+                                  Icons.group_outlined,
+                                  size: 16,
+                                ),
+                                label: Text(tr('참여자 관리')),
+                              );
+                              if (bounds.maxWidth < 450) {
+                                return Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    summary,
+                                    const SizedBox(height: 14),
+                                    button,
+                                  ],
+                                );
+                              }
+                              return Row(
+                                children: [
+                                  Expanded(child: summary),
+                                  const SizedBox(width: 16),
+                                  button,
+                                ],
+                              );
+                            },
+                          ),
                         ),
                       ],
                     ),
-                    const SizedBox(height: 16),
-                    Text(
-                      lastPull == null
-                          ? '아직 동기화 기록이 없습니다.'
-                          : '마지막 가져오기 · ${_time(lastPull)}',
-                      key: const Key('connections-last-pull'),
-                      style: const TextStyle(fontSize: 11, color: _muted),
-                    ),
-                    if (waiting) ...[
-                      const SizedBox(height: 6),
-                      Text(
-                        '${_time(retryAt!)} 이후 재시도합니다.',
-                        style: const TextStyle(
-                          fontSize: 11,
-                          color: Color(0xffa27739),
-                        ),
-                      ),
-                    ],
-                  ] else ...[
-                    const SizedBox(height: 8),
-                    const Text(
-                      '프로젝트의 연결 설정에서 저장소와 동기화 상태를 확인할 수 있습니다.',
-                      style: TextStyle(
-                        fontSize: 12,
-                        height: 1.6,
-                        color: _muted,
-                      ),
-                    ),
-                  ],
-                  const SizedBox(height: 18),
-                  Wrap(
-                    spacing: 10,
-                    runSpacing: 8,
-                    children: [
-                      if (enabled)
-                        FilledButton.icon(
-                          key: const Key('connections-sync-now'),
-                          onPressed: busy ? null : _synchronize,
-                          icon: busy
-                              ? const SizedBox(
-                                  width: 15,
-                                  height: 15,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                  ),
-                                )
-                              : const Icon(Icons.sync, size: 17),
-                          label: Text(busy ? '동기화 중…' : '지금 동기화'),
-                        ),
-                      OutlinedButton.icon(
-                        key: const Key('connections-open-settings'),
-                        onPressed: widget.onOpenSettings,
-                        icon: const Icon(Icons.tune, size: 17),
-                        label: Text(connected ? '연결 설정 · 문제 해결' : '연결 설정 열기'),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
-              Wrap(
-                spacing: 12,
-                runSpacing: 12,
-                children: [
-                  _metric(
-                    metricWidth,
-                    '전송 대기',
-                    queue.pending,
-                    '이 컴퓨터에 저장됨',
-                    Icons.cloud_upload_outlined,
-                  ),
-                  _metric(
-                    metricWidth,
-                    '통합 대기',
-                    queue.sent,
-                    '전송 완료 · 팀 반영 전',
-                    Icons.merge_outlined,
-                  ),
-                  _metric(
-                    metricWidth,
-                    '전송 실패',
-                    queue.failed,
-                    '원인 확인 후 재시도',
-                    Icons.error_outline,
-                    warning: queue.failed > 0,
-                  ),
-                  _metric(
-                    metricWidth,
-                    '충돌 작업',
-                    conflicts,
-                    '개인 변경을 보존 중',
-                    Icons.call_split,
-                    warning: conflicts > 0,
-                  ),
-                ],
-              ),
-              if (issues.isNotEmpty || conflicts > 0) ...[
-                const SizedBox(height: 16),
-                _section(
-                  icon: Icons.info_outline,
-                  title: '확인이 필요한 내용',
-                  children: [
-                    if (conflicts > 0)
-                      const Padding(
-                        padding: EdgeInsets.only(bottom: 8),
-                        child: Text(
-                          '같은 작업에 서로 다른 변경이 있습니다. 연결 설정에서 내용을 비교하고 복구할 수 있습니다.',
-                          style: TextStyle(
-                            fontSize: 12,
-                            height: 1.6,
-                            color: _ink,
-                          ),
-                        ),
-                      ),
-                    for (final issue in issues.take(5))
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 8),
-                        child: Text(
-                          issue,
-                          style: const TextStyle(
-                            fontSize: 12,
-                            height: 1.6,
-                            color: _muted,
-                          ),
-                        ),
-                      ),
-                    TextButton(
-                      onPressed: widget.onOpenSettings,
-                      child: const Text('동기화 상세 확인'),
-                    ),
                   ],
                 ),
-              ],
-              const SizedBox(height: 16),
-              _section(
-                icon: Icons.people_outline,
-                title: '팀과 파트',
-                children: [
-                  Text(
-                    '${project?.people.where((person) => person.canMutate).length ?? 0}명 참여 중 · ${project?.parts.length ?? 0}개 파트',
-                    style: const TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                      color: _ink,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  const Text(
-                    '참여자의 소속 파트는 작업 전달과 처리 대상의 기준이 됩니다.',
-                    style: TextStyle(fontSize: 12, height: 1.6, color: _muted),
-                  ),
-                  const SizedBox(height: 12),
-                  OutlinedButton.icon(
-                    key: const Key('connections-open-members'),
-                    onPressed: widget.onOpenMembers,
-                    icon: const Icon(Icons.group_outlined, size: 17),
-                    label: const Text('참여자 관리'),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 20),
-              const Text(
-                '로컬 저장 → GitHub 전송 → 팀 통합 → 최신 작업 가져오기\n동기화와 자동 전달은 앱이 실행 중일 때 동작합니다.',
-                style: TextStyle(fontSize: 11, height: 1.7, color: _muted),
               ),
             ],
           );
@@ -345,57 +397,121 @@ class _ProjectConnectionsViewState extends State<ProjectConnectionsView> {
       );
     },
   );
-}
 
-Widget _section({
-  required IconData icon,
-  required String title,
-  required List<Widget> children,
-}) => Container(
-  padding: const EdgeInsets.all(20),
-  decoration: BoxDecoration(
-    color: Colors.white,
-    border: Border.all(color: _line),
-    borderRadius: BorderRadius.circular(14),
-  ),
-  child: Column(
+  Widget _repositoryDetails(
+    GitHubConfig config, {
+    required bool enabled,
+    required bool busy,
+    required bool waiting,
+    required DateTime? lastPull,
+    required DateTime? retryAt,
+  }) => Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
       Row(
         children: [
-          Icon(icon, size: 18, color: _accent),
-          const SizedBox(width: 9),
+          Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              color: WorkspaceUi.colors(context).subtle,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(
+              Icons.cloud_outlined,
+              size: 22,
+              color: WorkspaceUi.colors(context).ink,
+            ),
+          ),
+          const SizedBox(width: 12),
           Expanded(
-            child: Text(
-              title,
-              style: const TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
-                color: _muted,
-              ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  tr('GitHub 저장소'),
+                  style: WorkspaceUi.captionStyleOf(context),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  config.slug,
+                  key: const Key('connections-repository'),
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                    color: WorkspaceUi.colors(context).ink,
+                  ),
+                ),
+              ],
             ),
           ),
         ],
       ),
+      const SizedBox(height: 20),
+      Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: [
+          _badge(
+            busy
+                ? tr('동기화 중')
+                : waiting
+                ? tr('재시도 대기')
+                : enabled
+                ? tr('자동 동기화 켜짐')
+                : tr('자동 동기화 꺼짐'),
+            enabled && !waiting
+                ? WorkspaceUi.colors(context).success
+                : WorkspaceUi.colors(context).muted,
+          ),
+          _badge(
+            config.autoMerge ? tr('변경 자동 반영') : tr('변경 승인 필요'),
+            WorkspaceUi.colors(context).accent,
+          ),
+          _badge(
+            tr('브랜치 · {v0}', args: {'v0': config.base}),
+            WorkspaceUi.colors(context).muted,
+          ),
+        ],
+      ),
       const SizedBox(height: 18),
-      ...children,
+      Divider(height: 1, color: WorkspaceUi.colors(context).line),
+      const SizedBox(height: 14),
+      Text(
+        lastPull == null
+            ? tr('아직 동기화 기록이 없습니다.')
+            : tr('최근 업데이트 확인 · {v0}', args: {'v0': _time(lastPull)}),
+        key: const Key('connections-last-pull'),
+        style: WorkspaceUi.captionStyleOf(context),
+      ),
+      if (waiting && retryAt != null) ...[
+        const SizedBox(height: 5),
+        Text(
+          tr('{v0} 이후 재시도합니다.', args: {'v0': _time(retryAt)}),
+          style: TextStyle(
+            fontSize: 11,
+            color: WorkspaceUi.colors(context).warning,
+          ),
+        ),
+      ],
     ],
-  ),
-);
+  );
+}
 
 Widget _badge(String text, Color color) => Container(
-  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+  padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
   decoration: BoxDecoration(
-    color: color.withValues(alpha: .09),
-    borderRadius: BorderRadius.circular(8),
+    color: color.withValues(alpha: .08),
+    borderRadius: BorderRadius.circular(6),
   ),
   child: Text(
     text,
-    style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: color),
+    style: TextStyle(fontSize: 11, fontWeight: FontWeight.w500, color: color),
   ),
 );
 
 Widget _metric(
+  BuildContext context,
   double width,
   String title,
   int count,
@@ -404,45 +520,45 @@ Widget _metric(
   bool warning = false,
 }) => SizedBox(
   width: width,
-  child: Container(
-    padding: const EdgeInsets.all(16),
-    decoration: BoxDecoration(
-      color: Colors.white,
-      border: Border.all(color: _line),
-      borderRadius: BorderRadius.circular(12),
-    ),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Icon(
-              icon,
-              size: 16,
-              color: warning ? const Color(0xffbe8059) : _muted,
-            ),
-            const SizedBox(width: 7),
-            Expanded(
-              child: Text(
-                title,
-                style: const TextStyle(fontSize: 11, color: _muted),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 10),
-        Text(
-          '$count',
-          style: TextStyle(
-            fontSize: 26,
-            fontWeight: FontWeight.w700,
-            color: warning ? const Color(0xffbe8059) : _ink,
+  child: Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Row(
+        children: [
+          Icon(
+            icon,
+            size: 15,
+            color: warning
+                ? WorkspaceUi.colors(context).warning
+                : WorkspaceUi.colors(context).muted,
           ),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(title, style: WorkspaceUi.captionStyleOf(context)),
+          ),
+        ],
+      ),
+      const SizedBox(height: 8),
+      Text(
+        '$count',
+        style: TextStyle(
+          fontSize: 23,
+          fontWeight: FontWeight.w600,
+          color: warning
+              ? WorkspaceUi.colors(context).warning
+              : WorkspaceUi.colors(context).ink,
         ),
-        const SizedBox(height: 6),
-        Text(caption, style: const TextStyle(fontSize: 10, color: _muted)),
-      ],
-    ),
+      ),
+      const SizedBox(height: 4),
+      Text(
+        caption,
+        style: TextStyle(
+          fontSize: 10,
+          color: WorkspaceUi.colors(context).muted,
+          height: 1.5,
+        ),
+      ),
+    ],
   ),
 );
 
@@ -454,7 +570,7 @@ String _time(DateTime date) {
   return local.year == now.year &&
           local.month == now.month &&
           local.day == now.day
-      ? '오늘 $time'
+      ? tr('오늘 {v0}', args: {'v0': time})
       : '${local.year}.${local.month.toString().padLeft(2, '0')}.${local.day.toString().padLeft(2, '0')} $time';
 }
 

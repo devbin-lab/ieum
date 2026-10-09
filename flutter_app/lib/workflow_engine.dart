@@ -48,6 +48,7 @@ String workflowTaskPurpose(WorkTask task, ProjectManifest? project) {
 }
 
 String workflowBoardCategory(WorkTask task, ProjectManifest? project) {
+  if (task.isPaused || task.isDropped) return task.status;
   final stage = project?.stage(task.status);
   if (stage?.isCompleted == true || stage == null && task.status == 'done') {
     return 'done';
@@ -145,6 +146,8 @@ bool canEditWorkflowTask(
     actor.active &&
     !task.isDeleted &&
     !task.isArchived &&
+    !task.isPaused &&
+    !task.isDropped &&
     hasTaskLockAccess(actor, task) &&
     !project.isCompleteStatus(task.status) &&
     project.people.any((p) => p.id == actor.id && p.active);
@@ -153,6 +156,11 @@ const directWorkflowRouteIds = {
   'manual-start',
   'manual-finish',
   'manual-handoff',
+  'manual-review',
+  'manual-hold',
+  'manual-resume',
+  'manual-drop',
+  'manual-restore',
 };
 
 /// Built-in presets are hidden only while their executable policy remains the
@@ -189,6 +197,16 @@ bool isDefaultWorkflowPreset(
 
 /// Shared project actions do not depend on a saved automation route. A current
 /// recipient drives the inbox; it is not an exclusive edit or delivery grant.
+const directActionRouteIds = [
+  'manual-start',
+  'manual-review',
+  'manual-finish',
+  'manual-hold',
+  'manual-resume',
+  'manual-drop',
+  'manual-restore',
+];
+
 WorkflowSheetRoute? directWorkflowRoute(
   WorkTask task,
   ProjectManifest project,
@@ -200,47 +218,92 @@ WorkflowSheetRoute? directWorkflowRoute(
       project.isCompleteStatus(task.status)) {
     return null;
   }
-  final progress =
-      project.stage('doing') ??
-      project.workflowStages
-          .where((s) => s.resolvedCategory == 'inProgress')
-          .firstOrNull;
-  final complete =
-      project.stage('done') ??
-      project.workflowStages.where((s) => s.isCompleted).firstOrNull;
+  final start = task.workflowPurpose == 'review' ? 'review' : 'doing';
   return switch (id) {
-    'manual-start'
-        when progress != null &&
-            (workflowBoardCategory(task, project) == 'todo' ||
-                const {'review', 'rework'}.contains(task.status)) &&
-            progress.id != task.status =>
+    'manual-start' when task.status == 'todo' || task.status == 'rework' =>
       WorkflowSheetRoute(
         id: id,
         from: task.status,
-        to: progress.id,
-        name: '작업 시작',
+        to: start,
+        name: start == 'review' ? '검토 시작' : '작업 시작',
         operation: 'start',
         assignment: 'keep',
       ),
-    'manual-finish'
-        when complete != null &&
-            workflowBoardCategory(task, project) == 'inProgress' =>
+    'manual-review' when task.status == 'doing' => WorkflowSheetRoute(
+      id: id,
+      from: task.status,
+      to: 'review',
+      name: '검토 시작',
+      operation: 'start',
+      assignment: 'keep',
+    ),
+    'manual-finish' when const {'doing', 'review'}.contains(task.status) =>
       WorkflowSheetRoute(
         id: id,
         from: task.status,
-        to: complete.id,
-        name: '최종 완료',
+        to: 'done',
+        name: '완료',
         operation: 'finish',
         assignment: 'keep',
         action: 'approve',
       ),
-    'manual-handoff' => WorkflowSheetRoute(
+    'manual-handoff' when const {'doing', 'review'}.contains(task.status) =>
+      WorkflowSheetRoute(
+        id: id,
+        from: task.status,
+        to: 'todo',
+        name: '전달',
+        operation: 'handoff',
+        assignment: 'select',
+      ),
+    'manual-hold'
+        when const {
+          'todo',
+          'doing',
+          'review',
+          'rework',
+        }.contains(task.status) =>
+      WorkflowSheetRoute(
+        id: id,
+        from: task.status,
+        to: 'hold',
+        name: '보류',
+        operation: 'move',
+        assignment: 'keep',
+        commentRequired: true,
+      ),
+    'manual-resume' when task.status == 'hold' => WorkflowSheetRoute(
       id: id,
       from: task.status,
-      to: task.status,
-      name: '담당자에게 전달',
-      operation: 'handoff',
-      assignment: 'select',
+      to: task.pausedFrom.isEmpty ? 'todo' : task.pausedFrom,
+      name: '작업 재개',
+      operation: 'move',
+      assignment: 'keep',
+    ),
+    'manual-drop'
+        when const {
+          'todo',
+          'doing',
+          'review',
+          'rework',
+          'hold',
+        }.contains(task.status) =>
+      WorkflowSheetRoute(
+        id: id,
+        from: task.status,
+        to: 'drop',
+        name: '드랍',
+        operation: 'move',
+        assignment: 'keep',
+        commentRequired: true,
+      ),
+    'manual-restore' when task.status == 'drop' => WorkflowSheetRoute(
+      id: id,
+      from: task.status,
+      to: 'todo',
+      name: '복원',
+      operation: 'move',
+      assignment: 'keep',
     ),
     _ => null,
   };
@@ -257,6 +320,7 @@ WorkTask applyDirectWorkflowRoute(
   String reason = '',
   String? completionDate,
   bool? lockOnHandoff,
+  String? at,
 }) {
   if (!hasTaskLockAccess(
         project.people.firstWhere((p) => p.id == actorId),
@@ -281,8 +345,11 @@ WorkTask applyDirectWorkflowRoute(
       route.id == 'manual-return' &&
           purpose.isNotEmpty &&
           purpose != 'revision' ||
-      !transfer && purpose.isNotEmpty && purpose != task.workflowPurpose) {
-    throw StateError('전달 동작과 처리 목적을 확인하세요.');
+      !transfer &&
+          purpose.isNotEmpty &&
+          purpose != task.workflowPurpose &&
+          !(route.id == 'manual-review' && purpose == 'review')) {
+    throw StateError('전달 방식과 요청 유형을 확인하세요.');
   }
   final target = transfer
       ? receiverGroup
@@ -295,13 +362,31 @@ WorkTask applyDirectWorkflowRoute(
       ? task.currentId
       : task.workflowPerson;
   final intent = transfer
-      ? (purpose.isEmpty ? workflowTaskPurpose(task, project) : purpose)
+      ? (purpose.isEmpty ? 'work' : purpose)
+      : route.id == 'manual-review'
+      ? 'review'
       : task.workflowPurpose;
   final transferLocked = transfer && (lockOnHandoff ?? task.isLocked);
   if (transferLocked && receiverPerson.isEmpty) {
     throw StateError('잠근 채 전달하려면 특정 담당자 한 명을 선택하세요.');
   }
+  final stamp = at ?? task.data['updatedAt'] as String;
   return task.copy({
+    'pausedFrom': route.id == 'manual-hold'
+        ? task.status
+        : route.to == 'hold'
+        ? task.pausedFrom
+        : '',
+    'transitionHistory': appendTaskTransition(
+      task,
+      route,
+      actorId: actorId,
+      person: person,
+      group: target,
+      purpose: intent,
+      at: stamp,
+      comment: reason,
+    ),
     'lockedBy': transfer
         ? (transferLocked ? receiverPerson : '')
         : task.lockedBy,
@@ -362,9 +447,7 @@ void validateWorkflowRouteInputs(
   String comment = '',
 }) {
   if (route.requiresComment && comment.trim().isEmpty) {
-    throw StateError(
-      route.action == 'reject' ? '반려 코멘트를 입력하세요.' : '전환 코멘트를 입력하세요.',
-    );
+    throw StateError(route.action == 'reject' ? '반려 사유를 입력하세요.' : '댓글을 입력하세요.');
   }
   for (final field in route.requiredFields) {
     if ((task.data[field] as String).trim().isEmpty) {
@@ -510,6 +593,8 @@ void validatePartWorkflowMutation({
   required ProjectManifest project,
   bool allowCollapsedTransitions = false,
 }) {
+  validateTaskProvenance(actor, next, current);
+  validateResourceMutation(actor, next, current, project);
   if (validatePinMutation(
     actor: actor,
     next: next,
@@ -571,8 +656,12 @@ void validatePartWorkflowMutation({
   }
   if (current == null) {
     if (next.comments.isNotEmpty ||
-        next.isLocked && next.lockedBy != actor.id) {
-      throw StateError('새 작업은 작성자 본인만 잠글 수 있습니다. 코멘트는 등록 후 추가하세요.');
+        next.transitionHistory.isNotEmpty ||
+        next.pausedFrom.isNotEmpty ||
+        next.isLocked &&
+            next.lockedBy != actor.id &&
+            next.lockedBy != next.assigneeId) {
+      throw StateError('새 작업은 작성자나 지정 작업자로 잠그세요. 기록은 등록 후 추가합니다.');
     }
     final initial = project.initialStatusId;
     if (initial == null ||
@@ -585,11 +674,9 @@ void validatePartWorkflowMutation({
       'completedDate': '',
       'reworkReason': '',
       'workflowTarget': '',
-      'workflowPerson': workflowInitialPerson(
-        project,
-        initial,
-        next.assigneeId,
-      ),
+      'workflowPerson': next.creatorId.isNotEmpty
+          ? next.assigneeId
+          : workflowInitialPerson(project, initial, next.assigneeId),
       'workflowRoute': '',
       'workflowPurpose': '',
       'workflowSender': '',
@@ -633,6 +720,7 @@ void validatePartWorkflowMutation({
   final contentChanged = [
     'title',
     'description',
+    'resources',
   ].any((f) => current.data[f] != next.data[f]);
   final legacyRegistrationChanged =
       current.assigneeId != next.assigneeId ||
@@ -666,18 +754,25 @@ void validatePartWorkflowMutation({
       receiverGroup: next.workflowTarget,
       receiverPerson: next.workflowPerson,
       purpose: route.assignment == 'select' ? next.workflowPurpose : '',
-      reason: next.reworkReason,
+      reason: next.transitionHistory.isEmpty
+          ? next.reworkReason
+          : next.transitionHistory.last['comment'] as String,
       completionDate: next.completedDate,
       lockOnHandoff: next.isLocked,
+      at: next.data['updatedAt'],
     );
     if (!fields.every((f) => expected.data[f] == next.data[f])) {
       throw StateError('담당자 전달과 내용 수정은 각각 저장하고 전달자를 확인하세요.');
     }
     return;
   }
+  if (current.data['transitionHistory'] != next.data['transitionHistory'] ||
+      current.pausedFrom != next.pausedFrom) {
+    throw StateError('전달 기록과 보류 상태는 확인된 채널 이동으로만 변경할 수 있습니다.');
+  }
   if (current.lockedBy != next.lockedBy ||
       current.data['comments'] != next.data['comments']) {
-    throw StateError('잠금과 코멘트는 별도 변경으로 저장하세요.');
+    throw StateError('잠금 변경과 댓글 등록은 각각 저장하세요.');
   }
   if (owner &&
       next.workflowRoute == 'admin-recovery' &&
@@ -697,7 +792,7 @@ void validatePartWorkflowMutation({
     }
     if (next.workflowPurpose != current.workflowPurpose &&
         !collapsedManagement) {
-      throw StateError('관리자 회수는 처리 목적을 변경할 수 없습니다.');
+      throw StateError('관리자 회수 시에는 요청 유형을 변경할 수 없습니다.');
     }
     if (next.workflowSender != current.workflowSender && !collapsedManagement) {
       throw StateError('관리자 회수는 직전 전달자를 변경할 수 없습니다.');
@@ -761,7 +856,7 @@ void validatePartWorkflowMutation({
           expected.reworkReason == next.reworkReason) {
         return;
       }
-      throw StateError('현재 전환의 처리 목적과 전달 대상을 확인하세요.');
+      throw StateError('요청 유형과 전달 대상을 확인하세요.');
     }
   }
   if (current.status == next.status &&
@@ -784,7 +879,12 @@ void validatePartWorkflowMutation({
   final canRecover =
       collapsedManagement &&
       project.people.any((p) => p.id == next.assigneeId && p.active);
-  const mutableFields = ['title', 'description', ...assignmentFields];
+  const mutableFields = [
+    'title',
+    'description',
+    'resources',
+    ...assignmentFields,
+  ];
   final visited = <String>{};
   while (queue.isNotEmpty) {
     final (state, count, couldEdit, rejected, couldReassign) = queue
@@ -925,7 +1025,7 @@ void validatePartWorkflowMutation({
       ));
     }
   }
-  throw StateError('현재 처리 대상과 자동화 경로에 허용되지 않은 작업 변경입니다.');
+  throw StateError('현재 담당자와 작업 상태에서는 이 변경을 저장할 수 없습니다.');
 }
 
 bool canArchiveTask(Person actor, WorkTask task, {ProjectManifest? project}) {
@@ -1039,7 +1139,7 @@ bool validateLockOrCommentMutation({
       fields
           .where((f) => f != (lockChanged ? 'lockedBy' : 'comments'))
           .any((f) => current.data[f] != next.data[f])) {
-    throw StateError('잠금과 코멘트는 활성 참여자가 최신 작업에서 별도로 저장하세요.');
+    throw StateError('잠금 변경과 댓글 등록은 최신 작업에서 각각 저장하세요.');
   }
   if (lockChanged) {
     if (!hasTaskLockAccess(actor, current) ||
@@ -1055,14 +1155,19 @@ bool validateLockOrCommentMutation({
     if (added.isEmpty ||
         added.length >
             (allowCollapsedTransitions ? next.version - current.version : 1) ||
-        added.any((c) => c['authorId'] != actor.id) ||
+        added.any(
+          (c) =>
+              c['authorId'] != actor.id ||
+              c.containsKey('context') &&
+                  c['context'] != (current.status == 'review' ? 'review' : ''),
+        ) ||
         next.comments.length != previous.length + added.length ||
         next.comments.any(
           (c) =>
               previous.containsKey(c['id']) &&
               c.keys.any((k) => previous[c['id']]![k] != c[k]),
         )) {
-      throw StateError('코멘트는 본인 이름으로 하나씩 추가하며 기존 내용은 변경할 수 없습니다.');
+      throw StateError('댓글은 본인 이름으로 등록해야 합니다. 기존 댓글은 변경할 수 없습니다.');
     }
   }
   return true;

@@ -444,7 +444,7 @@ void main() {
       );
       await tester.tap(find.byKey(const Key('save-member')));
       await tester.pumpAndSettle();
-      expect(find.textContaining('배정 파트: 기획 → 기획, QA'), findsOneWidget);
+      expect(find.textContaining('소속 파트: 기획 → 기획, QA'), findsOneWidget);
       await tester.tap(find.widgetWithText(TextButton, '취소').last);
       await tester.pumpAndSettle();
       expect(store.member('gh-2').parts, ['기획']);

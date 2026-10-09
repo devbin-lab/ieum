@@ -80,17 +80,74 @@ void main() {
           false,
           expectedVersion: task.version,
         );
+        store.transition(
+          task.id,
+          'doing',
+          routeId: 'manual-start',
+          expectedVersion: task.version,
+        );
+        task = store.find(task.id);
         final recipient = actor.id == owner.id ? worker : owner;
         final plan = store
             .planHandoff(
               task,
-              task.status,
+              'todo',
               routeId: 'manual-handoff',
               receiverPerson: recipient.id,
             )
             .withLock(false);
         store.confirmHandoff(plan);
         task = store.find(task.id);
+        store.transition(
+          task.id,
+          'doing',
+          routeId: 'manual-start',
+          expectedVersion: task.version,
+        );
+        task = store.find(task.id);
+        store.transition(
+          task.id,
+          'review',
+          routeId: 'manual-review',
+          expectedVersion: task.version,
+        );
+        task = store.find(task.id);
+        store.transition(
+          task.id,
+          'hold',
+          routeId: 'manual-hold',
+          reason: 'Release hold check',
+          expectedVersion: task.version,
+        );
+        task = store.find(task.id);
+        store.transition(
+          task.id,
+          'review',
+          routeId: 'manual-resume',
+          expectedVersion: task.version,
+        );
+        task = store.find(task.id);
+        store.transition(
+          task.id,
+          'drop',
+          routeId: 'manual-drop',
+          reason: 'Release drop check',
+          expectedVersion: task.version,
+        );
+        task = store.find(task.id);
+        store.transition(
+          task.id,
+          'todo',
+          routeId: 'manual-restore',
+          expectedVersion: task.version,
+        );
+        task = store.find(task.id);
+        if (task.creatorId != actor.id ||
+            task.initialAssigneeId != worker.id ||
+            task.transitionHistory.length != 8 ||
+            task.pausedFrom.isNotEmpty) {
+          throw StateError('Six-channel history check failed');
+        }
         store.deleteTask(task.id, expectedVersion: task.version);
       }
       store.dispose();

@@ -3,8 +3,13 @@ import 'dart:convert';
 
 import 'workflow_sheet_model.dart';
 export 'workflow_sheet_model.dart';
+import 'task_resources_model.dart';
+export 'task_resources_model.dart';
+import 'project_shortcut_model.dart';
+export 'project_shortcut_model.dart';
 
 part 'workflow_engine.dart';
+part 'task_lifecycle.dart';
 
 const fields = [
   'title',
@@ -17,6 +22,7 @@ const fields = [
   'dueDate',
   'completedDate',
   'description',
+  'resources',
   'reworkReason',
   'workflowTarget',
   'workflowPerson',
@@ -28,6 +34,11 @@ const fields = [
   'lockedBy',
   'comments',
   'pinned',
+  'creatorId',
+  'initialAssigneeId',
+  'createdAt',
+  'pausedFrom',
+  'transitionHistory',
 ];
 const fieldLabels = {
   'title': '작업내용',
@@ -40,6 +51,7 @@ const fieldLabels = {
   'dueDate': '마감일',
   'completedDate': '완료일',
   'description': '설명',
+  'resources': '자료',
   'reworkReason': '최근 전환 코멘트',
   'workflowTarget': '현재 처리 파트',
   'workflowPerson': '현재 처리 작업자',
@@ -51,6 +63,11 @@ const fieldLabels = {
   'lockedBy': '잠금 담당자',
   'comments': '코멘트',
   'pinned': '상단 고정',
+  'creatorId': '최초 작성자',
+  'initialAssigneeId': '최초 담당자',
+  'createdAt': '등록 시각',
+  'pausedFrom': '보류 전 상태',
+  'transitionHistory': '전달·검토 기록',
 };
 const statuses = {
   'todo': '할 일',
@@ -58,13 +75,18 @@ const statuses = {
   'review': '검토',
   'rework': '재작업',
   'done': '완료',
+  'hold': '보류',
+  'drop': '드랍',
 };
 const defaultWorkflowStages = [
   WorkflowStage('todo', '확인중'),
   WorkflowStage('doing', '진행중'),
+  WorkflowStage('review', '검토중', editPolicy: 'recipients'),
   WorkflowStage('done', '완료'),
+  WorkflowStage('hold', '보류', editPolicy: 'locked'),
+  WorkflowStage('drop', '드랍', editPolicy: 'locked'),
 ];
-const workflowPurposeLabels = {'work': '작성', 'review': '검토', 'revision': '수정'};
+const workflowPurposeLabels = {'work': '작업', 'review': '검토', 'revision': '수정'};
 const maxWorkflowStages = 34;
 
 String? workflowInitialStatus(Iterable<String> stages) =>
@@ -112,7 +134,14 @@ class WorkflowStage {
     final id = raw['id'];
     final name = raw['name'];
     if (id is! String ||
-        !(const {'todo', 'doing', 'review', 'done'}.contains(id) ||
+        !(const {
+              'todo',
+              'doing',
+              'review',
+              'done',
+              'hold',
+              'drop',
+            }.contains(id) ||
             RegExp(r'^stage-[a-zA-Z0-9_-]{1,70}$').hasMatch(id)) ||
         name is! String ||
         name.trim().isEmpty ||
@@ -659,6 +688,8 @@ class ProjectManifest {
   final List<ProjectRole> roles;
   final List<String> parts;
   final bool unifiedParts;
+  final int attachmentLimitMb;
+  final List<ProjectShortcut>? shortcuts;
   final WorkflowSheet? workflowSheet;
   final List<WorkflowStage> workflowStages;
   final WorkflowAutomation workflowAutomation;
@@ -691,10 +722,13 @@ class ProjectManifest {
         parts: parts,
         unifiedParts: unifiedParts,
         founderId: founderId,
+        attachmentLimitMb: attachmentLimitMb,
+        shortcuts: shortcuts,
         workflowStages: defaultWorkflowStages,
         workflowSheet: WorkflowSheet(
-          nodes: WorkflowSheet.defaultFor(const ['todo', 'doing', 'done'])
-              .nodes,
+          nodes: WorkflowSheet.defaultFor(
+            defaultWorkflowStages.map((s) => s.id).toList(),
+          ).nodes,
           routes: const [],
         ),
       );
@@ -748,9 +782,13 @@ class ProjectManifest {
       parts: definitions.map((r) => r.name).toList(),
       unifiedParts: true,
       founderId: founderId,
+      attachmentLimitMb: attachmentLimitMb,
+      shortcuts: shortcuts,
       workflowStages: defaultWorkflowStages,
       workflowSheet: WorkflowSheet(
-        nodes: WorkflowSheet.defaultFor(const ['todo', 'doing', 'done']).nodes,
+        nodes: WorkflowSheet.defaultFor(
+          defaultWorkflowStages.map((s) => s.id).toList(),
+        ).nodes,
         routes: const [],
       ),
     );
@@ -831,6 +869,8 @@ class ProjectManifest {
       parts: names,
       unifiedParts: true,
       founderId: founderId,
+      attachmentLimitMb: attachmentLimitMb,
+      shortcuts: shortcuts,
       workflowStages: workflowStages,
       workflowAutomation: workflowAutomation,
     );
@@ -863,6 +903,8 @@ class ProjectManifest {
     this.roles = const [],
     this.parts = const [],
     this.unifiedParts = false,
+    this.attachmentLimitMb = defaultAttachmentLimitMb,
+    this.shortcuts,
     this.workflowSheet,
     this.workflowStages = defaultWorkflowStages,
     this.workflowAutomation = const WorkflowAutomation(),
@@ -876,6 +918,10 @@ class ProjectManifest {
     'founderId': founderId,
     'members': people.map((p) => p.json).toList(),
     'parts': parts,
+    if (shortcuts != null)
+      'shortcuts': shortcuts!.map((shortcut) => shortcut.json).toList(),
+    if (attachmentLimitMb != defaultAttachmentLimitMb)
+      'attachmentLimitMb': attachmentLimitMb,
     if (unifiedParts) 'partsUnified': true,
     if (workflowSheet != null) 'workflowSheet': workflowSheet!.json,
     if (roles.isNotEmpty) 'roles': roles.map((r) => r.json).toList(),
@@ -886,6 +932,14 @@ class ProjectManifest {
     'workflowAutomation': workflowAutomation.json,
   };
   factory ProjectManifest.fromJson(Map<String, dynamic> raw) {
+    final shortcuts = readProjectShortcuts(raw['shortcuts']);
+    final attachmentLimit =
+        raw['attachmentLimitMb'] ?? defaultAttachmentLimitMb;
+    if (attachmentLimit is! int ||
+        attachmentLimit < 1 ||
+        attachmentLimit > maxAttachmentLimitMb) {
+      throw StateError('첨부 파일 한도는 1~50MB로 설정하세요.');
+    }
     if (raw['schemaVersion'] != 1 ||
         raw['projectId'] is! String ||
         !RegExp(r'^[a-zA-Z0-9_-]{1,80}$').hasMatch(raw['projectId']) ||
@@ -1022,6 +1076,8 @@ class ProjectManifest {
       raw['ownerId'],
       List.unmodifiable(people),
       founderId: raw['founderId'] ?? raw['ownerId'],
+      attachmentLimitMb: attachmentLimit,
+      shortcuts: shortcuts,
       roles: List.unmodifiable(roles),
       parts: List.unmodifiable(partValues.cast<String>()),
       unifiedParts: raw['partsUnified'] == true,
@@ -1105,7 +1161,13 @@ class WorkTask {
       'deletedAt': '',
       'lockedBy': '',
       'comments': '[]',
+      'resources': '[]',
       'pinned': '',
+      'creatorId': '',
+      'initialAssigneeId': '',
+      'createdAt': '',
+      'pausedFrom': '',
+      'transitionHistory': '[]',
       ...raw,
     };
     for (final f in ['id', ...fields]) {
@@ -1156,6 +1218,23 @@ class WorkTask {
       throw StateError('상단 고정 상태를 확인하세요.');
     }
     parseTaskComments(t['comments']);
+    parseTaskResources(t['resources']);
+    for (final f in const ['creatorId', 'initialAssigneeId']) {
+      if (t[f] != '' && !RegExp(r'^[A-Za-z0-9_-]{1,80}$').hasMatch(t[f])) {
+        throw StateError('최초 작업 정보의 담당자 형식을 확인하세요.');
+      }
+    }
+    if (!const {
+          '',
+          'todo',
+          'doing',
+          'review',
+          'rework',
+        }.contains(t['pausedFrom']) ||
+        t['status'] != 'hold' && t['pausedFrom'] != '') {
+      throw StateError('보류 전 상태를 확인하세요.');
+    }
+    parseTaskTransitions(t['transitionHistory']);
     t['assignedDate'] = validDate(t['assignedDate'], '작업 지정일', required: true);
     t['dueDate'] = validDate(t['dueDate'], '마감일');
     t['completedDate'] = validDate(t['completedDate'], '완료일');
@@ -1178,7 +1257,7 @@ class WorkTask {
         DateTime.tryParse(t['updatedAt']) == null) {
       throw StateError('수정 시각이 올바르지 않습니다.');
     }
-    for (final field in ['archivedAt', 'deletedAt']) {
+    for (final field in ['archivedAt', 'deletedAt', 'createdAt']) {
       final archivedAt = t[field] as String;
       if (archivedAt.isNotEmpty &&
           (archivedAt.length > 40 ||
@@ -1193,12 +1272,21 @@ class WorkTask {
     return WorkTask._(t);
   }
   String get id => data['id'];
+  List<TaskResource> get resources => parseTaskResources(data['resources']);
   String get title => data['title'];
   String get part => data['part'];
   String get status => data['status'];
   String get priority => data['priority'];
   String get assigneeId => data['assigneeId'];
   String get reviewerId => data['reviewerId'];
+  String get creatorId => data['creatorId'];
+  String get initialAssigneeId => data['initialAssigneeId'];
+  String get createdAt => data['createdAt'];
+  String get pausedFrom => data['pausedFrom'];
+  List<Map<String, dynamic>> get transitionHistory =>
+      parseTaskTransitions(data['transitionHistory']);
+  bool get isPaused => status == 'hold';
+  bool get isDropped => status == 'drop';
   String get workflowTarget => data['workflowTarget'];
   String get workflowPerson => data['workflowPerson'];
   String get workflowRoute => data['workflowRoute'];
@@ -1315,7 +1403,7 @@ bool canTransitionTask(
   if (workflowProject?.workflowSheet != null) {
     if (actor.active &&
         workflowProject!.people.any((p) => p.id == actor.id && p.active) &&
-        const ['manual-start', 'manual-finish'].any(
+        directActionRouteIds.any(
           (id) => directWorkflowRoute(task, workflowProject!, id)?.to == status,
         )) {
       return true;
@@ -1474,6 +1562,8 @@ void validateTaskMutation({
     }
     return;
   }
+  validateTaskProvenance(actor, next, current);
+  validateResourceMutation(actor, next, current, workflowProject);
   if (validatePinMutation(
     actor: actor,
     next: next,
@@ -1584,6 +1674,7 @@ void validateTaskMutation({
   final contentChanged = [
     'title',
     'description',
+    'resources',
   ].any((key) => current.data[key] != next.data[key]);
   final reasonChanged = current.reworkReason != next.reworkReason;
   // Track whether an authorized path contains an editable state / a rejection.
@@ -1737,7 +1828,19 @@ List<Map<String, dynamic>> parseTaskComments(String raw) {
   final result = <Map<String, dynamic>>[];
   for (final entry in value) {
     if (entry is! Map ||
-        entry.length != 4 ||
+        entry.length < 4 ||
+        entry.length > 5 ||
+        entry.keys.any(
+          (k) => !const {
+            'id',
+            'authorId',
+            'text',
+            'createdAt',
+            'context',
+          }.contains(k),
+        ) ||
+        entry.containsKey('context') &&
+            !const {'', 'review'}.contains(entry['context']) ||
         entry['id'] is! String ||
         !RegExp(r'^[a-zA-Z0-9_-]{1,80}$').hasMatch(entry['id']) ||
         !ids.add(entry['id']) ||

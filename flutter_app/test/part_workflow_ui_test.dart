@@ -108,6 +108,9 @@ void main() {
       expect(find.byKey(const Key('copy-system-role-owner')), findsNothing);
       expect(find.byKey(const Key('delete-role-owner')), findsNothing);
       expect(find.textContaining('잘못 전달된 작업을 회수'), findsOneWidget);
+      await tester.ensureVisible(find.byKey(Key('select-role-${saved.id}')));
+      await tester.tap(find.byKey(Key('select-role-${saved.id}')));
+      await tester.pumpAndSettle();
       await tester.ensureVisible(find.byKey(Key('delete-role-${saved.id}')));
       await tester.tap(find.byKey(Key('delete-role-${saved.id}')));
       await tester.pumpAndSettle();

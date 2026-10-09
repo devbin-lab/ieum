@@ -61,6 +61,7 @@ struct RequestData {
   std::wstring host, path, method, headers;
   std::vector<uint8_t> body;
   size_t limit = 0;
+  bool file_transfer = false;
 };
 struct Reply {
   DWORD error = 0;
@@ -98,13 +99,18 @@ bool Parse(const Value* argument, RequestData& data) {
   if (data.method != L"GET" && data.method != L"POST" && data.method != L"PUT" &&
       data.method != L"PATCH" && data.method != L"DELETE" && data.method != L"HEAD") return false;
   if (oauth && data.method != L"POST") return false;
+  const bool blob_download = data.method == L"GET" &&
+      path.find(L"/git/blobs/") != std::wstring::npos;
+  const bool blob_upload = data.method == L"POST" &&
+      path.size() >= 10 && path.substr(path.size() - 10) == L"/git/blobs";
+  data.file_transfer = blob_download || blob_upload;
   const auto* size_value = Field(*map, "maxBytes");
   const auto* size = size_value ? std::get_if<int32_t>(size_value) : nullptr;
-  if (!size || *size < 1 || *size > (oauth ? 65536 : 32 * 1024 * 1024)) return false;
+  if (!size || *size < 1 || *size > (oauth ? 65536 : (blob_download ? 50 : 32) * 1024 * 1024)) return false;
   data.limit = static_cast<size_t>(*size);
   const auto* body_value = Field(*map, "body");
   const auto* body = body_value ? std::get_if<std::vector<uint8_t>>(body_value) : nullptr;
-  if (!body || body->size() > (oauth ? 65536 : 16 * 1024 * 1024)) return false;
+  if (!body || body->size() > (oauth ? 65536 : (blob_upload ? 70 : 16) * 1024 * 1024)) return false;
   data.body = *body;
   const auto* headers_value = Field(*map, "headers");
   const auto* headers = headers_value ? std::get_if<Map>(headers_value) : nullptr;
@@ -152,6 +158,8 @@ Reply Send(const RequestData& data, const Session& session) {
   Handle request(WinHttpOpenRequest(connection.value, data.method.c_str(), data.path.c_str(),
       nullptr, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE));
   if (!request.value) return failure();
+  const int transfer_timeout = data.file_transfer ? 180000 : 30000;
+  if (!WinHttpSetTimeouts(request.value, 10000, 15000, transfer_timeout, transfer_timeout)) return failure();
   DWORD redirect = WINHTTP_OPTION_REDIRECT_POLICY_NEVER;
   if (!WinHttpSetOption(request.value, WINHTTP_OPTION_REDIRECT_POLICY, &redirect, sizeof(redirect))) return failure();
   DWORD disable = WINHTTP_DISABLE_COOKIES;
@@ -171,7 +179,8 @@ Reply Send(const RequestData& data, const Session& session) {
       reply.headers[Value(Utf8(name))] = Value(Utf8(value));
     }
   }
-  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+  const auto deadline = std::chrono::steady_clock::now() +
+      std::chrono::seconds(data.file_transfer ? 300 : 60);
   while (true) {
     if (std::chrono::steady_clock::now() > deadline) { reply.error = ERROR_WINHTTP_TIMEOUT; return reply; }
     uint8_t buffer[8192];

@@ -1,0 +1,10 @@
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <!-- Adapted from the AISO icon; the two gray indicators are removed. -->
+  <rect width="512" height="512" rx="72" fill="none"/>
+  <g fill="#ffffff">
+    <rect x="74" y="55" width="108" height="280" rx="28"/>
+    <rect x="212" y="55" width="104" height="402" rx="28"/>
+    <rect x="354" y="55" width="104" height="402" rx="28"/>
+  </g>
+  <circle cx="128" cy="408" r="36" fill="#f16522"/>
+</svg>

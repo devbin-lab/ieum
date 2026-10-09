@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="ko"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>이음 UI 재설계 — 탭별 레퍼런스와 적용 기준</title>
+<style>
+:root{--ink:#302b3c;--muted:#74717d;--line:#e4e6ea;--accent:#7963d5;--subtle:#f4f5f7}*{box-sizing:border-box}body{margin:0;background:#fafbfc;color:var(--ink);font:14px/1.8 "Malgun Gothic",sans-serif}main{max-width:1120px;margin:auto;padding:48px 24px 80px}h1{font-size:30px;line-height:1.5;margin:8px 0 12px}h2{font-size:21px;margin:40px 0 16px}h3{font-size:15px;margin:0 0 8px}p{margin:8px 0;color:var(--muted)}a{color:#6552bc;text-underline-offset:3px}.eyebrow{font-size:12px;color:var(--muted)}.panel{border:1px solid var(--line);border-radius:10px;background:white;padding:24px;margin:16px 0}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}.grid .panel{margin:0}table{width:100%;border-collapse:collapse;font-size:13px}th,td{text-align:left;vertical-align:top;padding:16px;border-bottom:1px solid var(--line)}th{background:var(--subtle);font-weight:600}td:first-child{width:120px;font-weight:600}small{color:var(--muted)}.layout{display:grid;grid-template-columns:52px 170px 1fr;border:1px solid var(--line);border-radius:16px;overflow:hidden;margin:24px 0}.chrome{grid-column:1/-1;background:#e6e8e7;padding:8px 16px;font-size:11px}.rail{background:#e6e8e7;padding:16px 8px}.nav{background:white;border-right:1px solid var(--line);padding:16px}.view{background:white;padding:20px}.header{display:flex;justify-content:space-between;gap:12px;padding-bottom:16px;border-bottom:1px solid var(--line)}.button{background:var(--accent);color:white;border-radius:6px;padding:5px 14px;font-size:12px}.filters{padding:10px 0;color:var(--muted);font-size:12px;border-bottom:1px solid var(--line)}.board{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:16px}.column{border-radius:10px;padding:12px;background:#f1f3f5;min-height:180px;font-size:12px}.column:nth-child(2){background:#edf4ff}.column:nth-child(3){background:#fff1e5}.card{background:white;border:1px solid var(--line);border-radius:9px;padding:12px;margin-top:12px}ul{padding-left:20px;color:var(--muted)}.note{border-left:3px solid var(--accent);padding:12px 16px;background:var(--subtle)}@media(max-width:700px){main{padding:24px 16px}.grid{grid-template-columns:1fr}.layout{grid-template-columns:40px 100px 1fr}.board{grid-template-columns:1fr}table{font-size:12px}th,td{padding:10px}.header{display:block}.button{display:inline-block;margin-top:8px}}
+</style>
+<main>
+<div class="eyebrow">이음 · 2026-10-08 · 공식 제품 문서 기반</div>
+<h1>탭마다 다른 화면을 하나의 작업 공간으로</h1>
+<p>색을 바꾸는 수준을 넘어 탐색, 보기 전환, 필터, 실행 동작의 위치를 통일했습니다. 아이콘바·타이틀바의 회색 배경과 메인뷰 외곽 16px 라운드는 기존 설정을 유지합니다.</p>
+<h2>현재 구성에서 해결한 문제</h2>
+<div class="grid">
+<div class="panel"><h3>정보보다 큰 장식</h3><p>작업 위의 큰 현황 카드들이 보드 공간을 차지했습니다. 상태별 수치를 한 줄 요약으로 바꾸고 작업 열을 화면 높이에 맞췄습니다.</p></div>
+<div class="panel"><h3>서로 다른 목적의 버튼 혼합</h3><p>탐색·필터·생성·상태 변경·삭제가 같은 강조 수준에 있었습니다. 범위 탭, 보기 선택, 필터, 주요 동작과 관리 메뉴를 분리했습니다.</p></div>
+<div class="panel"><h3>탭마다 다른 간격과 배치</h3><p>제목·본문·카드·입력 요소에 공통 컴포넌트와 간격 기준을 적용했습니다. 긴 목록은 각 콘텐츠 영역에서 스크롤합니다.</p></div>
+</div>
+<h2>탭별 레퍼런스와 재구성</h2>
+<div class="panel" style="padding:0;overflow:auto"><table>
+<thead><tr><th>탭</th><th>공식 참고 자료</th><th>관찰한 원칙</th><th>실제 반영</th></tr></thead>
+<tbody>
+<tr><td>작업 / 상세</td><td><a href="https://linear.app/docs/display-options">Linear Display options</a><br><a href="https://linear.app/docs/board-layout">Linear Board layout</a><br><a href="https://atlassian.design/components/button/">Atlassian Button</a></td><td>보기 전환은 일관된 위치, 상태 열 중심의 보드, 주요 버튼의 명확한 우선순위.</td><td>고정 헤더→범위 탭/보기→검색/필터→콤팩트 요약→열별 독립 스크롤. 상세는 주요 버튼 하나와 상태·관리 메뉴로 분리.</td></tr>
+<tr><td>일정</td><td><a href="https://support.atlassian.com/jira-software-cloud/docs/configure-your-calendar/">Jira Calendar</a><br><a href="https://support.atlassian.com/jira-software-cloud/docs/what-is-the-timeline-and-how-do-i-use-it/">Jira Timeline</a><br><a href="https://linear.app/docs/timeline">Linear Timeline</a></td><td>날짜 이동과 보기 전환을 그룹화. 기간과 상태를 일정의 기본 정보로 표현.</td><td>제목/등록→월 이동/오늘/보기→검색/필터. 달력 연속 기간바와 상태색 유지, 월별 목록 보기 추가. Linear는 프로젝트 단위이므로 조작 배치와 정보 위계만 참고.</td></tr>
+<tr><td>알림</td><td><a href="https://linear.app/docs/inbox">Linear Inbox</a></td><td>목록을 보면서 옆에서 상세를 확인하고 맥락을 유지.</td><td>헤더/필터 고정, 정확한 50:50 목록·상세, 독립 스크롤, 상세 상단 읽음 처리. 기본 안내 문구는 기존 요청대로 유지.</td></tr>
+<tr><td>연결</td><td><a href="https://linear.app/docs/github">Linear GitHub</a></td><td>연결 상태, 동기화 결과, 오류와 설정의 목적을 구분.</td><td>동기화/설정 헤더→저장소 요약→동기화 수치→오류→참여자 요약. 중복 상태 카드를 통합.</td></tr>
+<tr><td>참여자 / 파트</td><td><a href="https://linear.app/docs/members-roles">Linear Members and roles</a><br><a href="https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/managing-repository-settings/managing-teams-and-people-with-access-to-your-repository">GitHub Manage access</a></td><td>검색·필터와 목록 관리 동작을 구분. 선택한 항목의 설정을 상세에서 처리.</td><td>상단 검색/추가/새로고침→목록→선택 상세. 파트 수정·삭제는 해당 상세에 배치. 작업 권한을 다시 추가하지 않음.</td></tr>
+<tr><td>개인·프로젝트 설정</td><td><a href="https://linear.app/docs/workspaces">Linear Workspaces</a><br><a href="https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/managing-repository-settings/managing-teams-and-people-with-access-to-your-repository">GitHub Settings navigation</a></td><td>설정 범위를 명확히 하고 탐색과 상세 콘텐츠를 분리.</td><td>고정 설정 내비게이션→일관된 제목→최대폭을 제한한 본문. 계정/프로젝트 정보, 동기화 설정, 충돌, 변경 내역을 기능군으로 정리.</td></tr>
+</tbody></table></div>
+<h2>공통 배치 기준</h2>
+<p><a href="https://atlassian.design/foundations/spacing">Atlassian Spacing</a>의 간격 척도와 <a href="https://atlassian.design/foundations/typography">Typography</a>의 정보 위계를 참고했습니다. 아래 수치는 이음에 맞춰 선택한 값입니다.</p>
+<div class="grid">
+<div class="panel"><h3>간격</h3><p>페이지 24px · 좁은 창 16px<br>관련 요소 8~12px<br>기능군 16~24px</p></div>
+<div class="panel"><h3>글자</h3><p>페이지 제목 23px<br>본문 13px<br>보조 정보 11~12px</p></div>
+<div class="panel"><h3>표면과 강조</h3><p>중립 흰색/회색 표면<br>주요 동작에만 보라색 강조<br>상태 색과 위험 동작은 의미 유지</p></div>
+</div>
+<h2>작업 화면의 구조</h2>
+<div class="layout" aria-label="실제 적용한 정보 배치의 개념도">
+<div class="chrome">뒤로 · 앞으로 · 사이드바　　기존 회색 타이틀바</div>
+<div class="rail">홈<br><br>알림</div>
+<div class="nav">프로젝트<br><small>프로젝트 선택</small><hr>작업<br>일정<br>연결</div>
+<div class="view"><div class="header"><div><small>프로젝트 이름</small><h3>작업</h3></div><span class="button">+ 작업 등록</span></div><div class="filters">전체 작업 · 내 할 일 · 전달받은 작업 · 보관함　　목록 / 보드</div><div class="filters">검색　|　파트　|　상태　|　마감일　|　정렬</div><div class="board"><div class="column">확인중<div class="card">작업 제목<br><small>파트 · 목적<br>담당자 · 날짜</small></div></div><div class="column">진행중<div class="card">작업 제목<br><small>파트 · 목적<br>담당자 · 날짜</small></div></div><div class="column">검토중</div></div></div>
+</div>
+<div class="note">개념도는 배치 원칙을 설명합니다. 실제 앱에는 기존 요청의 확인중·진행중·검토중·완료·보류·드랍 6개 상태를 모두 유지합니다.</div>
+<h2>검증 범위</h2><p>정적 분석과 관련 테스트 67개를 통과했습니다. 탭 이동·필터·확인창·잠금·삭제를 검사하고 1440·1080·540·480px 창에서 격리된 화면을 렌더링해 배치를 확인했습니다. 실제 프로젝트 DB에 예시 데이터를 추가하지 않습니다. 실제 GitHub 서버와의 사용자 시나리오 검증은 포함하지 않습니다.</p>
+</main></html>

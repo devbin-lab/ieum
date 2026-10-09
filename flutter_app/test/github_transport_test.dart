@@ -3,6 +3,8 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ieum_flutter/github_sync.dart';
+import 'package:ieum_flutter/github_http.dart';
+import 'package:ieum_flutter/task_resources_model.dart';
 import 'package:ieum_flutter/project_service.dart';
 
 // Keep the actual Dart connection pool, redirecting only the destination to a
@@ -29,6 +31,53 @@ class LocalGitHubClient implements HttpClient {
 }
 
 void main() {
+  test('raw file transport accepts the 50 MB limit without enlarging JSON responses', () async {
+    final resource = TaskResource(
+      id: 'resource-transport',
+      name: 'report.md',
+      authorId: 'gh-1',
+      createdAt: '2026-10-08T01:00:00Z',
+      size: 50 * attachmentMegabyte,
+      sha256:
+          '0000000000000000000000000000000000000000000000000000000000000000',
+      blobSha: 'ce013625030ba8dba906f756967f9e9ca394464a',
+    );
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final accepts = <String?>[];
+    server.listen((request) async {
+      accepts.add(request.headers.value('accept'));
+      await request.drain<void>();
+      request.response.add(utf8.encode('hello\n'));
+      await request.response.close();
+    });
+    final api = HttpGitHubApi(
+      () async => 'test-token',
+      createClient: () => LocalGitHubClient(server.port),
+    );
+    final transport = GitHubHttpTransport(
+      createClient: () => LocalGitHubClient(server.port),
+    );
+    try {
+      expect(
+        utf8.decode(await api.resourceBlob('team/data', resource)),
+        'hello\n',
+      );
+      expect(accepts.single, 'application/vnd.github.raw+json');
+      await expectLater(
+        transport.send(
+          'GET',
+          Uri.https('api.github.com', '/user'),
+          headers: {},
+          maxBytes: 50 * attachmentMegabyte,
+        ),
+        throwsFormatException,
+      );
+    } finally {
+      api.close();
+      transport.close();
+      await server.close(force: true);
+    }
+  });
   test('403 rate limits allow cached recovery while permission denials remain blocked', () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     var mode = 0;

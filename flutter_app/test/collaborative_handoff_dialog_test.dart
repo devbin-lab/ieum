@@ -30,10 +30,10 @@ const _transfer = TaskHandoffPlan(
   version: 4,
   sourceId: 'doing',
   sourceName: '진행중',
-  destinationId: 'doing',
-  destinationName: '진행중',
+  destinationId: 'todo',
+  destinationName: '확인중',
   action: 'advance',
-  transitionName: '담당자에게 전달',
+  transitionName: '전달',
   routeId: 'manual-handoff',
   recipientLabel: '전달 대상을 선택하세요',
   editWarning: '',
@@ -50,23 +50,22 @@ const _transfer = TaskHandoffPlan(
   },
 );
 
-const _return = TaskHandoffPlan(
+const _hold = TaskHandoffPlan(
   taskId: 'planning-result',
   title: '기획 결과 전달',
   version: 5,
   sourceId: 'doing',
   sourceName: '진행중',
-  destinationId: 'doing',
-  destinationName: '진행중',
-  action: 'reject',
-  transitionName: '이전 담당자에게 반려',
-  routeId: 'manual-return',
-  recipientLabel: 'QA 담당자',
+  destinationId: 'hold',
+  destinationName: '보류',
+  action: 'advance',
+  transitionName: '보류',
+  routeId: 'manual-hold',
+  recipientLabel: '현재 담당자 유지',
   editWarning: '',
   workflowSnapshot: 'snapshot',
   actorId: 'pd',
-  receiverPerson: 'qa',
-  purpose: 'revision',
+  commentRequired: true,
 );
 
 Future<_Result> _open(
@@ -104,23 +103,30 @@ void main() {
   setUp(() => store = _ReviewStore());
   tearDown(() => store.dispose());
 
-  testWidgets('same-status transfer preserves selected purpose and recipient', (
+  testWidgets('transfer preserves selected request type and recipient', (
     tester,
   ) async {
     final result = await _open(tester, store);
-    expect(find.text('진행중 유지'), findsOneWidget);
-    expect(find.textContaining('다른 활성 참여자도'), findsOneWidget);
+    expect(find.text('진행중 → 확인중'), findsOneWidget);
+    expect(find.text('잠금 없이 전달하면 모든 참여자가 수정할 수 있습니다.'), findsOneWidget);
     final confirm = find.byKey(const Key('task-handoff-confirm'));
     expect(tester.widget<FilledButton>(confirm).onPressed, isNull);
 
+    await tester.ensureVisible(find.byKey(const Key('task-handoff-purpose')));
     await tester.tap(find.byKey(const Key('task-handoff-purpose')));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('option-review')));
     await tester.pumpAndSettle();
+    await tester.ensureVisible(
+      find.byKey(const Key('task-handoff-receiver-group')),
+    );
     await tester.tap(find.byKey(const Key('task-handoff-receiver-group')));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('option-part:pd')));
     await tester.pumpAndSettle();
+    await tester.ensureVisible(
+      find.byKey(const Key('task-handoff-receiver-person')),
+    );
     await tester.tap(find.byKey(const Key('task-handoff-receiver-person')));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('option-pd')));
@@ -132,20 +138,17 @@ void main() {
 
     final selected = result.confirmation!.plan;
     expect(selected.sourceId, 'doing');
-    expect(selected.destinationId, 'doing');
+    expect(selected.destinationId, 'todo');
     expect(selected.purpose, 'review');
     expect(selected.receiverGroup, 'part:pd');
     expect(selected.receiverPerson, 'pd');
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('return keeps status and needs a comment before confirmation', (
-    tester,
-  ) async {
-    final result = await _open(tester, store, plan: _return);
+  testWidgets('hold requires a reason before confirmation', (tester) async {
+    final result = await _open(tester, store, plan: _hold);
     final confirm = find.byKey(const Key('task-handoff-confirm'));
-    expect(find.text('진행중 유지'), findsOneWidget);
-    expect(find.text('처리 목적: 수정'), findsOneWidget);
+    expect(find.text('진행중 → 보류'), findsOneWidget);
     expect(find.byKey(const Key('task-handoff-purpose')), findsNothing);
     expect(tester.widget<FilledButton>(confirm).onPressed, isNull);
     await tester.sendKeyEvent(LogicalKeyboardKey.enter);
@@ -153,16 +156,15 @@ void main() {
     expect(result.confirmation, isNull);
     await tester.enterText(
       find.byKey(const Key('rework-reason')),
-      '  QA 보완이 필요합니다.  ',
+      '  외부 자료를 기다리고 있습니다.  ',
     );
     await tester.pumpAndSettle();
     expect(tester.widget<FilledButton>(confirm).onPressed, isNotNull);
     await tester.tap(confirm);
     await tester.pumpAndSettle();
-    expect(result.confirmation!.reason, 'QA 보완이 필요합니다.');
-    expect(result.confirmation!.plan.receiverPerson, 'qa');
-    expect(result.confirmation!.plan.destinationId, 'doing');
-    expect(result.confirmation!.plan.purpose, 'revision');
+    expect(result.confirmation!.reason, '외부 자료를 기다리고 있습니다.');
+    expect(result.confirmation!.plan.destinationId, 'hold');
+    expect(result.confirmation!.plan.requiresRecipient, isFalse);
     expect(tester.takeException(), isNull);
   });
 
@@ -228,7 +230,6 @@ void main() {
         ProjectRole('role-pd', 'PD', {}),
       ],
       unifiedParts: true,
-      workflowSheet: WorkflowSheet.defaultFor(['todo', 'doing', 'done']),
     );
     final collaborativeStore = TaskStore(
       ':memory:',
@@ -269,8 +270,9 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    expect(find.text('등록 담당자'), findsOneWidget);
-    expect(find.text('현재 담당자 · 담당 PD'), findsOneWidget);
+    expect(find.text('최초 담당자'), findsNothing);
+    expect(find.text('담당자'), findsOneWidget);
+    expect(find.text('담당 PD'), findsOneWidget);
     expect(find.byKey(const ValueKey('task-reviewer-gh-3')), findsNothing);
     TextField input(String key) => tester.widget<TextField>(
       find.descendant(

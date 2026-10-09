@@ -8,9 +8,11 @@ import 'package:uuid/uuid.dart';
 import 'store.dart';
 import 'models.dart';
 import 'github_http.dart';
+import 'task_resource_storage.dart';
 
 part 'github_auto_merge.dart';
 part 'sync_payload.dart';
+part 'github_resources.dart';
 
 /// Assignment availability is checked when assigning work, rather than acting
 /// as an edit lock when a previously assigned participant leaves the project.
@@ -133,6 +135,41 @@ class HttpGitHubApi implements GitHubApi {
   // Credentials are still retrieved and set separately for every request.
   void close() {
     _http.close();
+  }
+
+  Future<Uint8List> resourceBlob(
+    String repository,
+    TaskResource resource,
+  ) async {
+    final credential = await token();
+    if (credential.isEmpty) throw const GitHubFailure('GitHub 인증이 필요합니다.');
+    try {
+      final response = await _http.send(
+        'GET',
+        Uri.https(
+          'api.github.com',
+          '/repos/$repository/git/blobs/${resource.blobSha}',
+        ),
+        headers: {
+          'Authorization': 'Bearer $credential',
+          'Accept': 'application/vnd.github.raw+json',
+          'User-Agent': 'IEUM-Desktop',
+          'X-GitHub-Api-Version': '2022-11-28',
+        },
+        maxBytes: resource.size > 65536 ? resource.size : 65536,
+      );
+      if (response.status != 200) {
+        throw GitHubFailure(
+          '첨부 파일을 받지 못했습니다. 연결과 저장소 접근 권한을 확인하세요.',
+          response.status,
+        );
+      }
+      return response.bytes;
+    } on GitHubFailure {
+      rethrow;
+    } catch (error) {
+      throw GitHubFailure(githubNetworkMessage(error));
+    }
   }
 
   @override
@@ -393,6 +430,7 @@ class GitHubPublisher {
           throw const GitHubFailure('작업 담당자의 현재 참여 권한을 확인하세요.');
         }
       }
+      await validateResourceFiles(config, task, base);
     }
     final root = '/repos/${config.slug}';
     final taskId = job['taskId'] as String;
@@ -961,7 +999,12 @@ class GitHubPublisher {
 }
 
 class GitHubSync extends ChangeNotifier {
-  GitHubSync(this.store, {GitHubPublisher? publisher}) {
+  GitHubSync(
+    this.store, {
+    GitHubPublisher? publisher,
+    TaskResourceStorage? resourceStorage,
+  }) {
+    _resourceStorage = resourceStorage;
     if (publisher == null) {
       _ownedApi = HttpGitHubApi(_credential);
     }
@@ -970,6 +1013,9 @@ class GitHubSync extends ChangeNotifier {
   }
   final TaskStore store;
   late final GitHubPublisher publisher;
+  TaskResourceStorage? _resourceStorage;
+  TaskResourceStorage get resourceStorage =>
+      _resourceStorage ??= TaskResourceStorage.forDatabase(store.filename);
   HttpGitHubApi? _ownedApi;
   bool busy = false, pulling = false, _disposed = false;
   bool _paused = false, _cycling = false;
@@ -1394,6 +1440,7 @@ class GitHubSync extends ChangeNotifier {
               : GitHubConfig.fromJson(
                   Map<String, dynamic>.from(job['configuration'] as Map),
                 );
+          await uploadJobResources(original, job);
           final receipt = await publisher.publish(original, job);
           submitted = true;
           if (receipt.request != null) {
@@ -1411,6 +1458,7 @@ class GitHubSync extends ChangeNotifier {
           });
         } catch (e) {
           // Never expose credentials or subprocess output in persisted errors.
+          if (e is _SyncInterrupted || _disposed || _paused) break;
           final message = e is GitHubFailure
               ? e.message
               : '전송하지 못했습니다. 연결 설정을 확인하고 재시도하세요.';

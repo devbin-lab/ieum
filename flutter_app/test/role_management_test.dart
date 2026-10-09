@@ -510,7 +510,7 @@ void main() {
     expect(store.project!.roles, isEmpty);
     expect(store.people.single.role, 'owner');
     expect(find.byKey(const Key('delete-role-owner')), findsNothing);
-    expect(find.textContaining('잘못 전달된 작업을 회수'), findsOneWidget);
+    expect(find.textContaining('전달된 작업을 회수'), findsOneWidget);
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox.shrink());
   });
@@ -551,13 +551,17 @@ void main() {
     expect(find.byKey(const Key('add-role')), findsNothing);
     expect(
       tester
-          .widget<TextButton>(find.byKey(Key('edit-role-${sourceRole.id}')))
+          .widget<ButtonStyleButton>(
+            find.byKey(Key('edit-role-${sourceRole.id}')),
+          )
           .onPressed,
       isNull,
     );
     expect(
       tester
-          .widget<TextButton>(find.byKey(Key('delete-role-${sourceRole.id}')))
+          .widget<ButtonStyleButton>(
+            find.byKey(Key('delete-role-${sourceRole.id}')),
+          )
           .onPressed,
       isNull,
     );

@@ -39,13 +39,13 @@ void main() {
           }),
         ]);
       }
-      var settings = 0, workflow = 0, members = 0;
+      var settings = 0, members = 0;
       Widget view() => MaterialApp(
         home: Scaffold(
           body: ProjectConnectionsView(
             store: store,
             onOpenSettings: () => settings++,
-            onOpenWorkflow: () => workflow++,
+            onOpenWorkflow: () {},
             onOpenMembers: () => members++,
             automaticRoutes: 2,
           ),
@@ -57,24 +57,27 @@ void main() {
         find.text('team/a-project-with-a-long-repository-name'),
         findsOneWidget,
       );
-      expect(find.text('전송 완료 · 팀 반영 전'), findsOneWidget);
+      expect(find.text('반영 대기'), findsOneWidget);
       expect(find.text('아직 동기화 기록이 없습니다.'), findsOneWidget);
       expect(find.text('1'), findsNWidgets(4));
       expect(find.byKey(const Key('connections-sync-now')), findsNothing);
       expect(tester.takeException(), isNull);
       await tester.tap(find.byKey(const Key('connections-open-settings')));
       expect(settings, 1);
-      await tester.scrollUntilVisible(
-        find.byKey(const Key('connections-open-workflow')),
-        220,
+      expect(find.byKey(const Key('connections-open-workflow')), findsNothing);
+      final membersButton = find.byKey(const Key('connections-open-members'));
+      final contentScrollable = find.descendant(
+        of: find.byKey(const Key('connections-content')),
+        matching: find.byType(Scrollable),
       );
-      await tester.tap(find.byKey(const Key('connections-open-workflow')));
-      expect(workflow, 1);
       await tester.scrollUntilVisible(
-        find.byKey(const Key('connections-open-members')),
+        membersButton,
         220,
+        scrollable: contentScrollable,
       );
-      await tester.tap(find.byKey(const Key('connections-open-members')));
+      await tester.pumpAndSettle();
+      expect(membersButton.hitTestable(), findsOneWidget);
+      await tester.tap(membersButton);
       expect(members, 1);
       tester.view.physicalSize = const Size(300, 520);
       await tester.pumpAndSettle();
@@ -82,11 +85,11 @@ void main() {
       store.setMeta('github.config', '');
       await tester.pumpWidget(view());
       await tester.pumpAndSettle();
-      await tester.scrollUntilVisible(
-        find.byKey(const Key('connections-open-settings')),
-        -220,
+      expect(
+        find.byKey(const Key('connections-open-settings')).hitTestable(),
+        findsOneWidget,
       );
-      expect(find.text('연결 설정 열기'), findsOneWidget);
+      expect(find.text('저장소 연결'), findsOneWidget);
       expect(
         store.db
             .select('SELECT COUNT(*) AS count FROM github_queue')

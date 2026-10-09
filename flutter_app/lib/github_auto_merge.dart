@@ -115,6 +115,7 @@ extension AutoTaskIntegration on GitHubPublisher {
     } on StateError catch (e) {
       throw GitHubFailure(e.message.toString());
     }
+    await validateResourceFiles(config, task, current);
     for (final id in _changedTaskRecipientIds(task, current, manifest)) {
       if (!manifest.people.any((p) => p.id == id && p.active)) {
         throw const GitHubFailure('작업 담당자의 현재 참여 권한을 확인하세요.');

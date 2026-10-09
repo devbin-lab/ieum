@@ -69,11 +69,8 @@ void main() {
       await tester.tap(find.byKey(const Key('card-delete-task')));
       await tester.pumpAndSettle();
       final button = find.byKey(const Key('task-delete-delete-task'));
-      await tester.scrollUntilVisible(
-        button,
-        200,
-        scrollable: find.byType(Scrollable).last,
-      );
+      await tester.tap(find.byKey(const Key('task-more-delete-task')));
+      await tester.pumpAndSettle();
       await tester.tap(button);
       await tester.pumpAndSettle();
       expect(find.text('작업을 삭제할까요?'), findsOneWidget);
@@ -81,6 +78,8 @@ void main() {
       await tester.pumpAndSettle();
       expect(store.find('delete-task').version, 1);
       expect(store.changes, isEmpty);
+      await tester.tap(find.byKey(const Key('task-more-delete-task')));
+      await tester.pumpAndSettle();
       await tester.tap(button);
       await tester.pumpAndSettle();
       // The confirmation remains usable at the supported narrow window width.

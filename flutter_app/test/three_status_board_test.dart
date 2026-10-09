@@ -91,7 +91,7 @@ void main() {
   }
 
   testWidgets(
-    'three columns show recipient and purpose while my work follows the receiver',
+    'six columns show recipient and purpose while my work follows the receiver',
     (tester) async {
       final store = TaskStore(
         ':memory:',
@@ -111,10 +111,17 @@ void main() {
       );
       addTearDown(store.dispose);
       await mount(tester, store);
-      for (final status in ['todo', 'doing', 'done']) {
+      for (final status in [
+        'todo',
+        'doing',
+        'review',
+        'done',
+        'hold',
+        'drop',
+      ]) {
         expect(find.byKey(Key('column-$status')), findsOneWidget);
       }
-      expect(find.byKey(const Key('column-review')), findsNothing);
+      expect(find.byKey(const Key('column-review')), findsOneWidget);
       expect(find.byKey(const Key('card-received')), findsOneWidget);
       expect(find.byKey(const Key('card-other')), findsOneWidget);
       expect(find.byKey(const Key('task-purpose-received')), findsOneWidget);
@@ -140,7 +147,7 @@ void main() {
   );
 
   testWidgets(
-    'legacy review appears in progress without rewriting stored status',
+    'legacy review appears in review without rewriting stored status',
     (tester) async {
       final project = ProjectManifest.fromJson({
         ..._project.json,
@@ -174,12 +181,12 @@ void main() {
       await mount(tester, store);
       expect(
         find.descendant(
-          of: find.byKey(const Key('column-doing')),
+          of: find.byKey(const Key('column-review')),
           matching: find.byKey(const Key('card-legacy')),
         ),
         findsOneWidget,
       );
-      expect(find.byKey(const Key('column-review')), findsNothing);
+      expect(find.byKey(const Key('column-review')), findsOneWidget);
       expect(store.find('legacy').status, 'review');
       expect(store.find('legacy').workflowPurpose, '');
       expect(store.find('legacy').version, 1);
@@ -198,9 +205,14 @@ void main() {
       );
       addTearDown(store.dispose);
       await mount(tester, store);
+      await tester.ensureVisible(
+        find.byKey(
+          const Key('task-handoff-handoff-advance-todo-manual-handoff'),
+        ),
+      );
       await tester.tap(
         find.byKey(
-          const Key('task-handoff-handoff-advance-doing-manual-handoff'),
+          const Key('task-handoff-handoff-advance-todo-manual-handoff'),
         ),
       );
       await tester.pumpAndSettle();
@@ -219,7 +231,7 @@ void main() {
       await tester.tap(find.byKey(const Key('task-handoff-confirm')));
       await tester.pumpAndSettle();
       final delivered = store.find('handoff');
-      expect(delivered.status, 'doing');
+      expect(delivered.status, 'todo');
       expect(delivered.workflowTarget, 'part:role-pd');
       expect(delivered.workflowPerson, '');
       expect(delivered.workflowPurpose, 'work');

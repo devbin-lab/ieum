@@ -88,9 +88,7 @@ void main() {
     final store = storeFor(routeWorker);
     final task = store.save(draft());
     expect(store.project!.workflowSheet!.routes, isEmpty);
-    expect(store.availableTransfers(task).map((p) => p.routeId), [
-      'manual-handoff',
-    ]);
+    expect(store.availableTransfers(task), isEmpty);
     expect(
       () => store.transition(
         task.id,
@@ -188,7 +186,7 @@ void main() {
       task = store.find(task.id);
       final broad = store.planHandoff(
         task,
-        task.status,
+        'todo',
         routeId: 'manual-handoff',
         receiverGroup: 'part:role-pd',
       );
@@ -199,7 +197,7 @@ void main() {
       expect(plan.hasRecipientSelection, isTrue);
       store.confirmHandoff(plan, reason: '이어 작업해 주세요.');
       final received = store.find(task.id);
-      expect(received.status, 'doing');
+      expect(received.status, 'todo');
       expect(received.lockedBy, routeReviewer.id);
       expect(received.workflowPerson, routeReviewer.id);
       expect(store.canEdit(received), isFalse);
@@ -220,11 +218,13 @@ void main() {
 
   test('recipient may unlock or explicitly hand off without a lock', () {
     final store = storeFor(routeWorker);
-    final task = store.save({...draft(), 'lockedBy': routeWorker.id});
+    var task = store.save({...draft(), 'lockedBy': routeWorker.id});
+    store.transition(task.id, 'doing', expectedVersion: task.version);
+    task = store.find(task.id);
     final plan = store
         .planHandoff(
           task,
-          task.status,
+          'todo',
           routeId: 'manual-handoff',
           receiverGroup: 'part:role-pd',
         )
@@ -357,14 +357,16 @@ void main() {
       '다음 담당자에게 전달합니다.',
       expectedVersion: task.version,
     );
+    store.transition(task.id, 'doing', expectedVersion: task.version);
+    task = store.find(task.id);
     final plan = store.planHandoff(
       task,
-      task.status,
+      'todo',
       routeId: 'manual-handoff',
       receiverPerson: routeReviewer.id,
     );
     store.confirmHandoff(plan);
-    expect(parseWorkflowRevisions(store.changes.single['steps']), hasLength(5));
+    expect(parseWorkflowRevisions(store.changes.single['steps']), hasLength(6));
     final sync = GitHubSync(store, publisher: GitHubPublisher(api));
     addTearDown(sync.dispose);
     await sync.cycle();

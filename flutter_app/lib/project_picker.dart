@@ -1,3 +1,6 @@
+import 'workspace_ui.dart';
+import 'app_localizations.dart';
+
 import 'package:flutter/material.dart';
 
 import 'project_catalog.dart';
@@ -25,7 +28,9 @@ class ProjectPicker extends StatelessWidget {
     final active = projects.where((p) => p.path == activePath).firstOrNull;
     return MenuAnchor(
       style: MenuStyle(
-        backgroundColor: const WidgetStatePropertyAll(Colors.white),
+        backgroundColor: WidgetStatePropertyAll(
+          WorkspaceUi.colors(context).surface,
+        ),
         surfaceTintColor: const WidgetStatePropertyAll(Colors.transparent),
         padding: const WidgetStatePropertyAll(EdgeInsets.all(6)),
         minimumSize: const WidgetStatePropertyAll(Size(260, 0)),
@@ -39,10 +44,10 @@ class ProjectPicker extends StatelessWidget {
         ),
       ),
       menuChildren: [
-        const Padding(
+        Padding(
           padding: EdgeInsets.fromLTRB(12, 8, 12, 6),
           child: Text(
-            '내 프로젝트',
+            tr('내 프로젝트'),
             style: TextStyle(fontSize: 11, color: Color(0xff6e687b)),
           ),
         ),
@@ -57,7 +62,7 @@ class ProjectPicker extends StatelessWidget {
                   ? Icons.check_circle_rounded
                   : Icons.folder_outlined,
               size: 18,
-              color: const Color(0xff7963d5),
+              color: WorkspaceUi.colors(context).accent,
             ),
             child: SizedBox(
               width: 225,
@@ -95,23 +100,26 @@ class ProjectPicker extends StatelessWidget {
             key: const Key('project-settings'),
             onPressed: busy ? null : onSettings,
             leadingIcon: const Icon(Icons.tune_rounded, size: 18),
-            child: const Text('프로젝트 설정'),
+            child: Text(tr('프로젝트 설정')),
           ),
         MenuItemButton(
           key: const Key('project-create-menu'),
           onPressed: busy ? null : onCreate,
           leadingIcon: const Icon(Icons.add_rounded, size: 18),
-          child: const Text('새 프로젝트 만들기'),
+          child: Text(tr('새 프로젝트 만들기')),
         ),
         MenuItemButton(
           key: const Key('project-join-menu'),
           onPressed: busy ? null : onJoin,
           leadingIcon: const Icon(Icons.group_add_outlined, size: 18),
-          child: const Text('프로젝트 참여하기'),
+          child: Text(tr('프로젝트 참여하기')),
         ),
       ],
       builder: (context, controller, child) => Tooltip(
-        message: '${active?.name ?? '프로젝트 선택'} · ${projects.length}개 프로젝트',
+        message: tr(
+          '{v0} · {v1}개 프로젝트',
+          args: {'v0': active?.name ?? tr('프로젝트 선택'), 'v1': projects.length},
+        ),
         child: TextButton(
           key: const Key('project-picker'),
           onPressed: busy
@@ -119,10 +127,10 @@ class ProjectPicker extends StatelessWidget {
               : () =>
                     controller.isOpen ? controller.close() : controller.open(),
           style: TextButton.styleFrom(
-            foregroundColor: const Color(0xff302b3c),
+            foregroundColor: WorkspaceUi.colors(context).ink,
             minimumSize: const Size(0, 60),
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-            backgroundColor: const Color(0xffecefee),
+            backgroundColor: WorkspaceUi.colors(context).subtle,
           ),
           child: Row(
             children: [
@@ -141,7 +149,7 @@ class ProjectPicker extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      active?.name ?? '프로젝트 선택',
+                      active?.name ?? tr('프로젝트 선택'),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(

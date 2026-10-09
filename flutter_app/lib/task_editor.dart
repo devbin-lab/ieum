@@ -1,9 +1,11 @@
+import 'app_localizations.dart';
+
 import 'package:flutter/material.dart';
 
-import 'app.dart' show muted;
 import 'models.dart';
 import 'store.dart';
 import 'popup_ui.dart';
+import 'workspace_ui.dart';
 import 'draft_guard.dart';
 
 class TaskEditor extends StatefulWidget {
@@ -27,7 +29,7 @@ class _TaskEditorState extends State<TaskEditor> {
   String error = '';
   String initialDraft = '';
   bool saved = false;
-  bool lockOnCreate = false;
+  String createLock = '';
   String get draft => [
     title.text,
     assigned.text,
@@ -37,7 +39,7 @@ class _TaskEditorState extends State<TaskEditor> {
     priority,
     assigneeId,
     reviewerId,
-    lockOnCreate.toString(),
+    createLock,
   ].join('\u0000');
   bool get dirty => !saved && draft != initialDraft;
   WorkTask? get currentTask =>
@@ -138,7 +140,11 @@ class _TaskEditorState extends State<TaskEditor> {
       widget.store.save({
         if (widget.task != null) 'id': widget.task!.id,
         if (widget.task == null)
-          'lockedBy': lockOnCreate ? widget.store.profileId : '',
+          'lockedBy': createLock == 'creator'
+              ? widget.store.profileId
+              : createLock == 'assignee'
+              ? assigneeId
+              : '',
         'title': title.text,
         'part': part,
         'priority': priority,
@@ -152,7 +158,7 @@ class _TaskEditorState extends State<TaskEditor> {
       await WidgetsBinding.instance.endOfFrame;
       if (mounted) Navigator.pop(context);
     } catch (e) {
-      setState(() => error = e.toString().replaceFirst('Bad state: ', ''));
+      setState(() => error = trError(e));
     }
   }
 
@@ -164,14 +170,14 @@ class _TaskEditorState extends State<TaskEditor> {
       onSave: save,
       child: IeumDialog(
         width: 560,
-        closeTooltip: '작업 등록 닫기',
+        closeTooltip: widget.task == null ? tr('새 작업 창 닫기') : tr('작업 수정 창 닫기'),
         icon: Icons.assignment_outlined,
         title: Text(
           widget.task == null
-              ? '새 작업 등록'
+              ? tr('새 작업')
               : canSave
-              ? '작업 수정'
-              : '작업 내용',
+              ? tr('작업 수정')
+              : tr('작업 내용'),
         ),
         content: Form(
           key: formKey,
@@ -183,10 +189,10 @@ class _TaskEditorState extends State<TaskEditor> {
                 Padding(
                   padding: const EdgeInsets.only(top: 16),
                   child: Text(
-                    widget.store.editLockReason(currentTask!),
-                    style: const TextStyle(
+                    trError(trError(widget.store.editLockReason(currentTask!))),
+                    style: TextStyle(
                       fontSize: 12,
-                      color: muted,
+                      color: WorkspaceUi.colors(context).muted,
                       height: 1.5,
                     ),
                   ),
@@ -198,22 +204,41 @@ class _TaskEditorState extends State<TaskEditor> {
                 autofocus: contentEditable,
                 readOnly: !contentEditable,
                 maxLength: 200,
-                decoration: const InputDecoration(
-                  labelText: '작업내용',
-                  hintText: '어떤 작업을 진행하나요?',
+                decoration: InputDecoration(
+                  labelText: tr('작업 제목'),
+                  hintText: tr('어떤 작업을 진행하나요?'),
                   counterText: '',
                 ),
                 validator: (value) => value == null || value.trim().isEmpty
-                    ? '작업내용을 입력하세요.'
+                    ? tr('제목을 입력하세요.')
                     : null,
               ),
               const SizedBox(height: 19),
+              TextFormField(
+                key: const Key('task-description'),
+                controller: description,
+                readOnly: !contentEditable,
+                maxLines: 3,
+                maxLength: 10000,
+                decoration: InputDecoration(
+                  labelText: tr('설명'),
+                  hintText: tr('작업 내용과 완료 기준을 입력하세요.'),
+                  helperText: tr('Markdown 문법을 사용할 수 있습니다.'),
+                  counterText: '',
+                ),
+              ),
+              const SizedBox(height: 22),
+              WorkspaceSectionLabel(title: tr('담당')),
+              const SizedBox(height: 14),
               if (widget.task == null && widget.store.partRules.isEmpty)
-                const Padding(
+                Padding(
                   padding: EdgeInsets.only(bottom: 12),
                   child: Text(
-                    '프로젝트 설정의 파트 탭에서 파트를 먼저 추가하세요.',
-                    style: TextStyle(fontSize: 12, color: muted),
+                    tr('프로젝트 설정에서 파트를 추가한 후 작업을 만들 수 있습니다.'),
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: WorkspaceUi.colors(context).muted,
+                    ),
                   ),
                 ),
               Row(
@@ -221,14 +246,17 @@ class _TaskEditorState extends State<TaskEditor> {
                   Expanded(
                     child: select(
                       'task-part',
-                      '담당 파트',
+                      tr('담당 파트'),
                       part,
                       {
                         if (widget.task != null &&
                             !widget.store.partRules.any(
                               (r) => r.part == widget.task!.part,
                             ))
-                          widget.task!.part: '${widget.task!.part} (삭제된 파트)',
+                          widget.task!.part: tr(
+                            '{v0} (삭제된 파트)',
+                            args: {'v0': widget.task!.part},
+                          ),
                         for (final r in widget.store.partRules) r.part: r.part,
                       },
                       (v) {
@@ -244,36 +272,37 @@ class _TaskEditorState extends State<TaskEditor> {
                   ),
                   const SizedBox(width: 15),
                   Expanded(
-                    child: select(
-                      'task-priority',
-                      '우선순위',
-                      priority,
-                      priorities,
-                      (v) => priority = v,
-                    ),
+                    child: widget.task == null
+                        ? select('task-assignee', tr('담당자'), assigneeId, {
+                            for (final p in widget.store.people.where(
+                              (p) => p.canWork,
+                            ))
+                              p.id: p.name,
+                          }, (v) => assigneeId = v)
+                        : InputDecorator(
+                            decoration: InputDecoration(labelText: tr('담당자')),
+                            child: Text(
+                              widget.store.currentActorLabel(currentTask!),
+                            ),
+                          ),
                   ),
                 ],
               ),
-              const SizedBox(height: 19),
-              Row(
-                children: [
-                  Expanded(
-                    child: select(
-                      'task-assignee',
-                      widget.task == null ? '첫 담당자' : '등록 담당자',
-                      assigneeId,
-                      {
-                        for (final p in widget.store.people.where(
-                          (p) => p.canWork,
-                        ))
-                          p.id: p.name,
-                      },
-                      (v) => assigneeId = v,
-                    ),
-                  ),
-                ],
+              const SizedBox(height: 10),
+              Text(
+                widget.task == null
+                    ? tr('전달 기능으로 담당자를 변경할 수 있습니다.')
+                    : tr('담당자는 작업 상세의 전달 기능으로 변경할 수 있습니다.'),
+                key: const Key('task-editor-assignment-help'),
+                style: TextStyle(
+                  fontSize: 11,
+                  color: WorkspaceUi.colors(context).muted,
+                  height: 1.5,
+                ),
               ),
-              const SizedBox(height: 19),
+              const SizedBox(height: 24),
+              WorkspaceSectionLabel(title: tr('일정')),
+              const SizedBox(height: 14),
               Row(
                 children: [
                   Expanded(
@@ -282,7 +311,7 @@ class _TaskEditorState extends State<TaskEditor> {
                       controller: assigned,
                       readOnly: !assignmentEditable,
                       decoration: InputDecoration(
-                        labelText: '작업 지정일',
+                        labelText: tr('시작일'),
                         hintText: 'YYYY-MM-DD',
                         suffixIcon: IconButton(
                           onPressed: !assignmentEditable
@@ -296,10 +325,10 @@ class _TaskEditorState extends State<TaskEditor> {
                       ),
                       validator: (v) {
                         try {
-                          validDate(v, '작업 지정일', required: true);
+                          validDate(v, tr('시작일'), required: true);
                           return null;
                         } catch (_) {
-                          return 'YYYY-MM-DD 형식을 확인하세요.';
+                          return tr('날짜를 YYYY-MM-DD 형식으로 입력하세요.');
                         }
                       },
                     ),
@@ -311,7 +340,7 @@ class _TaskEditorState extends State<TaskEditor> {
                       controller: due,
                       readOnly: !assignmentEditable,
                       decoration: InputDecoration(
-                        labelText: '마감일',
+                        labelText: tr('마감일'),
                         hintText: 'YYYY-MM-DD',
                         suffixIcon: IconButton(
                           onPressed: !assignmentEditable
@@ -325,68 +354,48 @@ class _TaskEditorState extends State<TaskEditor> {
                       ),
                       validator: (v) {
                         try {
-                          validDate(v, '마감일');
+                          validDate(v, tr('마감일'));
                           return null;
                         } catch (_) {
-                          return 'YYYY-MM-DD 형식을 확인하세요.';
+                          return tr('날짜를 YYYY-MM-DD 형식으로 입력하세요.');
                         }
                       },
                     ),
                   ),
                 ],
               ),
-              const SizedBox(height: 13),
-              Text(
-                widget.task == null
-                    ? '첫 담당자를 지정합니다. 이후에는 전달 버튼으로 다음 담당자를 선택할 수 있습니다.'
-                    : '등록 담당자는 최초 배정 정보입니다. 현재 담당자를 변경하려면 전달 버튼을 사용하세요.',
-                key: const Key('task-editor-assignment-help'),
-                style: TextStyle(fontSize: 10, color: muted),
-              ),
-              if (currentTask != null) ...[
-                const SizedBox(height: 9),
-                Text(
-                  '현재 담당자 · ${widget.store.currentActorLabel(currentTask!)}',
-                  key: const Key('task-editor-current-assignee'),
-                  style: TextStyle(fontSize: 11, color: muted),
-                ),
-              ],
               const SizedBox(height: 22),
-              TextFormField(
-                key: const Key('task-description'),
-                controller: description,
-                readOnly: !contentEditable,
-                maxLines: 3,
-                maxLength: 10000,
-                decoration: const InputDecoration(
-                  labelText: '설명',
-                  hintText: '완료 조건이나 참고 내용을 적어 주세요.',
-                  counterText: '',
-                ),
+              select(
+                'task-priority',
+                tr('우선순위'),
+                priority,
+                translatedLabels(priorities),
+                (v) => priority = v,
               ),
               if (widget.task == null && widget.store.isProject)
-                CheckboxListTile(
-                  key: const Key('task-create-lock'),
-                  contentPadding: EdgeInsets.zero,
-                  controlAffinity: ListTileControlAffinity.leading,
-                  title: const Text(
-                    '등록 후 내 작업으로 잠금',
-                    style: TextStyle(fontSize: 12),
+                Padding(
+                  padding: const EdgeInsets.only(top: 16),
+                  child: IeumSelect(
+                    key: const Key('task-create-lock'),
+                    value: createLock,
+                    label: tr('수정 허용'),
+                    values: {
+                      '': tr('모든 참여자 · 잠금 없음'),
+                      'creator': tr('작성자만 · 잠금'),
+                      'assignee': tr('담당자만 · 잠금'),
+                    },
+                    onChanged: (value) => setState(() => createLock = value),
                   ),
-                  subtitle: const Text(
-                    '다른 참여자는 열람과 코멘트만 가능합니다.',
-                    style: TextStyle(fontSize: 11),
-                  ),
-                  value: lockOnCreate,
-                  onChanged: (value) =>
-                      setState(() => lockOnCreate = value ?? false),
                 ),
               if (error.isNotEmpty)
                 Padding(
                   padding: const EdgeInsets.only(top: 15),
                   child: Text(
                     error,
-                    style: const TextStyle(fontSize: 12, color: Colors.red),
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Theme.of(context).colorScheme.error,
+                    ),
                   ),
                 ),
             ],
@@ -395,12 +404,14 @@ class _TaskEditorState extends State<TaskEditor> {
         actions: [
           TextButton(
             onPressed: () => Navigator.maybePop(context),
-            child: const Text('취소'),
+            child: Text(tr('취소')),
           ),
           FilledButton(
             key: const Key('task-save'),
             onPressed: canSave ? save : () => Navigator.maybePop(context),
-            child: Text(canSave ? '작업 저장' : '닫기'),
+            child: Text(
+              canSave ? (widget.task == null ? tr('등록') : tr('저장')) : tr('닫기'),
+            ),
           ),
         ],
       ),

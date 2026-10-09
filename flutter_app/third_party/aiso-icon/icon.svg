@@ -1,0 +1,15 @@
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <!-- Aiso 1.0 NAS: a compact two-bay local storage appliance. -->
+  <rect width="512" height="512" rx="72" fill="none"/>
+  <!-- Three white NAS bars float above the transparent background. -->
+  <g fill="#ffffff">
+    <rect x="74" y="55" width="108" height="280" rx="28"/>
+    <rect x="212" y="55" width="104" height="402" rx="28"/>
+    <rect x="354" y="55" width="104" height="402" rx="28"/>
+  </g>
+  <g fill="#90939a">
+    <rect x="239" y="96" width="50" height="14" rx="7"/>
+    <rect x="381" y="96" width="50" height="14" rx="7"/>
+  </g>
+  <circle cx="128" cy="408" r="36" fill="#f16522"/>
+</svg>

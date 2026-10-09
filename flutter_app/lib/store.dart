@@ -6,6 +6,7 @@ import 'package:sqlite3/sqlite3.dart';
 import 'package:uuid/uuid.dart';
 
 import 'models.dart';
+import 'sync_recovery_record.dart';
 import 'task_handoff.dart';
 
 class MergeResult {
@@ -83,6 +84,31 @@ class TaskStore extends ChangeNotifier {
     _maintainHistory();
   }
   bool get isProject => meta('project').isNotEmpty;
+  bool referencesResource(String sha256) {
+    if (!RegExp(r'^[a-f0-9]{64}$').hasMatch(sha256)) {
+      throw ArgumentError.value(sha256, 'sha256');
+    }
+    for (final table in const [
+      'tasks',
+      'baseline_tasks',
+      'activity',
+      'notification_outbox',
+      'notification_inbox',
+      'github_queue',
+      'github_sent',
+      'conflict_backups',
+      'sync_recovery',
+      'workflow_revisions',
+    ]) {
+      if (db.select('SELECT 1 FROM $table WHERE instr(body, ?) > 0 LIMIT 1', [
+        sha256,
+      ]).isNotEmpty) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   ProjectManifest? get project => isProject
       ? ProjectManifest.fromJson(
           Map<String, dynamic>.from(jsonDecode(meta('project'))),
@@ -261,7 +287,8 @@ class TaskStore extends ChangeNotifier {
       ? project!.isCompleteStatus(task.status)
       : task.status == 'done';
   bool isWaitingForReview(WorkTask task) => project?.workflowSheet != null
-      ? workflowTaskPurpose(task, project) == 'review' && !isCompleted(task)
+      ? workflowTaskPurpose(task, project) == 'review' &&
+            const {'todo', 'review'}.contains(task.status)
       : !manualWorkflow && task.status == 'review';
   bool canEdit(WorkTask task) => canEditTask(
     actor,
@@ -280,13 +307,17 @@ class TaskStore extends ChangeNotifier {
     workflowProject: project,
   );
   String editLockReason(WorkTask task) => !hasTaskLockAccess(actor, task)
-      ? '${member(task.lockedBy).name}님이 잠근 작업입니다. 열람과 코멘트만 가능합니다.'
+      ? '${member(task.lockedBy).name}님만 수정할 수 있습니다. 댓글로 의견을 남겨 주세요.'
       : task.isArchived
       ? '보관된 작업은 먼저 복원한 뒤 변경하세요.'
       : isCompleted(task)
       ? project?.workflowSheet != null
             ? '완료된 작업은 수정할 수 없습니다.'
             : '완료된 작업은 수정할 수 없습니다. 변경이 필요하면 새 작업을 등록하세요.'
+      : task.isPaused
+      ? '보류된 작업은 재개한 뒤 수정할 수 있습니다.'
+      : task.isDropped
+      ? '드랍된 작업은 복원한 뒤 수정할 수 있습니다.'
       : '프로젝트에 승인된 활성 참여자만 수정할 수 있습니다.';
   List<PartRule> get partRules => !isProject
       ? rules
@@ -326,6 +357,56 @@ class TaskStore extends ChangeNotifier {
     'INSERT INTO metadata VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',
     [key, value],
   );
+
+  int get latestSyncRecoveryIndex =>
+      db
+              .select(
+                'SELECT coalesce(max(rowid),0) AS value FROM sync_recovery',
+              )
+              .single['value']
+          as int;
+  bool get hasSyncRecoveryNotice => meta('github.recoveryNotice').isNotEmpty;
+  int syncRecoveryCount({int? through}) =>
+      db.select('SELECT count(*) AS value FROM sync_recovery WHERE rowid<=?', [
+            through ?? latestSyncRecoveryIndex,
+          ]).single['value']
+          as int;
+
+  List<SyncRecoveryRecord> syncRecoveryRecords({
+    int? through,
+    int offset = 0,
+    int limit = 10,
+  }) => db
+      .select(
+        'SELECT rowid AS recordIndex,id,body FROM sync_recovery WHERE rowid<=? ORDER BY rowid DESC LIMIT ? OFFSET ?',
+        [
+          through ?? latestSyncRecoveryIndex,
+          limit.clamp(1, 50),
+          max(0, offset),
+        ],
+      )
+      .map(
+        (row) => SyncRecoveryRecord.read(
+          row['recordIndex'] as int,
+          row['id'] as String,
+          row['body'] as String,
+        ),
+      )
+      .toList();
+
+  void acknowledgeSyncRecoveryNotice({required int through}) {
+    transaction(() {
+      final latest = latestSyncRecoveryIndex;
+      if (through < 0 || through > latest) {
+        throw StateError('복구 기록이 변경되었습니다. 다시 확인해 주세요.');
+      }
+      final previous = int.tryParse(meta('github.recoveryAcknowledged')) ?? 0;
+      setMeta('github.recoveryAcknowledged', '${max(previous, through)}');
+      if (latest <= through) setMeta('github.recoveryNotice', '');
+    });
+    notifyListeners();
+  }
+
   String get profileId => meta('profile');
   String get baseRevision => meta('baseRevision');
   List<WorkTask> get tasks => storedTasks.where((t) => !t.isDeleted).toList();
@@ -737,6 +818,7 @@ class TaskStore extends ChangeNotifier {
             'id': 'comment-${const Uuid().v4()}',
             'authorId': actor.id,
             'text': text.trim(),
+            'context': current.status == 'review' ? 'review' : '',
             'createdAt': DateTime.now().toUtc().toIso8601String(),
           },
         ]),
@@ -758,6 +840,38 @@ class TaskStore extends ChangeNotifier {
   }
 
   bool canDelete(WorkTask task) => canDeleteTask(actor, task, project: project);
+
+  WorkTask setTaskResources(
+    String id,
+    List<TaskResource> resources, {
+    required int expectedVersion,
+  }) {
+    late WorkTask result;
+    transaction(() {
+      final current = find(id);
+      if (current.version != expectedVersion || !canEditContent(current)) {
+        throw StateError('작업이 변경되었거나 자료를 수정할 수 없습니다.');
+      }
+      result = current.copy({
+        'resources': jsonEncode(
+          resources.map((resource) => resource.json).toList(),
+        ),
+        'version': nextTaskVersion(current.version),
+        'updatedAt': DateTime.now().toUtc().toIso8601String(),
+      });
+      validateTaskMutation(
+        actor: actor,
+        next: result,
+        current: current,
+        workflowProject: project,
+      );
+      put(result);
+      log(result, '첨부 자료를 변경했습니다.');
+      queueGitHub(result);
+    });
+    notifyListeners();
+    return result;
+  }
 
   void _removeTaskNotifications(String id) {
     for (final table in ['notification_inbox', 'notification_outbox']) {
@@ -866,6 +980,7 @@ class TaskStore extends ChangeNotifier {
         old?.workflowTarget == 'legacy' &&
         (old?.assigneeId != input['assigneeId'] ||
             old?.status == 'review' && old?.reviewerId != input['reviewerId']);
+    final stamp = DateTime.now().toUtc().toIso8601String();
     final next = WorkTask.fromJson({
       ...input,
       'id': old?.id ?? 'TASK-${const Uuid().v4()}',
@@ -881,25 +996,28 @@ class TaskStore extends ChangeNotifier {
           : old?.workflowTarget ?? '',
       'workflowPerson': preservesLegacyRecipient
           ? old!.currentId
-          : old?.workflowPerson ??
-                (project?.workflowSheet != null
-                    ? workflowInitialPerson(
-                        project!,
-                        initialStatus!,
-                        input['assigneeId'],
-                      )
-                    : ''),
+          : old?.workflowPerson ?? (isProject ? input['assigneeId'] : ''),
       'workflowRoute': old?.workflowRoute ?? '',
       'workflowPurpose': old?.workflowPurpose ?? '',
       'workflowSender': old?.workflowSender ?? '',
       'archivedAt': old?.archivedAt ?? '',
       'deletedAt': old?.deletedAt ?? '',
       'lockedBy':
-          old?.lockedBy ?? (input['lockedBy'] == profileId ? profileId : ''),
+          old?.lockedBy ??
+          (input['lockedBy'] == profileId ||
+                  input['lockedBy'] == input['assigneeId']
+              ? input['lockedBy'] ?? ''
+              : ''),
+      'creatorId': old?.creatorId ?? profileId,
+      'initialAssigneeId': old?.initialAssigneeId ?? input['assigneeId'],
+      'createdAt': old?.createdAt ?? stamp,
+      'pausedFrom': old?.pausedFrom ?? '',
+      'transitionHistory': old?.data['transitionHistory'] ?? '[]',
       'comments': old?.data['comments'] ?? '[]',
+      'resources': old?.data['resources'] ?? '[]',
       'pinned': old?.data['pinned'] ?? '',
       'version': nextTaskVersion(old?.version ?? 0),
-      'updatedAt': DateTime.now().toUtc().toIso8601String(),
+      'updatedAt': stamp,
     });
     if (isProject) {
       if (!project!.unifiedView.parts.contains(next.part) &&
@@ -1150,7 +1268,7 @@ class TaskStore extends ChangeNotifier {
   List<TaskHandoffPlan> _availableHandoffsFor(WorkTask task) {
     if (project?.workflowSheet != null) {
       return [
-        for (final id in const ['manual-start', 'manual-finish'])
+        for (final id in directActionRouteIds)
           if (actor.active &&
               project!.people.any((p) => p.id == actor.id && p.active))
             if (directWorkflowRoute(task, project!, id) case final route?)
@@ -1296,7 +1414,9 @@ class TaskStore extends ChangeNotifier {
     final intent = route.id == 'manual-return'
         ? 'revision'
         : route.id == 'manual-handoff'
-        ? (purpose.isEmpty ? workflowTaskPurpose(task, configured) : purpose)
+        ? (purpose.isEmpty ? 'work' : purpose)
+        : route.id == 'manual-review'
+        ? 'review'
         : route.purpose;
     final unresolved =
         select && receiverGroup.isEmpty && receiverPerson.isEmpty;
@@ -1313,6 +1433,9 @@ class TaskStore extends ChangeNotifier {
     }
     final next = unresolved
         ? task.copy({
+            'pausedFrom': route.to == 'hold'
+                ? (task.isPaused ? task.pausedFrom : task.status)
+                : '',
             'status': direct
                 ? route.to
                 : configured.workflowSheet!.stageFor(route.to)!,
@@ -1321,6 +1444,9 @@ class TaskStore extends ChangeNotifier {
         : direct
         ? task.copy({
             'status': route.to,
+            'pausedFrom': route.to == 'hold'
+                ? (task.isPaused ? task.pausedFrom : task.status)
+                : '',
             'workflowTarget': select
                 ? receiverGroup
                 : task.workflowTarget == 'legacy'
@@ -1620,7 +1746,7 @@ class TaskStore extends ChangeNotifier {
           task,
           project!,
         ).any((r) => project!.workflowSheet!.stageFor(r.to) == status)) {
-      final direct = const ['manual-start', 'manual-finish']
+      final direct = directActionRouteIds
           .map((id) => directWorkflowRoute(task, project!, id))
           .where((r) => r != null && r.to == status)
           .toList();
@@ -1631,21 +1757,19 @@ class TaskStore extends ChangeNotifier {
       if (route == null || route.to != status) {
         throw StateError('현재 상태에서는 이 동작을 실행할 수 없습니다.');
       }
-      final next =
-          applyDirectWorkflowRoute(
-            task,
-            route,
-            project!,
-            actorId: actor.id,
-            receiverGroup: receiverGroup,
-            receiverPerson: receiverPerson,
-            purpose: purpose,
-            reason: reason,
-            lockOnHandoff: lockOnHandoff,
-          ).copy({
-            'version': nextTaskVersion(task.version),
-            'updatedAt': DateTime.now().toUtc().toIso8601String(),
-          });
+      final stamp = DateTime.now().toUtc().toIso8601String();
+      final next = applyDirectWorkflowRoute(
+        task,
+        route,
+        project!,
+        actorId: actor.id,
+        receiverGroup: receiverGroup,
+        receiverPerson: receiverPerson,
+        purpose: purpose,
+        reason: reason,
+        lockOnHandoff: lockOnHandoff,
+        at: stamp,
+      ).copy({'version': nextTaskVersion(task.version), 'updatedAt': stamp});
       validateTaskMutation(
         actor: actor,
         current: task,
@@ -2091,6 +2215,8 @@ class TaskStore extends ChangeNotifier {
           'archivedAt',
           'deletedAt',
           'lockedBy',
+          'pausedFrom',
+          'transitionHistory',
         };
         final atomicTransition = project?.workflowSheet != null;
         if (atomicTransition) {
@@ -2121,7 +2247,9 @@ class TaskStore extends ChangeNotifier {
             var invalid = false;
             for (final item in [...local.comments, ...remote.comments]) {
               final prior = all[item['id']];
-              if (prior != null && prior.keys.any((k) => prior[k] != item[k])) {
+              if (prior != null &&
+                  (prior.length != item.length ||
+                      prior.keys.any((k) => prior[k] != item[k]))) {
                 invalid = true;
               }
               all[item['id'] as String] = item;

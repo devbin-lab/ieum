@@ -479,6 +479,53 @@ class GitHubSession {
     throw const GitHubFailure('다른 변경이 진행 중입니다. 다시 저장하세요.');
   }
 
+  Future<ProjectManifest> saveShortcuts(
+    GitHubConfig config,
+    List<ProjectShortcut> shortcuts, {
+    required String expectedProjectId,
+    required List<ProjectShortcut>? expectedShortcuts,
+  }) {
+    final validated = readProjectShortcuts(
+      shortcuts.map((entry) => entry.json).toList(),
+    )!;
+    return changeManifest(config, 'Update IEUM project shortcuts', (
+      current,
+      actor,
+    ) async {
+      if (jsonEncode(current.shortcuts?.map((entry) => entry.json).toList()) !=
+          jsonEncode(expectedShortcuts?.map((entry) => entry.json).toList())) {
+        throw const GitHubFailure(
+          '바로가기가 다른 곳에서 변경되었습니다. 최신 내용을 확인한 뒤 다시 저장해 주세요.',
+        );
+      }
+      return ProjectManifest.fromJson({
+        ...current.json,
+        'shortcuts': validated.map((entry) => entry.json).toList(),
+      });
+    }, expectedProjectId: expectedProjectId);
+  }
+
+  Future<ProjectManifest> setAttachmentLimit(
+    GitHubConfig config,
+    int limitMb, {
+    required String expectedProjectId,
+    required int expectedLimitMb,
+  }) => changeManifest(config, 'Update IEUM attachment size limit', (
+    current,
+    actor,
+  ) async {
+    if (actor.id != current.ownerId || !actor.active) {
+      throw const GitHubFailure('첨부 파일 한도는 관리자만 변경할 수 있습니다.');
+    }
+    if (current.attachmentLimitMb != expectedLimitMb) {
+      throw const GitHubFailure('파일 한도가 변경되었습니다. 최신 설정을 확인하세요.');
+    }
+    return ProjectManifest.fromJson({
+      ...current.json,
+      'attachmentLimitMb': limitMb,
+    });
+  }, expectedProjectId: expectedProjectId);
+
   Future<ProjectManifest> rename(
     GitHubConfig config,
     String nickname, {

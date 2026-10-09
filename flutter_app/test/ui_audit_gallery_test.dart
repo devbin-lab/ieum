@@ -263,6 +263,7 @@ void main() {
           await shot('${width.toInt()}-role-create');
           await tester.sendKeyEvent(LogicalKeyboardKey.escape);
           await tester.pumpAndSettle();
+          await tap('select-role-role-design');
           await tap('delete-role-role-design');
           await shot('${width.toInt()}-role-delete');
           await tester.sendKeyEvent(LogicalKeyboardKey.escape);

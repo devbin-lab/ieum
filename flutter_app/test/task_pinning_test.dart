@@ -231,12 +231,24 @@ void main() {
       }
       await tester.tap(find.byKey(const Key('view-kanban')));
       await tester.pumpAndSettle();
-      for (var i = 0; i < order.length - 1; i++) {
-        expect(
-          tester.getTopLeft(find.text(order[i])).dy,
-          lessThan(tester.getTopLeft(find.text(order[i + 1])).dy),
-        );
-      }
+      final column = tester.widget<ListView>(
+        find.byKey(const Key('column-items-todo')),
+      );
+      // Bounded columns build only nearby cards. Assert the actual UI order
+      // without requiring offscreen cards to be mounted at the same time.
+      final cards =
+          (column.childrenDelegate as SliverChildListDelegate).children;
+      expect(
+        cards.whereType<Padding>().map(
+          (item) => ((item.child as Draggable<WorkTask>).child).key,
+        ),
+        const [
+          Key('card-high'),
+          Key('card-normal'),
+          Key('card-low'),
+          Key('card-ordinary'),
+        ],
+      );
       tester.view.physicalSize = const Size(360, 540);
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('view-list')));

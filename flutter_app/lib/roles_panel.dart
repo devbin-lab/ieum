@@ -1,3 +1,5 @@
+import 'app_localizations.dart';
+
 import 'package:flutter/material.dart';
 
 import 'models.dart';
@@ -7,6 +9,7 @@ import 'project_service.dart';
 import 'popup_ui.dart';
 import 'role_editor.dart';
 import 'permission_ui.dart';
+import 'workspace_ui.dart';
 
 class RolesPanel extends StatefulWidget {
   const RolesPanel({
@@ -62,7 +65,7 @@ class _RolesPanelState extends State<RolesPanel> {
       final project = await operation();
       if (!mounted) return null;
       widget.store.updateProject(project);
-      if (!silent) message = '저장소에 반영했습니다.';
+      if (!silent) message = tr('변경 사항을 저장했습니다.');
       return project;
     } catch (e) {
       if (mounted) message = '$e';
@@ -87,7 +90,7 @@ class _RolesPanelState extends State<RolesPanel> {
               .where((r) => r.id == role.id)
               .firstOrNull;
     if (role != null && current == null) {
-      setState(() => message = '삭제된 파트입니다. 목록을 확인하세요.');
+      setState(() => message = tr('이 파트가 삭제되었습니다. 목록을 새로고침해 주세요.'));
       return;
     }
     final result = await showProjectRoleDialog(
@@ -100,12 +103,14 @@ class _RolesPanelState extends State<RolesPanel> {
               final refreshed = await widget.session.loadProject(
                 widget.sync.config,
               );
-              if (refreshed.id != latest.id) throw StateError('프로젝트가 변경되었습니다.');
+              if (refreshed.id != latest.id) {
+                throw StateError(tr('프로젝트가 변경되었습니다.'));
+              }
               final nextRole = refreshed.partWorkflowView.roles
                   .where((r) => r.id == role!.id)
                   .firstOrNull;
               if (nextRole == null) {
-                throw StateError('파트가 삭제되었습니다. 초안을 다른 이름으로 보관하거나 편집을 종료하세요.');
+                throw StateError(tr('이 파트가 삭제되어 더 이상 수정할 수 없습니다.'));
               }
               current = nextRole;
               if (mounted) widget.store.updateProject(refreshed);
@@ -124,7 +129,7 @@ class _RolesPanelState extends State<RolesPanel> {
     if (result != null && mounted) {
       setState(() {
         selected = result.id;
-        message = '저장소에 반영했습니다.';
+        message = tr('변경 사항을 저장했습니다.');
       });
     }
   }
@@ -134,19 +139,21 @@ class _RolesPanelState extends State<RolesPanel> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => IeumDialog(
-        title: Text('“${original.name}” 파트 삭제'),
-        content: const Text(
-          '파트와 참여자의 해당 파트 배정을 삭제합니다. 이 파트를 사용하는 자동화 연결이나 진행 중인 업무가 있으면 먼저 수정하거나 인수인계하세요. 기존 작업 내역은 유지됩니다.',
+        title: Text(tr('“{v0}” 파트 삭제', args: {'v0': original.name})),
+        content: Text(
+          tr(
+            '이 파트와 참여자의 파트 배정이 삭제됩니다. 작업 기록은 유지됩니다. 담당 파트가 변경될 작업이 있는지 확인해 주세요.',
+          ),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
-            child: const Text('취소'),
+            child: Text(tr('취소')),
           ),
           FilledButton(
             key: const Key('confirm-delete-role'),
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('삭제'),
+            child: Text(tr('삭제')),
           ),
         ],
       ),
@@ -178,34 +185,67 @@ class _RolesPanelState extends State<RolesPanel> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Wrap(
-          spacing: 10,
-          runSpacing: 8,
-          children: [
-            if (widget.store.actor.has('role.manage'))
-              FilledButton.icon(
-                key: const Key('add-role'),
-                onPressed: busy ? null : () => edit(),
-                icon: const Icon(Icons.add, size: 17),
-                label: const Text('파트 추가'),
-              ),
-            OutlinedButton.icon(
-              key: const Key('roles-refresh'),
-              onPressed: busy
-                  ? null
-                  : () => run(
-                      () => widget.session.loadProject(widget.sync.config),
-                      silent: true,
+        LayoutBuilder(
+          builder: (context, constraints) => Wrap(
+            spacing: 8,
+            runSpacing: 10,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              SizedBox(
+                width: constraints.maxWidth >= 480
+                    ? constraints.maxWidth -
+                          (widget.store.actor.has('role.manage') ? 156 : 48)
+                    : constraints.maxWidth,
+                height: WorkspaceUi.controlHeight,
+                child: TextField(
+                  key: const Key('role-search'),
+                  controller: search,
+                  onChanged: (value) =>
+                      setState(() => query = value.trim().toLowerCase()),
+                  decoration: InputDecoration(
+                    hintText: tr('파트 검색'),
+                    prefixIcon: Icon(Icons.search_rounded, size: 18),
+                    prefixIconConstraints: BoxConstraints(
+                      minWidth: 36,
+                      minHeight: 36,
                     ),
-              icon: const Icon(Icons.refresh, size: 17),
-              label: const Text('새로고침'),
-            ),
-          ],
+                    contentPadding: EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 8,
+                    ),
+                    isDense: true,
+                  ),
+                ),
+              ),
+              if (widget.store.actor.has('role.manage'))
+                FilledButton.icon(
+                  key: const Key('add-role'),
+                  onPressed: busy ? null : () => edit(),
+                  icon: const Icon(Icons.add_rounded, size: 17),
+                  label: Text(tr('파트 추가')),
+                ),
+              IconButton(
+                key: const Key('roles-refresh'),
+                tooltip: tr('파트 새로고침'),
+                onPressed: busy
+                    ? null
+                    : () => run(
+                        () => widget.session.loadProject(widget.sync.config),
+                        silent: true,
+                      ),
+                icon: const Icon(Icons.refresh_rounded, size: 19),
+              ),
+            ],
+          ),
         ),
         const SizedBox(height: 12),
-        const Text(
-          '파트별로 참여자·역할 관리 권한을 설정합니다. 작업 등록·진행·검토·통합은 기본 허용됩니다.',
-          style: TextStyle(fontSize: 12, height: 1.7, color: Color(0xff737b76)),
+        Text(
+          tr('파트별로 참여자를 배정하고 참여자·파트 관리 권한을 설정합니다.'),
+          style: TextStyle(
+            fontSize: 12,
+            height: 1.6,
+            color: WorkspaceUi.colors(context).muted,
+          ),
         ),
         if (busy)
           const Padding(
@@ -220,7 +260,7 @@ class _RolesPanelState extends State<RolesPanel> {
               style: const TextStyle(fontSize: 12),
             ),
           ),
-        const SizedBox(height: 20),
+        const SizedBox(height: 24),
         LayoutBuilder(
           builder: (context, constraints) {
             final list = roleList(filtered, id);
@@ -229,14 +269,14 @@ class _RolesPanelState extends State<RolesPanel> {
               return Column(
                 key: const Key('roles-stacked'),
                 crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [list, const SizedBox(height: 20), detail],
+                children: [list, const SizedBox(height: 16), detail],
               );
             }
             return Row(
               key: const Key('roles-columns'),
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                SizedBox(width: 240, child: list),
+                SizedBox(width: 228, child: list),
                 const SizedBox(width: 20),
                 Expanded(child: detail),
               ],
@@ -251,26 +291,18 @@ class _RolesPanelState extends State<RolesPanel> {
     key: const Key('role-list'),
     padding: const EdgeInsets.all(12),
     decoration: BoxDecoration(
-      color: const Color(0xfff8f9f8),
-      border: Border.all(color: const Color(0xffe1e4e3)),
-      borderRadius: BorderRadius.circular(12),
+      color: WorkspaceUi.colors(context).subtle,
+      border: Border.all(color: WorkspaceUi.colors(context).line),
+      borderRadius: BorderRadius.circular(10),
     ),
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        TextField(
-          key: const Key('role-search'),
-          controller: search,
-          onChanged: (v) => setState(() => query = v.trim().toLowerCase()),
-          decoration: const InputDecoration(
-            hintText: '파트 검색',
-            prefixIcon: Icon(Icons.search, size: 18),
-            isDense: true,
-          ),
-        ),
-        const SizedBox(height: 14),
         Text(
-          '파트 · ${widget.store.project!.partWorkflowView.roles.length}',
+          tr(
+            '파트 · {v0}',
+            args: {'v0': widget.store.project!.partWorkflowView.roles.length},
+          ),
           style: const TextStyle(fontSize: 11, color: Color(0xff737b76)),
         ),
         const SizedBox(height: 8),
@@ -278,9 +310,7 @@ class _RolesPanelState extends State<RolesPanel> {
           Padding(
             padding: const EdgeInsets.symmetric(vertical: 16),
             child: Text(
-              query.isEmpty
-                  ? '아직 만든 파트가 없습니다. 파트 추가로 직접 만들어 주세요.'
-                  : '검색 결과가 없습니다.',
+              query.isEmpty ? tr('파트를 추가하면 여기에 표시됩니다.') : tr('검색 결과가 없습니다.'),
               style: const TextStyle(fontSize: 12, height: 1.7),
             ),
           ),
@@ -292,11 +322,7 @@ class _RolesPanelState extends State<RolesPanel> {
             key: const Key('system-roles'),
             tilePadding: EdgeInsets.zero,
             childrenPadding: EdgeInsets.zero,
-            title: const Text('시스템 권한', style: TextStyle(fontSize: 12)),
-            subtitle: const Text(
-              '관리자 · 프로젝트 관리',
-              style: TextStyle(fontSize: 10),
-            ),
+            title: Text(tr('프로젝트 권한'), style: TextStyle(fontSize: 12)),
             children: [
               for (final system in ['owner']) roleRow(system, id),
             ],
@@ -308,7 +334,9 @@ class _RolesPanelState extends State<RolesPanel> {
   Widget roleRow(String id, String? selection) => Padding(
     padding: const EdgeInsets.only(bottom: 4),
     child: Material(
-      color: selection == id ? const Color(0xffe9eeeb) : Colors.transparent,
+      color: selection == id
+          ? WorkspaceUi.colors(context).accentSurface
+          : Colors.transparent,
       borderRadius: BorderRadius.circular(8),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -318,11 +346,11 @@ class _RolesPanelState extends State<RolesPanel> {
             dense: true,
             contentPadding: const EdgeInsets.symmetric(horizontal: 10),
             title: Text(
-              definition(id).roleLabel,
+              trRoleName(id, definition(id).roleLabel),
               style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
             ),
             subtitle: Text(
-              '${members(id).length}명 배정',
+              tr('{v0}명 배정', args: {'v0': members(id).length}),
               style: const TextStyle(fontSize: 10),
             ),
             trailing: roleLabels.containsKey(id)
@@ -332,74 +360,21 @@ class _RolesPanelState extends State<RolesPanel> {
               selected = id;
             }),
           ),
-          if (!roleLabels.containsKey(id))
-            Padding(
-              padding: const EdgeInsets.fromLTRB(6, 0, 6, 8),
-              child: Wrap(
-                spacing: 4,
-                children: [
-                  TextButton.icon(
-                    key: Key('edit-role-$id'),
-                    onPressed: !busy && editable(id)
-                        ? () => edit(
-                            widget.store.project!.partWorkflowView.roles
-                                .firstWhere((r) => r.id == id),
-                          )
-                        : null,
-                    icon: const Icon(Icons.edit_outlined, size: 15),
-                    label: const Text('수정'),
-                  ),
-                  TextButton.icon(
-                    key: Key('delete-role-$id'),
-                    onPressed: !busy && editable(id)
-                        ? () => remove(
-                            widget.store.project!.partWorkflowView.roles
-                                .firstWhere((r) => r.id == id),
-                          )
-                        : null,
-                    style: TextButton.styleFrom(
-                      foregroundColor: const Color(0xffb34b51),
-                    ),
-                    icon: const Icon(Icons.delete_outline, size: 15),
-                    label: const Text('삭제'),
-                  ),
-                ],
-              ),
-            ),
         ],
       ),
     ),
   );
-  Widget emptyDetail() => Container(
-    padding: const EdgeInsets.all(28),
-    decoration: BoxDecoration(
-      border: Border.all(color: const Color(0xffe1e4e3)),
-      borderRadius: BorderRadius.circular(12),
-    ),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Icon(Icons.badge_outlined, size: 28, color: Color(0xff737b76)),
-        SizedBox(height: 14),
-        Text(
-          '첫 파트를 추가해 주세요.',
-          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
-        ),
-        SizedBox(height: 8),
-        Text(
-          '기획, PD처럼 소속 파트를 만든 뒤 참여자에게 배정하세요.',
-          style: TextStyle(fontSize: 12, height: 1.7),
-        ),
-        const SizedBox(height: 16),
-        FilledButton.icon(
-          key: const Key('add-first-part'),
-          onPressed: busy || !widget.store.actor.has('role.manage')
-              ? null
-              : () => edit(),
-          icon: const Icon(Icons.add_rounded, size: 17),
-          label: const Text('파트 추가'),
-        ),
-      ],
+  Widget emptyDetail() => WorkspaceEmptyState(
+    icon: Icons.groups_2_outlined,
+    title: tr('등록된 파트가 없습니다.'),
+    message: tr('파트를 추가해 프로젝트 참여자를 배정할 수 있습니다.'),
+    action: OutlinedButton.icon(
+      key: const Key('add-first-part'),
+      onPressed: busy || !widget.store.actor.has('role.manage')
+          ? null
+          : () => edit(),
+      icon: const Icon(Icons.add_rounded, size: 17),
+      label: Text(tr('파트 추가')),
     ),
   );
   Widget roleDetail(String id) {
@@ -407,29 +382,85 @@ class _RolesPanelState extends State<RolesPanel> {
     final role = widget.store.project!.partWorkflowView.roles
         .where((r) => r.id == id)
         .firstOrNull;
-    return Container(
+    final heading = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          trRoleName(person.role, person.roleLabel),
+          style: TextStyle(
+            fontSize: 20,
+            fontWeight: FontWeight.w600,
+            color: WorkspaceUi.colors(context).ink,
+          ),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          tr(
+            '{v0} · {v1}명',
+            args: {
+              'v0': role == null ? tr('관리자') : tr('파트'),
+              'v1': assigned.length,
+            },
+          ),
+          style: WorkspaceUi.captionStyleOf(context),
+        ),
+      ],
+    );
+    final actions = role == null
+        ? <Widget>[]
+        : <Widget>[
+            OutlinedButton.icon(
+              key: Key('edit-role-$id'),
+              onPressed: !busy && editable(id) ? () => edit(role) : null,
+              icon: const Icon(Icons.edit_outlined, size: 16),
+              label: Text(tr('수정')),
+            ),
+            TextButton.icon(
+              key: Key('delete-role-$id'),
+              onPressed: !busy && editable(id) ? () => remove(role) : null,
+              style: TextButton.styleFrom(
+                foregroundColor: WorkspaceUi.colors(context).danger,
+              ),
+              icon: const Icon(Icons.delete_outline_rounded, size: 16),
+              label: Text(tr('삭제')),
+            ),
+          ];
+    return WorkspacePanel(
       key: const Key('role-detail'),
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        border: Border.all(color: const Color(0xffe1e4e3)),
-        borderRadius: BorderRadius.circular(12),
-      ),
+      padding: const EdgeInsets.all(24),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            person.roleLabel,
-            style: const TextStyle(fontSize: 21, fontWeight: FontWeight.w700),
+          LayoutBuilder(
+            builder: (context, bounds) {
+              if (bounds.maxWidth < 420 && actions.isNotEmpty) {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    heading,
+                    const SizedBox(height: 12),
+                    Wrap(spacing: 8, runSpacing: 8, children: actions),
+                  ],
+                );
+              }
+              return Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(child: heading),
+                  if (actions.isNotEmpty) ...[
+                    const SizedBox(width: 16),
+                    Wrap(spacing: 8, runSpacing: 8, children: actions),
+                  ],
+                ],
+              );
+            },
           ),
-          const SizedBox(height: 6),
-          Text(
-            '${role == null ? '시스템 권한' : '파트'} · ${assigned.length}명 배정',
-            style: const TextStyle(fontSize: 11, color: Color(0xff737b76)),
-          ),
-          const SizedBox(height: 14),
+          Divider(height: 32, color: WorkspaceUi.colors(context).line),
           if (role == null) ...[
-            const Text(
-              '프로젝트, 참여자, 파트, 작업 단계 자동화를 관리하고 잘못 전달된 작업을 회수합니다. 관리자 이전은 참여자 관리에서 할 수 있습니다.',
+            Text(
+              tr(
+                '프로젝트·참여자·파트를 관리하고 전달된 작업을 회수할 수 있습니다. 잠긴 작업의 수정 권한은 지정된 담당자에게 있습니다.',
+              ),
               style: TextStyle(
                 fontSize: 11,
                 height: 1.6,
@@ -438,13 +469,13 @@ class _RolesPanelState extends State<RolesPanel> {
             ),
           ],
           if (role != null && !editable(id))
-            const Text(
-              '파트 추가·수정·삭제는 역할 관리 권한이 필요합니다.',
+            Text(
+              tr('이 파트를 편집하려면 파트 관리 권한이 필요합니다.'),
               style: TextStyle(fontSize: 11, height: 1.6),
             ),
           const SizedBox(height: 16),
-          const Text(
-            '관리 권한',
+          Text(
+            tr('관리 권한'),
             style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
           ),
           RolePermissionGroups(
@@ -453,16 +484,16 @@ class _RolesPanelState extends State<RolesPanel> {
           ),
           const SizedBox(height: 16),
           Text(
-            '배정된 참여자 (${assigned.length})',
+            tr('배정된 참여자 ({v0})', args: {'v0': assigned.length}),
             key: const Key('role-members-title'),
             style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
           ),
           const SizedBox(height: 10),
           if (role != null)
-            const Padding(
+            Padding(
               padding: EdgeInsets.only(bottom: 12),
               child: Text(
-                '이 파트를 조건으로 사용할 작업 단계 연결은 자동화 시트에서 설정합니다.',
+                tr('파트 배정은 참여자 관리에서 변경할 수 있습니다.'),
                 style: TextStyle(
                   fontSize: 11,
                   height: 1.6,
@@ -471,7 +502,7 @@ class _RolesPanelState extends State<RolesPanel> {
               ),
             ),
           if (assigned.isEmpty)
-            const Text('이 파트에 배정된 참여자가 없습니다.', style: TextStyle(fontSize: 12))
+            Text(tr('이 파트에 배정된 참여자가 없습니다.'), style: TextStyle(fontSize: 12))
           else
             for (final member in assigned)
               ListTile(
@@ -483,7 +514,13 @@ class _RolesPanelState extends State<RolesPanel> {
                     : () => widget.onMember!(member.id),
                 title: Text(member.name, style: const TextStyle(fontSize: 12)),
                 subtitle: Text(
-                  '@${member.login} · ${member.enabled ? '활성화' : '비활성화'}',
+                  tr(
+                    '@{v0} · {v1}',
+                    args: {
+                      'v0': member.login,
+                      'v1': member.enabled ? tr('활성화') : tr('비활성화'),
+                    },
+                  ),
                   style: const TextStyle(fontSize: 11),
                 ),
               ),

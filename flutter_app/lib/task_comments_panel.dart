@@ -1,7 +1,10 @@
+import 'app_localizations.dart';
+
 import 'package:flutter/material.dart';
 
 import 'models.dart';
 import 'store.dart';
+import 'workspace_ui.dart';
 
 class TaskCommentsPanel extends StatefulWidget {
   const TaskCommentsPanel({super.key, required this.store, required this.task});
@@ -30,42 +33,92 @@ class _TaskCommentsPanelState extends State<TaskCommentsPanel> {
       text.clear();
       setState(() => error = '');
     } catch (e) {
-      setState(() => error = e.toString().replaceFirst('Bad state: ', ''));
+      setState(() => error = trError(e));
     }
+  }
+
+  String timestamp(dynamic value) {
+    final date = DateTime.tryParse(value.toString())?.toLocal();
+    if (date == null) return '';
+    String two(int value) => value.toString().padLeft(2, '0');
+    return '${date.year}.${two(date.month)}.${two(date.day)} ${two(date.hour)}:${two(date.minute)}';
+  }
+
+  Widget commentCard(Map<String, dynamic> comment) {
+    final author = widget.store.member(comment['authorId']);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 18),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          CircleAvatar(
+            radius: 14,
+            backgroundColor: Color(author.color).withValues(alpha: .13),
+            foregroundColor: Color(author.color),
+            child: Text(
+              author.name.isEmpty ? '?' : author.name.characters.first,
+              style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 4,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    Text(
+                      author.name,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    Text(
+                      timestamp(comment['createdAt']),
+                      style: WorkspaceUi.captionStyleOf(context),
+                    ),
+                    if (comment['context'] == 'review')
+                      Text(
+                        tr('검토'),
+                        style: TextStyle(
+                          fontSize: 10,
+                          color: Color(0xff8c652d),
+                        ),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                SelectableText(
+                  comment['text'],
+                  style: const TextStyle(fontSize: 12, height: 1.6),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) => Column(
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
-      const Text(
-        '코멘트',
-        style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+      WorkspaceSectionLabel(
+        title: tr('댓글'),
+        trailing: widget.task.comments.isEmpty
+            ? null
+            : Text(
+                '${widget.task.comments.length}',
+                style: WorkspaceUi.captionStyleOf(context),
+              ),
       ),
       const SizedBox(height: 12),
-      for (final comment in widget.task.comments)
-        Container(
-          margin: const EdgeInsets.only(bottom: 10),
-          padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(
-            color: const Color(0xfff3f5f7),
-            borderRadius: BorderRadius.circular(10),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                '${widget.store.member(comment['authorId']).name} · ${comment['createdAt'].substring(0, 10)}',
-                style: const TextStyle(fontSize: 10, color: Color(0xff737e90)),
-              ),
-              const SizedBox(height: 6),
-              SelectableText(
-                comment['text'],
-                style: const TextStyle(fontSize: 12, height: 1.6),
-              ),
-            ],
-          ),
-        ),
+      for (final comment in widget.task.comments) commentCard(comment),
       if (widget.store.canComment(widget.task)) ...[
         TextField(
           key: const Key('task-comment-input'),
@@ -73,28 +126,44 @@ class _TaskCommentsPanelState extends State<TaskCommentsPanel> {
           maxLength: 2000,
           minLines: 2,
           maxLines: 5,
-          decoration: const InputDecoration(hintText: '의견이나 수정 요청을 남겨 주세요.'),
+          decoration: InputDecoration(
+            hintText: tr('댓글을 입력하세요.'),
+            counterText: '',
+          ),
           onChanged: (_) => setState(() {}),
         ),
-        Align(
-          alignment: Alignment.centerRight,
-          child: OutlinedButton.icon(
-            key: const Key('task-comment-add'),
-            onPressed:
-                text.text.trim().isEmpty || widget.task.comments.length >= 100
-                ? null
-                : add,
-            icon: const Icon(Icons.chat_bubble_outline_rounded, size: 16),
-            label: const Text('코멘트 등록'),
-          ),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Text(
+              '${text.text.length}/2000',
+              style: WorkspaceUi.captionStyleOf(context),
+            ),
+            const Spacer(),
+            OutlinedButton.icon(
+              key: const Key('task-comment-add'),
+              onPressed:
+                  text.text.trim().isEmpty || widget.task.comments.length >= 100
+                  ? null
+                  : add,
+              icon: const Icon(Icons.chat_bubble_outline_rounded, size: 16),
+              label: Text(tr('등록')),
+            ),
+          ],
         ),
         if (widget.task.comments.length >= 100)
-          const Text(
-            '코멘트는 작업당 최대 100개까지 등록할 수 있습니다.',
+          Text(
+            tr('이 작업의 댓글이 최대 개수(100개)에 도달했습니다.'),
             style: TextStyle(fontSize: 11),
           ),
         if (error.isNotEmpty)
-          Text(error, style: const TextStyle(fontSize: 11, color: Colors.red)),
+          Text(
+            trError(error),
+            style: TextStyle(
+              fontSize: 11,
+              color: Theme.of(context).colorScheme.error,
+            ),
+          ),
       ],
     ],
   );

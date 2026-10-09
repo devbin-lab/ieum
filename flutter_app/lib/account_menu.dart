@@ -1,3 +1,6 @@
+import 'workspace_ui.dart';
+import 'app_localizations.dart';
+
 import 'package:flutter/material.dart';
 
 /// The workspace account actions live here so navigation stays focused on work.
@@ -24,7 +27,9 @@ class AccountMenu extends StatelessWidget {
   Widget build(BuildContext context) => MenuAnchor(
     style: MenuStyle(
       alignment: Alignment.topLeft,
-      backgroundColor: const WidgetStatePropertyAll(Colors.white),
+      backgroundColor: WidgetStatePropertyAll(
+        WorkspaceUi.colors(context).surface,
+      ),
       surfaceTintColor: const WidgetStatePropertyAll(Colors.transparent),
       padding: const WidgetStatePropertyAll(EdgeInsets.all(6)),
       minimumSize: const WidgetStatePropertyAll(Size(260, 0)),
@@ -47,7 +52,7 @@ class AccountMenu extends StatelessWidget {
             children: [
               avatar,
               const SizedBox(width: 10),
-              Expanded(child: identity()),
+              Expanded(child: identity(context)),
             ],
           ),
         ),
@@ -62,14 +67,14 @@ class AccountMenu extends StatelessWidget {
         key: const Key('account-settings'),
         onPressed: onSettings,
         leadingIcon: const Icon(Icons.settings_outlined, size: 18),
-        child: const Text('개인 설정', style: TextStyle(fontSize: 12)),
+        child: Text(tr('개인 설정'), style: TextStyle(fontSize: 12)),
       ),
       if (onProjectSettings != null)
         MenuItemButton(
           key: const Key('project-settings'),
           onPressed: onProjectSettings,
           leadingIcon: const Icon(Icons.folder_outlined, size: 18),
-          child: const Text('프로젝트 설정', style: TextStyle(fontSize: 12)),
+          child: Text(tr('프로젝트 설정'), style: TextStyle(fontSize: 12)),
         ),
       if (onSignOut != null) ...[
         const Divider(height: 1),
@@ -77,7 +82,7 @@ class AccountMenu extends StatelessWidget {
           key: const Key('account-sign-out'),
           onPressed: onSignOut,
           leadingIcon: const Icon(Icons.logout_rounded, size: 18),
-          child: const Text('로그아웃', style: TextStyle(fontSize: 12)),
+          child: Text(tr('로그아웃'), style: TextStyle(fontSize: 12)),
         ),
       ],
     ],
@@ -94,7 +99,7 @@ class AccountMenu extends StatelessWidget {
     ),
   );
 
-  Widget identity() => Column(
+  Widget identity(BuildContext context) => Column(
     mainAxisSize: MainAxisSize.min,
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [

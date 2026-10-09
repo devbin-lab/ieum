@@ -1,21 +1,27 @@
 import 'package:flutter/material.dart';
 
+import 'app_localizations.dart';
 import 'models.dart';
+import 'workspace_ui.dart';
 
 enum SettingsSection {
   general('일반', '개인', Icons.tune_rounded, '버전 계정 이름'),
+  design('디자인', '개인', Icons.palette_outlined, '테마 라이트 다크 모드 색상 포인트'),
+  language('언어', '개인', Icons.language_rounded, '한국어 영어 번역 언어'),
   projectGeneral('일반', '프로젝트', Icons.folder_outlined, '저장 폴더 저장소'),
   notifications('알림', '프로젝트', Icons.notifications_none_rounded, '앱 알림함 작업 배정'),
-  team('참여자 관리', '프로젝트', Icons.people_outline_rounded, '팀원 역할 가입 승인'),
+  team('참여자 관리', '프로젝트', Icons.people_outline_rounded, '팀원 파트 가입 승인'),
   roles('파트', '프로젝트', Icons.admin_panel_settings_outlined, '파트 추가 수정 삭제 배정'),
   assignments('파트', '프로젝트', Icons.account_tree_outlined, '파트 추가 수정 삭제 배정'),
   workflow('작업 단계', '프로젝트', Icons.view_kanban_outlined, '칸반 상태 단계 추가 삭제'),
   github('GitHub 동기화', '통합', Icons.sync_rounded, '저장소 브랜치 PR 전송'),
-  changes('내 변경내역', '통합', Icons.history_rounded, '변경안 가져오기 내보내기');
+  changes('내 변경 기록', '통합', Icons.history_rounded, '변경안 가져오기 내보내기');
 
   const SettingsSection(this.title, this.group, this.icon, this.keywords);
   final String title, group, keywords;
   final IconData icon;
+
+  bool get isPersonal => this == general || this == design || this == language;
 }
 
 /// Independent navigation and content scrolling, following the desktop settings layout.
@@ -91,11 +97,10 @@ class _SettingsShellState extends State<SettingsShell> {
           (s) =>
               s != SettingsSection.assignments &&
               s != SettingsSection.workflow &&
-              (widget.personal == null ||
-                  (s == SettingsSection.general) == widget.personal) &&
-              '${s.title} ${s.group} ${s.keywords}'.toLowerCase().contains(
-                query,
-              ),
+              (widget.personal == null || s.isPersonal == widget.personal) &&
+              '${s.title} ${s.group} ${s.keywords} ${tr(s.title)} ${tr(s.group)}'
+                  .toLowerCase()
+                  .contains(query),
         )
         .toList();
     if (widget.navigationOnly) {
@@ -122,8 +127,10 @@ class _SettingsShellState extends State<SettingsShell> {
         content(compact: constraints.maxWidth < 760),
   );
 
-  Widget navigation(List<SettingsSection> sections, double width) =>
-      Material(color: Colors.white, child: navigationPane(sections, width));
+  Widget navigation(List<SettingsSection> sections, double width) => Material(
+    color: Theme.of(context).colorScheme.surface,
+    child: navigationPane(sections, width),
+  );
 
   Widget navigationPane(
     List<SettingsSection> sections,
@@ -131,10 +138,12 @@ class _SettingsShellState extends State<SettingsShell> {
   ) => Container(
     key: const Key('settings-navigation'),
     width: width,
-    padding: const EdgeInsets.fromLTRB(12, 18, 12, 12),
-    decoration: const BoxDecoration(
-      color: Colors.white,
-      border: Border(right: BorderSide(color: Color(0xffe1e4e3))),
+    padding: const EdgeInsets.fromLTRB(12, 24, 12, 12),
+    decoration: BoxDecoration(
+      color: Theme.of(context).colorScheme.surface,
+      border: Border(
+        right: BorderSide(color: Theme.of(context).colorScheme.outlineVariant),
+      ),
     ),
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -148,14 +157,20 @@ class _SettingsShellState extends State<SettingsShell> {
           const SizedBox(height: 18),
         ],
         Padding(
-          padding: const EdgeInsets.only(left: 8, bottom: 18),
+          padding: const EdgeInsets.only(left: 8, bottom: 16),
           child: Text(
-            widget.personal == null
-                ? '설정'
-                : widget.personal!
-                ? '개인 설정'
-                : '프로젝트 설정',
-            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+            tr(
+              widget.personal == null
+                  ? '설정'
+                  : widget.personal!
+                  ? '개인 설정'
+                  : '프로젝트 설정',
+            ),
+            style: TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w600,
+              color: Theme.of(context).colorScheme.onSurface,
+            ),
           ),
         ),
         if (widget.personal != true)
@@ -164,22 +179,22 @@ class _SettingsShellState extends State<SettingsShell> {
             controller: search,
             onChanged: (_) => setState(() {}),
             decoration: InputDecoration(
-              hintText: '검색',
+              hintText: tr('설정 검색'),
               prefixIcon: const Icon(Icons.search_rounded, size: 18),
               suffixIcon: search.text.trim().isEmpty
                   ? null
                   : IconButton(
-                      tooltip: '검색 지우기',
+                      tooltip: tr('검색 지우기'),
                       icon: const Icon(Icons.close_rounded, size: 16),
                       onPressed: () => setState(search.clear),
                     ),
-              fillColor: const Color(0xffecefee),
+              fillColor: Theme.of(context).colorScheme.surfaceContainerLow,
               border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(24),
+                borderRadius: BorderRadius.circular(8),
                 borderSide: BorderSide.none,
               ),
               enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(24),
+                borderRadius: BorderRadius.circular(8),
                 borderSide: BorderSide.none,
               ),
               contentPadding: const EdgeInsets.symmetric(
@@ -201,10 +216,12 @@ class _SettingsShellState extends State<SettingsShell> {
                       Padding(
                         padding: const EdgeInsets.fromLTRB(8, 12, 8, 8),
                         child: Text(
-                          group,
-                          style: const TextStyle(
+                          tr(group),
+                          style: TextStyle(
                             fontSize: 11,
-                            color: Color(0xff7d8380),
+                            color: Theme.of(context)
+                                .colorScheme
+                                .onSurfaceVariant,
                           ),
                         ),
                       ),
@@ -215,7 +232,8 @@ class _SettingsShellState extends State<SettingsShell> {
                         padding: const EdgeInsets.only(bottom: 4),
                         child: Material(
                           color: section == widget.selected
-                              ? const Color(0xffe9edeb)
+                              ? Theme.of(context).colorScheme.primary
+                                    .withValues(alpha: .1)
                               : Colors.transparent,
                           borderRadius: BorderRadius.circular(8),
                           child: InkWell(
@@ -234,13 +252,25 @@ class _SettingsShellState extends State<SettingsShell> {
                                   Icon(
                                     section.icon,
                                     size: 17,
-                                    color: const Color(0xff505753),
+                                    color: section == widget.selected
+                                        ? Theme.of(context).colorScheme.primary
+                                        : Theme.of(context)
+                                              .colorScheme
+                                              .onSurfaceVariant,
                                   ),
                                   const SizedBox(width: 10),
                                   Expanded(
                                     child: Text(
-                                      section.title,
-                                      style: const TextStyle(fontSize: 12),
+                                      tr(section.title),
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        fontWeight: section == widget.selected
+                                            ? FontWeight.w600
+                                            : FontWeight.w400,
+                                        color: Theme.of(context)
+                                            .colorScheme
+                                            .onSurface,
+                                      ),
                                     ),
                                   ),
                                 ],
@@ -252,9 +282,12 @@ class _SettingsShellState extends State<SettingsShell> {
                     const SizedBox(height: 12),
                   ],
                 if (sections.isEmpty)
-                  const Padding(
-                    padding: EdgeInsets.all(12),
-                    child: Text('검색 결과가 없습니다.', style: TextStyle(fontSize: 12)),
+                  Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Text(
+                      tr('검색 결과가 없습니다.'),
+                      style: const TextStyle(fontSize: 12),
+                    ),
                   ),
               ],
             ),
@@ -267,42 +300,48 @@ class _SettingsShellState extends State<SettingsShell> {
   Widget content({bool compact = false}) => contentPane(compact: compact);
 
   Widget contentPane({bool compact = false}) => Material(
-    color: Colors.white,
+    color: Theme.of(context).colorScheme.surface,
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Container(
           key: const Key('settings-page-header'),
           padding: EdgeInsets.fromLTRB(
-            compact ? 16 : 28,
-            20,
-            compact ? 16 : 28,
+            compact ? 16 : WorkspaceUi.contentPadding,
+            24,
+            compact ? 16 : WorkspaceUi.contentPadding,
             20,
           ),
-          decoration: const BoxDecoration(
-            border: Border(bottom: BorderSide(color: Color(0xffe8ebe9))),
+          decoration: BoxDecoration(
+            border: Border(
+              bottom: BorderSide(
+                color: Theme.of(context).colorScheme.outlineVariant,
+              ),
+            ),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                widget.selected.title,
+                tr(widget.selected.title),
                 key: const Key('settings-content-title'),
-                style: const TextStyle(
-                  fontSize: 24,
-                  fontWeight: FontWeight.w700,
-                  color: Color(0xff242825),
+                style: WorkspaceUi.titleStyle.copyWith(
+                  color: Theme.of(context).colorScheme.onSurface,
                 ),
               ),
               const SizedBox(height: 6),
               Text(
                 widget.personal == false
-                    ? '${widget.projectName ?? ''} · 이 프로젝트에만 적용'
-                    : '계정과 이 컴퓨터의 앱 설정을 관리합니다.',
+                    ? widget.projectName?.isNotEmpty == true
+                          ? '${widget.projectName} · ${tr('프로젝트 설정')}'
+                          : tr('프로젝트 설정')
+                    : tr('계정 및 앱 환경 설정'),
                 key: widget.personal == false
                     ? const Key('settings-project-scope')
                     : null,
-                style: const TextStyle(fontSize: 12, color: Color(0xff666e68)),
+                style: WorkspaceUi.captionStyle.copyWith(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
               ),
             ],
           ),
@@ -314,22 +353,16 @@ class _SettingsShellState extends State<SettingsShell> {
               key: const Key('settings-content-scroll'),
               controller: contentScroll,
               padding: EdgeInsets.fromLTRB(
-                compact ? 16 : 28,
+                compact ? 16 : WorkspaceUi.contentPadding,
                 24,
-                compact ? 16 : 28,
+                compact ? 16 : WorkspaceUi.contentPadding,
                 36,
               ),
-              child: Align(
-                alignment: Alignment.topLeft,
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 1120),
-                  child: SizedBox(
-                    width: double.infinity,
-                    child: KeyedSubtree(
-                      key: ValueKey(widget.selected),
-                      child: widget.contentBuilder(widget.selected),
-                    ),
-                  ),
+              child: SizedBox(
+                width: double.infinity,
+                child: KeyedSubtree(
+                  key: ValueKey(widget.selected),
+                  child: widget.contentBuilder(widget.selected),
                 ),
               ),
             ),
