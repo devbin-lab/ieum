@@ -121,6 +121,16 @@ Map<String, dynamic> _proposal(
   ],
 };
 
+WorkTask _handedOff(WorkTask base, ProjectManifest project) =>
+    applyDirectWorkflowRoute(
+      base,
+      directWorkflowRoute(base, project, 'manual-handoff')!,
+      project,
+      actorId: 'gh-2',
+      receiverGroup: 'part:role-pd',
+      purpose: 'work',
+    ).copy({'version': base.version + 1});
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   late _WorkflowApi api;
@@ -156,6 +166,7 @@ void main() {
     await write({
       ...project.json,
       'workflowStages': legacyFourStages.map((s) => s.json).toList(),
+      'workflowSheet': _sheet().json,
       'members': [
         project.people.first.json,
         _member(2, ['기획']).json,
@@ -163,11 +174,6 @@ void main() {
         _member(4, ['PD']).json,
       ],
     });
-    project = await session.saveWorkflowSheet(
-      _config,
-      _sheet(),
-      expectedSheet: project.workflowSheet,
-    );
     publisher = GitHubPublisher(api);
   });
   tearDown(() => session.signOut());
@@ -480,14 +486,6 @@ void main() {
         throwsA(isA<GitHubFailure>()),
       );
       await expectLater(
-        session.saveWorkflowSheet(_config, _sheet()),
-        throwsA(isA<GitHubFailure>()),
-      );
-      await expectLater(
-        session.saveWorkflowStages(_config, project.workflowStages),
-        throwsA(isA<GitHubFailure>()),
-      );
-      await expectLater(
         session.assign(_config, _member(3, ['기획'])),
         throwsA(isA<GitHubFailure>()),
       );
@@ -499,118 +497,26 @@ void main() {
     },
   );
 
-  test('sheet persists and rejects stale edits, missing parts and invalid receivers', () async {
-    final expected = project.workflowSheet!;
-    final moved = WorkflowSheet(
-      nodes: [
-        const WorkflowSheetNode('todo', 'todo', x: -220, y: 90),
-        ...expected.nodes.skip(1),
-      ],
-      routes: expected.routes,
-    );
-    project = await session.saveWorkflowSheet(
-      _config,
-      moved,
-      expectedSheet: expected,
-    );
-    expect(
-      (await publisher.project(_config)).workflowSheet!.nodes.first.x,
-      -220,
-    );
-    await expectLater(
-      session.saveWorkflowSheet(_config, expected, expectedSheet: expected),
-      throwsA(isA<GitHubFailure>()),
-    );
-    final invalidPart = WorkflowSheet(
-      nodes: moved.nodes,
-      routes: [
-        const WorkflowSheetRoute(
-          id: 'missing',
-          from: 'doing',
-          to: 'review',
-          destination: 'part:role-missing',
-        ),
-      ],
-    );
-    await expectLater(
-      session.saveWorkflowSheet(_config, invalidPart),
-      throwsA(isA<GitHubFailure>()),
-    );
-    await expectLater(
-      session.saveWorkflowSheet(_config, _sheet(person: 'gh-2')),
-      throwsA(isA<GitHubFailure>()),
-    );
-    final ordinaryTransition = WorkflowSheet(
-      nodes: moved.nodes,
-      routes: [
-        const WorkflowSheetRoute(id: 'finish', from: 'review', to: 'done'),
-      ],
-    );
-    final generic = await session.saveWorkflowSheet(
-      _config,
-      ordinaryTransition,
-    );
-    expect(generic.workflowSheet!.routes.single.action, 'advance');
-  });
-
-  test('part rename preserves stable routes and member assignment; unused deletion removes routes', () async {
-    project = await session.savePermissionPart(
-      _config,
-      const ProjectRole('role-pd', '디렉터', {}),
-      expectedPart: _pd,
-    );
-    expect(project.people.where((p) => p.parts.contains('디렉터')).length, 2);
-    expect(
-      project.workflowSheet!.routes
-          .firstWhere((r) => r.id == 'handoff')
-          .destination,
-      'part:role-pd',
-    );
-    project = await session.deletePermissionPart(
-      _config,
-      _pd.id,
-      expectedPart: const ProjectRole('role-pd', '디렉터', {}),
-    );
-    expect(project.roles.any((p) => p.id == _pd.id), isFalse);
-    expect(project.workflowSheet!.routes.map((r) => r.id), ['start']);
-    expect(project.people.every((p) => !p.parts.contains('디렉터')), isTrue);
-  });
-
-  test('first sheet save compares canonical defaults while explicit absence remains a CAS precondition', () async {
-    final legacy = {...project.json}..remove('workflowSheet');
-    await write(legacy);
-    final defaultView = project.workflowSheet!;
-    final raw = await session.readJson(_config, '.ieum/project.json');
-    expect((raw!['data'] as Map).containsKey('workflowSheet'), isFalse);
-    project = await session.saveWorkflowSheet(
-      _config,
-      defaultView,
-      expectedSheet: defaultView,
-    );
-    final saved = await session.readJson(_config, '.ieum/project.json');
-    expect((saved!['data'] as Map).containsKey('workflowSheet'), isTrue);
-    await expectLater(
-      session.saveWorkflowSheet(_config, _sheet(), expectedSheet: null),
-      throwsA(isA<GitHubFailure>()),
-    );
-  });
-
-  test('removing a stage removes its canvas nodes and routes in the same manifest revision', () async {
-    project = await session.saveWorkflowStages(
-      _config,
-      project.workflowStages.where((stage) => stage.id != 'review').toList(),
-      expectedStages: project.workflowStages,
-    );
-    expect(
-      project.workflowSheet!.nodes.any((n) => n.stageId == 'review'),
-      isFalse,
-    );
-    expect(project.workflowSheet!.routes.map((r) => r.id), ['start']);
-    expect(
-      (await publisher.project(_config)).workflowSheet!.routes.map((r) => r.id),
-      ['start'],
-    );
-  });
+  test(
+    'part rename preserves membership without restoring archived routes',
+    () async {
+      project = await session.savePermissionPart(
+        _config,
+        const ProjectRole('role-pd', '디렉터', {}),
+        expectedPart: _pd,
+      );
+      expect(project.people.where((p) => p.parts.contains('디렉터')).length, 2);
+      expect(project.workflowSheet!.routes, isEmpty);
+      project = await session.deletePermissionPart(
+        _config,
+        _pd.id,
+        expectedPart: const ProjectRole('role-pd', '디렉터', {}),
+      );
+      expect(project.roles.any((p) => p.id == _pd.id), isFalse);
+      expect(project.workflowSheet!.routes, isEmpty);
+      expect(project.people.every((p) => !p.parts.contains('디렉터')), isTrue);
+    },
+  );
 
   test('deletion cannot orphan a persisted receiver; a part-wide task keeps another active receiver', () async {
     final task = _task(
@@ -680,14 +586,7 @@ void main() {
     () async {
       final base = _task();
       api.addMainProposal(_proposal(project, base), base.id);
-      final route = project.workflowSheet!.routes.firstWhere(
-        (r) => r.id == 'handoff',
-      );
-      final next = applyWorkflowRoute(
-        base,
-        route,
-        project,
-      ).copy({'version': 2});
+      final next = _handedOff(base, project);
       await login(2);
       final receipt = await publisher.publish(_config, {
         'taskId': next.id,
@@ -709,7 +608,7 @@ void main() {
             ),
           )
           .reduce((a, b) => a.version > b.version ? a : b);
-      expect(accepted.status, 'review');
+      expect(accepted.status, 'todo');
       expect(accepted.workflowTarget, 'part:role-pd');
     },
   );
@@ -719,14 +618,7 @@ void main() {
     () async {
       final base = _task();
       api.addMainProposal(_proposal(project, base), base.id);
-      final route = project.workflowSheet!.routes.firstWhere(
-        (r) => r.id == 'handoff',
-      );
-      final next = applyWorkflowRoute(
-        base,
-        route,
-        project,
-      ).copy({'version': 2});
+      final next = _handedOff(base, project);
       await login(2);
       final receipt = await publisher.publish(_config, {
         'taskId': next.id,
@@ -738,7 +630,7 @@ void main() {
         ...project.json,
         'members': [
           for (final person in project.people)
-            {...person.json, if (person.id == 'gh-2') 'parts': <String>[]},
+            {...person.json, if (person.id == 'gh-2') 'enabled': false},
         ],
       });
       final main = api.refs['main'];
@@ -761,14 +653,7 @@ void main() {
     () async {
       final base = _task();
       api.addMainProposal(_proposal(project, base), base.id);
-      final route = project.workflowSheet!.routes.firstWhere(
-        (r) => r.id == 'handoff',
-      );
-      final next = applyWorkflowRoute(
-        base,
-        route,
-        project,
-      ).copy({'version': 2});
+      final next = _handedOff(base, project);
       await login(2);
       final receipt = await publisher.publish(_config, {
         'taskId': next.id,
@@ -803,10 +688,7 @@ void main() {
   test('active participants integrate validated peer PRs without a management grant', () async {
     final base = _task();
     api.addMainProposal(_proposal(project, base), base.id);
-    final route = project.workflowSheet!.routes.firstWhere(
-      (r) => r.id == 'handoff',
-    );
-    final next = applyWorkflowRoute(base, route, project).copy({'version': 2});
+    final next = _handedOff(base, project);
     await login(2);
     final receipt = await publisher.publish(_config, {
       'taskId': next.id,
@@ -848,7 +730,16 @@ void main() {
         'description': '',
       });
       store.transition(task.id, 'doing', expectedVersion: 1);
-      store.transition(task.id, 'review', expectedVersion: 2);
+      store.confirmHandoff(
+        store
+            .planHandoff(
+              store.find(task.id),
+              'todo',
+              routeId: 'manual-handoff',
+              purpose: 'review',
+            )
+            .withReceiver('part:role-pd', ''),
+      );
       final sent = store.find(task.id);
       expect(sent.version, 3);
       expect(sent.workflowTarget, 'part:role-pd');
@@ -861,7 +752,7 @@ void main() {
       expect(
         store
             .availableHandoffs(edited)
-            .any((plan) => plan.routeId == 'manual-finish'),
+            .any((plan) => plan.routeId == 'manual-start'),
         isTrue,
       );
       sync = GitHubSync(store, publisher: publisher);
@@ -869,7 +760,7 @@ void main() {
       await idle(sync);
       expect(api.prs.single['merged'], isTrue);
       expect(store.baseline[task.id]!.workflowTarget, 'part:role-pd');
-      expect(store.baseline[task.id]!.status, 'review');
+      expect(store.baseline[task.id]!.status, 'todo');
       expect(store.baseline[task.id]!.description, edited.description);
       expect(sync.jobs.single['state'], 'merged');
     } finally {
@@ -877,44 +768,4 @@ void main() {
       store.dispose();
     }
   });
-
-  test(
-    'integration rechecks the latest destination policy after upload',
-    () async {
-      final base = _task();
-      api.addMainProposal(_proposal(project, base), base.id);
-      final route = project.workflowSheet!.routes.firstWhere(
-        (r) => r.id == 'handoff',
-      );
-      final next = applyWorkflowRoute(
-        base,
-        route,
-        project,
-      ).copy({'version': 2});
-      await login(2);
-      final receipt = await publisher.publish(_config, {
-        'taskId': next.id,
-        'title': next.title,
-        'proposal': _proposal(project, next, base: base),
-      });
-      await login(1);
-      project = await session.saveWorkflowSheet(
-        _config,
-        _sheet(person: 'gh-3'),
-        expectedSheet: project.workflowSheet,
-      );
-      final main = api.refs['main'];
-      await expectLater(
-        publisher.integrateTask(
-          _config,
-          receipt.prUrl,
-          projectId: project.id,
-          founderId: project.founderId,
-        ),
-        throwsA(isA<GitHubFailure>()),
-      );
-      expect(api.refs['main'], main);
-      expect(api.prs.single['state'], 'open');
-    },
-  );
 }

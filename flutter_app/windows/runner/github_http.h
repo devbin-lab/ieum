@@ -9,8 +9,11 @@
 // Completes channel calls on the platform thread; network I/O uses workers.
 class GitHubHttp {
  public:
+  // Shared WinHTTP mechanics, isolated channels and provider allowlists.
+  enum class Service { github, discordWebhook };
   static constexpr UINT kCompletionMessage = WM_APP + 0x4E1;
-  GitHubHttp(flutter::BinaryMessenger* messenger, HWND window);
+  GitHubHttp(flutter::BinaryMessenger* messenger, HWND window,
+             Service service = Service::github);
   ~GitHubHttp();
   void Complete();
 

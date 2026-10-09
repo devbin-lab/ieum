@@ -272,10 +272,5 @@ void main() {
     expect(sync.jobs.single['state'], 'merged');
     expect(store.baseline[original.id]!.isDeleted, isTrue);
     expect(store.tasks, isEmpty);
-    expect(
-      await GitHubPublisher(api)
-          .workflowStageBlockers(config, project, {'done'}),
-      isEmpty,
-    );
   });
 }

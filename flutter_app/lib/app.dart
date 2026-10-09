@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:async';
 import 'dart:io';
 import 'dart:math';
 
@@ -44,6 +45,9 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'project_connections_view.dart';
 import 'project_timeline_view.dart';
 import 'project_shortcuts_view.dart';
+import 'discord_service.dart';
+import 'discord_settings.dart';
+import 'discord_models.dart';
 
 const purple = Color(0xff7963d5),
     ink = Color(0xff302b3c),
@@ -107,25 +111,6 @@ Widget avatar(Person p, {double size = 28}) {
   );
 }
 
-Widget heading(String title, String subtitle) => Builder(
-  builder: (context) => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      Text(
-        title,
-        style: const TextStyle(fontSize: 19, fontWeight: FontWeight.w700),
-      ),
-      const SizedBox(height: 8),
-      Text(
-        subtitle,
-        style: TextStyle(
-          fontSize: 11,
-          color: Theme.of(context).colorScheme.onSurfaceVariant,
-        ),
-      ),
-    ],
-  ),
-);
 String shortId(String id) => id.startsWith('TASK-')
     ? 'IE-${id.substring(id.length - 6).toUpperCase()}'
     : id;
@@ -337,9 +322,23 @@ class _WorkspaceState extends State<Workspace>
     mentionsOnly: myMentionsOnly,
   );
   TaskStore get s => widget.store;
+  DiscordService? discord;
+  void _attachDiscord() {
+    discord?.dispose();
+    discord =
+        s.isProject &&
+            widget.sync != null &&
+            widget.session != null &&
+            widget.sync!.config.slug.isNotEmpty
+        ? DiscordService(store: s, sync: widget.sync!, session: widget.session!)
+        : null;
+    if (discord != null) unawaited(discord!.start());
+  }
+
   @override
   void initState() {
     super.initState();
+    _attachDiscord();
     projectViewOpen =
         s.meta('ui.projectView') != 'closed' &&
         (widget.projectSwitcherBuilder != null ||
@@ -352,16 +351,21 @@ class _WorkspaceState extends State<Workspace>
       if (savedPage is int && savedPage >= 0 && savedPage <= 8) {
         // The old home combined schedule and task management. Preserve that
         // content under Tasks once, then respect future Schedule selections.
-        page = migrateSavedView && (savedPage == 0 || savedPage == 3)
+        page = savedPage == 3
+            ? 2
+            : migrateSavedView && savedPage == 0
             ? 6
             : savedPage;
       }
       settingsSection = page == 1
           ? SettingsSection.changes
-          : SettingsSection.values
-                    .where((v) => v.name == saved['settings'])
-                    .firstOrNull ??
-                SettingsSection.general;
+          : savedPage == 3
+          ? SettingsSection.projectGeneral
+          : SettingsSection.fromSaved(saved['settings']);
+      migrateSavedView =
+          migrateSavedView ||
+          savedPage == 3 ||
+          const {'assignments', 'workflow'}.contains(saved['settings']);
       taskView = saved['view'] == 'kanban' ? TaskView.kanban : TaskView.list;
       lastWorkPage = const {0, 6}.contains(saved['lastWorkPage'])
           ? saved['lastWorkPage'] as int
@@ -386,6 +390,16 @@ class _WorkspaceState extends State<Workspace>
   }
 
   bool projectViewInitialized = false;
+  @override
+  void didUpdateWidget(covariant Workspace oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.store != widget.store ||
+        oldWidget.sync != widget.sync ||
+        oldWidget.session != widget.session) {
+      _attachDiscord();
+    }
+  }
+
   bool get hasProjectSidebar =>
       page == 0 || page == 5 || page == 6 || page == 7 || page == 8;
   bool get isTaskPage => page == 6;
@@ -411,6 +425,7 @@ class _WorkspaceState extends State<Workspace>
 
   @override
   void dispose() {
+    discord?.dispose();
     _standalonePreferences.dispose();
     taskSearch.dispose();
     _projectViewAnimation.dispose();
@@ -1467,15 +1482,6 @@ class _WorkspaceState extends State<Workspace>
                     onSelected: selectSettings,
                     contentBuilder: settingsContent,
                     contentOnly: true,
-                    workflowStages:
-                        s.project?.workflowStages ?? defaultWorkflowStages,
-                    workflowProjectId: s.project?.id,
-                    workflowRoles:
-                        s.project?.partWorkflowView.roles ?? const [],
-                    workflowPeople:
-                        s.project?.partWorkflowView.people ?? const [],
-                    workflowParts:
-                        s.project?.partWorkflowView.parts ?? const [],
                   ),
           ),
         ],
@@ -2967,7 +2973,7 @@ class _WorkspaceState extends State<Workspace>
       child: const LanguageSettings(),
     ),
     SettingsSection.projectGeneral => projectGeneralSettings(),
-    SettingsSection.roles || SettingsSection.assignments =>
+    SettingsSection.roles =>
       s.isProject && widget.session != null && widget.sync != null
           ? RolesPanel(
               store: s,
@@ -2997,33 +3003,174 @@ class _WorkspaceState extends State<Workspace>
               }),
             )
           : info(tr('프로젝트에 로그인하면 참여자와 파트, 가입 요청을 관리할 수 있습니다.')),
-    SettingsSection.workflow => info(
-      tr('확인중 → 진행중 → 검토중 → 완료. 전달하면 확인중으로 이동하며, 보류와 드랍에서 복귀할 수 있습니다.'),
-    ),
     SettingsSection.github =>
       widget.sync != null
           ? GitHubPanel(sync: widget.sync!)
           : info(tr('프로젝트 저장소에 연결하면 동기화 상태와 전송 대기열을 확인할 수 있습니다.')),
     SettingsSection.changes => changesPanel(),
-    SettingsSection.notifications => Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        settingsGroup(tr('작업 알림'), [
-          (
-            tr('내 알림'),
-            tr('작업 배정, 검토 요청, 검토 결과를 확인합니다.'),
-            tr('{value0}개 읽지 않음', args: {'value0': s.unreadNotificationCount}),
-          ),
-        ]),
-        const SizedBox(height: 16),
-        OutlinedButton.icon(
-          onPressed: notifications,
-          icon: const Icon(Icons.notifications_none_rounded, size: 18),
-          label: Text(tr('알림 열기')),
-        ),
-      ],
-    ),
+    SettingsSection.notifications =>
+      discord == null
+          ? Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                settingsGroup(tr('작업 알림'), [
+                  (
+                    tr('내 알림'),
+                    tr('작업 배정, 검토 요청, 검토 결과를 확인합니다.'),
+                    tr(
+                      '{value0}개 읽지 않음',
+                      args: {'value0': s.unreadNotificationCount},
+                    ),
+                  ),
+                ]),
+                const SizedBox(height: 16),
+                OutlinedButton.icon(
+                  onPressed: notifications,
+                  icon: const Icon(Icons.notifications_none_rounded, size: 18),
+                  label: Text(tr('알림 열기')),
+                ),
+              ],
+            )
+          : discordSettings(),
   };
+
+  Widget discordSettings() => AnimatedBuilder(
+    animation: discord!,
+    builder: (context, _) {
+      final service = discord!;
+      final config = service.configuration;
+      final deliveries = service.outbox.history(
+        'discord_deliveries',
+        limit: 200,
+        includeCancelled: false,
+      );
+      final waitingEvents = service.outbox.waitingEvents(limit: 200);
+      final eventIds = deliveries
+          .map((item) => item['eventId'])
+          .whereType<String>()
+          .toSet();
+      final eventById = {
+        for (final id in eventIds) id: ?service.outbox.event(id),
+      };
+      final history = <DiscordDeliveryView>[
+        for (final item in deliveries)
+          if (item['state'] != 'cancelled' &&
+              eventById[item['eventId']] != null)
+            DiscordDeliveryView(
+              id: item['id'] as String,
+              title: eventById[item['eventId']]!['title'] as String,
+              channelName: (item['route'] as Map)['channelName'] as String,
+              state: switch (item['state']) {
+                'sending' => DiscordDeliveryState.sending,
+                'delivered' => DiscordDeliveryState.delivered,
+                'failed' => DiscordDeliveryState.failed,
+                'uncertain' => DiscordDeliveryState.uncertain,
+                'blocked' => DiscordDeliveryState.blocked,
+                _ => DiscordDeliveryState.ready,
+              },
+              createdAt:
+                  DateTime.tryParse(item['createdAt'] as String? ?? '') ??
+                  DateTime.now(),
+              safeError: item['error'] as String?,
+            ),
+        for (final item in waitingEvents)
+          DiscordDeliveryView(
+            id: 'event:${item['id']}',
+            title: item['title'] as String,
+            channelName: (item['routes'] as List)
+                .map((r) => r['channelName'])
+                .join(' · '),
+            state: DiscordDeliveryState.waitingIntegration,
+            createdAt:
+                DateTime.tryParse(item['createdAt'] as String? ?? '') ??
+                DateTime.now(),
+          ),
+      ]..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      return DiscordNotificationsSettings(
+        projectConnected: true,
+        canManageChannels:
+            s.owns &&
+            (config == null || service.fingerprint == config.ownerPublicKey),
+        currentMemberName: s.actor.name,
+        discordUserId: s.actor.discordUserId,
+        channels: [
+          for (final route in config?.routes ?? const <DiscordRoute>[])
+            DiscordChannelView(
+              id: route.routeId,
+              name: route.channelName,
+              enabled: route.enabled,
+              events: route.effectiveEventTypes
+                  .map(
+                    (type) => switch (type) {
+                      DiscordEventType.assigned =>
+                        DiscordNoticeEvent.assignment,
+                      DiscordEventType.handedOff => DiscordNoticeEvent.handoff,
+                      DiscordEventType.completed =>
+                        DiscordNoticeEvent.completed,
+                      DiscordEventType.statusChanged =>
+                        DiscordNoticeEvent.statusChanged,
+                    },
+                  )
+                  .toSet(),
+              partIds: route.partIds.toSet(),
+              hasLocalCredential: service.availableCredentials.contains(
+                route.routeId,
+              ),
+            ),
+        ],
+        parts: [
+          for (final part in s.project!.roles)
+            DiscordPartOption(part.id, part.name),
+        ],
+        members: [
+          for (final person in s.people.where((p) => p.active))
+            DiscordMemberOption(person.id, person.name, login: person.login),
+        ],
+        deviceState: service.ready
+            ? DiscordDeviceState.connected
+            : !service.hasTrustedPairing
+            ? DiscordDeviceState.disconnected
+            : DiscordDeviceState.pending,
+        ownDeviceFingerprint: service.fingerprint,
+        deviceRequests: [
+          for (final request in service.requests)
+            DiscordDeviceRequestView(
+              id: request.device.deviceId,
+              memberName: s.member(request.githubUserId).name,
+              login: s.member(request.githubUserId).login,
+              deviceName: request.device.deviceId,
+              fingerprint: request.device.signingPublicKey,
+            ),
+        ],
+        approvedDevices: [
+          for (final device
+              in config?.devices ?? const <DiscordDeviceCertificate>[])
+            if (!device.revoked)
+              DiscordApprovedDeviceView(
+                id: device.deviceId,
+                memberName: s.member(device.githubUserId).name,
+                deviceName: device.deviceId,
+                isCurrentDevice: device.deviceId == service.deviceId,
+              ),
+        ],
+        onSaveDiscordId: service.saveDiscordId,
+        onSaveChannel: service.saveChannel,
+        onDeleteChannel: service.deleteChannel,
+        onToggleChannel: service.toggleChannel,
+        onCreatePairingCode: service.createPairingCode,
+        onClaimPairingCode: service.claimPairingCode,
+        onDecideDevice: service.decideDevice,
+        onRevokeDevice: service.revokeDevice,
+        onRefresh: service.refresh,
+        unreadCount: s.unreadNotificationCount,
+        onOpenInbox: notifications,
+        deliverySummary: service.notice.isEmpty ? null : service.notice,
+        deliveryHistory: history.take(200).toList(),
+        onRetryDelivery: service.retry,
+        onCancelDelivery: service.cancel,
+      );
+    },
+  );
 
   bool nameBusy = false;
   String nameNotice = '';

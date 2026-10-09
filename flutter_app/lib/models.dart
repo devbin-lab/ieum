@@ -553,12 +553,14 @@ class Person {
     this.color, {
     this.login = '',
     this.parts = const [],
+    this.discordUserId = '',
     this.customRole,
     this.enabled = true,
     this.partPermissions,
     this.workflowParticipant = false,
   });
   final bool enabled;
+  final String discordUserId;
   final ProjectRole? customRole;
   final List<ProjectRole>? partPermissions;
   final bool workflowParticipant;
@@ -610,6 +612,7 @@ class Person {
     color,
     login: login,
     parts: parts,
+    discordUserId: discordUserId,
     enabled: enabled,
     workflowParticipant: workflowParticipant,
     customRole: roles.where((r) => r.id == role).firstOrNull,
@@ -627,6 +630,7 @@ class Person {
     'enabled': enabled,
     'login': login,
     'parts': parts,
+    if (discordUserId.isNotEmpty) 'discordUserId': discordUserId,
   };
   factory Person.fromJson(Map<String, dynamic> data) {
     final id = data['id'],
@@ -635,6 +639,7 @@ class Person {
             ? data['assignedRole']
             : data['role'],
         login = data['login'];
+    final discordUserId = data['discordUserId'] ?? '';
     if (id is! String ||
         !RegExp(r'^gh-[0-9]+$').hasMatch(id) ||
         name is! String ||
@@ -646,7 +651,10 @@ class Person {
             !roleLabels.containsKey(role) &&
                 !RegExp(r'^role-[a-zA-Z0-9-]{1,60}$').hasMatch(role)) ||
         data['parts'] is! List ||
-        data.containsKey('enabled') && data['enabled'] is! bool) {
+        data.containsKey('enabled') && data['enabled'] is! bool ||
+        discordUserId is! String ||
+        discordUserId.isNotEmpty &&
+            !RegExp(r'^[0-9]{17,20}$').hasMatch(discordUserId)) {
       throw StateError('참여자 정보가 올바르지 않습니다.');
     }
     final parts = List<String>.from(data['parts']);
@@ -661,6 +669,7 @@ class Person {
       0xff7963d5,
       login: login,
       parts: List.unmodifiable(parts),
+      discordUserId: discordUserId,
       enabled: data['enabled'] as bool? ?? data['role'] != 'disabled',
     );
   }
@@ -771,6 +780,7 @@ class ProjectManifest {
             p.color,
             login: p.login,
             enabled: p.enabled,
+            discordUserId: p.discordUserId,
             parts: {
               for (final part in p.parts)
                 if (partNames[part] != null) partNames[part]!,
@@ -857,6 +867,7 @@ class ProjectManifest {
             p.color,
             login: p.login,
             enabled: p.enabled,
+            discordUserId: p.discordUserId,
             parts: {
               for (final part in p.parts)
                 if (partNames[part] != null) partNames[part]!,
@@ -888,6 +899,7 @@ class ProjectManifest {
               login: p.login,
               parts: p.parts.where(parts.contains).toList(),
               enabled: p.enabled,
+              discordUserId: p.discordUserId,
             ).resolved(
               roles,
               unifiedParts: unifiedParts,

@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 
 import 'app_localizations.dart';
-import 'models.dart';
 import 'workspace_ui.dart';
 
 enum SettingsSection {
@@ -9,11 +8,14 @@ enum SettingsSection {
   design('디자인', '개인', Icons.palette_outlined, '테마 라이트 다크 모드 색상 포인트'),
   language('언어', '개인', Icons.language_rounded, '한국어 영어 번역 언어'),
   projectGeneral('일반', '프로젝트', Icons.folder_outlined, '저장 폴더 저장소'),
-  notifications('알림', '프로젝트', Icons.notifications_none_rounded, '앱 알림함 작업 배정'),
+  notifications(
+    '알림',
+    '프로젝트',
+    Icons.notifications_none_rounded,
+    '앱 알림함 작업 배정 Discord 채널 웹훅 멘션',
+  ),
   team('참여자 관리', '프로젝트', Icons.people_outline_rounded, '팀원 파트 가입 승인'),
   roles('파트', '프로젝트', Icons.admin_panel_settings_outlined, '파트 추가 수정 삭제 배정'),
-  assignments('파트', '프로젝트', Icons.account_tree_outlined, '파트 추가 수정 삭제 배정'),
-  workflow('작업 단계', '프로젝트', Icons.view_kanban_outlined, '칸반 상태 단계 추가 삭제'),
   github('GitHub 동기화', '통합', Icons.sync_rounded, '저장소 브랜치 PR 전송'),
   changes('내 변경 기록', '통합', Icons.history_rounded, '변경안 가져오기 내보내기');
 
@@ -22,6 +24,12 @@ enum SettingsSection {
   final IconData icon;
 
   bool get isPersonal => this == general || this == design || this == language;
+
+  static SettingsSection fromSaved(Object? name) => switch (name) {
+    'assignments' => roles,
+    'workflow' => projectGeneral,
+    _ => values.where((section) => section.name == name).firstOrNull ?? general,
+  };
 }
 
 /// Independent navigation and content scrolling, following the desktop settings layout.
@@ -36,13 +44,6 @@ class SettingsShell extends StatefulWidget {
     this.projectSelector,
     this.navigationOnly = false,
     this.contentOnly = false,
-    this.workflowAutomationBuilder,
-    this.workflowDefinitionBuilder,
-    this.workflowStages = defaultWorkflowStages,
-    this.workflowProjectId,
-    this.workflowRoles = const [],
-    this.workflowPeople = const [],
-    this.workflowParts = const [],
   });
 
   final bool? personal;
@@ -53,13 +54,6 @@ class SettingsShell extends StatefulWidget {
   final SettingsSection selected;
   final ValueChanged<SettingsSection> onSelected;
   final Widget Function(SettingsSection) contentBuilder;
-  final Widget Function()? workflowAutomationBuilder;
-  final Widget Function()? workflowDefinitionBuilder;
-  final List<WorkflowStage> workflowStages;
-  final String? workflowProjectId;
-  final List<ProjectRole> workflowRoles;
-  final List<Person> workflowPeople;
-  final List<String> workflowParts;
 
   @override
   State<SettingsShell> createState() => _SettingsShellState();
@@ -95,8 +89,6 @@ class _SettingsShellState extends State<SettingsShell> {
     final sections = SettingsSection.values
         .where(
           (s) =>
-              s != SettingsSection.assignments &&
-              s != SettingsSection.workflow &&
               (widget.personal == null || s.isPersonal == widget.personal) &&
               '${s.title} ${s.group} ${s.keywords} ${tr(s.title)} ${tr(s.group)}'
                   .toLowerCase()

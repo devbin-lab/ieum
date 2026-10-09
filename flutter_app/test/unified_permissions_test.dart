@@ -14,7 +14,6 @@ import 'package:ieum_flutter/roles_panel.dart';
 import 'package:ieum_flutter/settings_shell.dart';
 import 'package:ieum_flutter/store.dart';
 import 'package:ieum_flutter/team_panel.dart';
-import 'package:ieum_flutter/workflow_sheet_handoff.dart';
 
 import 'github_oauth_test.dart' show MemoryVault;
 import 'github_sync_test.dart' show FakeGitHubApi;
@@ -67,18 +66,6 @@ void main() {
     expect(project.roles.single.id, planning.id);
     final loaded = await session.loadProject(config);
     expect(loaded.parts, ['기획']);
-    expect(sheetHandoffGroups(loaded.roles, loaded.parts), {
-      '': '모든 작업자',
-      'part:role-plan': '파트 · 기획',
-      'role:owner': '관리자',
-    });
-    for (final oldCall in [
-      () => session.saveParts(config, []),
-      () => session.saveRole(config, review),
-      () => session.deleteRole(config, planning.id),
-    ]) {
-      await expectLater(oldCall(), throwsA(isA<GitHubFailure>()));
-    }
     expect((await session.loadProject(config)).parts, ['기획']);
   });
 

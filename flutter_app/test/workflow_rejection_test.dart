@@ -146,7 +146,6 @@ void main() {
     expect(store.canCreate, isTrue);
     final created = store.save(draft());
     expect(created.status, 'todo');
-    expect(store.workflowFlowLabel, '확인중 → 진행중 → 검토 → 완료');
     store.setMeta('profile', worker.id);
     store.transition(created.id, 'doing', expectedVersion: created.version);
     expect(store.canMove(store.find(created.id), 'done'), isTrue);

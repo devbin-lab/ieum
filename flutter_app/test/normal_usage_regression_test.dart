@@ -8,6 +8,7 @@ import 'package:ieum_flutter/store.dart';
 
 import 'github_auto_merge_test.dart' show AutoMergeApi;
 import 'github_sync_test.dart' show idle;
+import 'legacy_project_fixture.dart';
 
 class CountingApi extends AutoMergeApi {
   @override
@@ -339,7 +340,7 @@ void main() {
     },
   );
 
-  test('same-status delivery return and offline shared editing converge before final completion', () async {
+  test('delivery comments and offline shared editing converge before final completion', () async {
     final api = CountingApi();
     final (session, store, sync) = await setup(api, normal);
     addTearDown(() {
@@ -349,16 +350,22 @@ void main() {
     });
     final initial = store.project!;
     store.updateProject(
-      await session.saveWorkflowSheet(
+      await writeLegacyProjectFixture(
+        session,
         normal,
-        initial.workflowSheet!,
-        expectedProjectId: initial.id,
-        expectedSheet: initial.workflowSheet,
+        overrides: {'workflowSheet': initial.workflowSheet!.json},
       ),
     );
-    expect(store.customWorkflowStageIds, ['todo', 'doing', 'done']);
+    expect(store.customWorkflowStageIds, [
+      'todo',
+      'doing',
+      'review',
+      'done',
+      'hold',
+      'drop',
+    ]);
     expect(store.workflowStatuses.containsKey('rework'), isFalse);
-    final saved = store.save(input('검토·반려 흐름'));
+    final saved = store.save(input('작업 전달과 코멘트'));
     await idle(sync);
     void move(
       String status, {
@@ -378,14 +385,17 @@ void main() {
 
     move('doing', route: 'manual-start');
     await idle(sync);
-    move('doing', route: 'manual-handoff', purpose: 'review');
+    move('todo', route: 'manual-handoff', purpose: 'review');
     await idle(sync);
     expect(store.find(saved.id).workflowPurpose, 'review');
-    expect(store.find(saved.id).status, 'doing');
-    expect(() => move('doing', route: 'manual-return'), throwsStateError);
-    move('doing', route: 'manual-return', reason: '일반 검토 의견');
+    expect(store.find(saved.id).status, 'todo');
+    store.addTaskComment(
+      saved.id,
+      '일반 검토 의견',
+      expectedVersion: store.find(saved.id).version,
+    );
     await idle(sync);
-    expect(store.find(saved.id).reworkReason, '일반 검토 의견');
+    expect(store.find(saved.id).comments, hasLength(1));
     store.setMeta(
       'github.config',
       jsonEncode({...normal.toJson(), 'enabled': false}),
@@ -395,10 +405,12 @@ void main() {
       ...current.data,
       'description': '오프라인에서 정상 수정',
     }, expectedVersion: current.version);
-    move('doing', route: 'manual-handoff', purpose: 'review');
+    move('review', route: 'manual-start');
+    move('todo', route: 'manual-handoff', purpose: 'work');
     await sync.connect(normal);
     await idle(sync);
-    expect(store.find(saved.id).status, 'doing');
+    expect(store.find(saved.id).status, 'todo');
+    move('doing', route: 'manual-start');
     move('done', route: 'manual-finish');
     await idle(sync);
     expect(store.baseline[saved.id]!.status, 'done');

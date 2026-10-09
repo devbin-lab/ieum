@@ -1,10 +1,10 @@
 # 이음 · IEUM
 
-**소스 버전 1.0.0 · GitHub 기반 팀 작업 공간**
+**1.0.0 · GitHub 기반 팀 작업 공간**
 
 이음은 팀의 작업, 일정, 자료와 변경 기록을 한곳에서 관리하는 데스크톱 앱입니다. GitHub 저장소를 팀 데이터의 기준으로 사용하고, 각자의 컴퓨터에는 SQLite로 작업을 저장합니다. 작업을 등록하고 다음 담당자에게 전달하며, 필요한 작업만 잠가 편집 범위를 지정할 수 있습니다.
 
-[사용 안내](flutter_app/README.md) · [릴리즈 목록](https://github.com/devbin-lab/ieum/releases) · [이전 Beta 배포 기록](https://github.com/devbin-lab/ieum/releases/tag/beta)
+[Windows 1.0.0 다운로드](https://github.com/devbin-lab/ieum/releases/tag/v1.0.0) · [사용 안내](flutter_app/README.md) · [이전 Beta 배포 기록](https://github.com/devbin-lab/ieum/releases/tag/beta)
 
 ## 주요 기능
 
@@ -19,7 +19,7 @@
 | 참여자·파트 | 가입 승인, 사용자 지정 파트 추가·수정·삭제와 참여자 배정 |
 | 팀 바로가기 | 팀 도구 링크 공유, 사이트 아이콘 탐색, 검색과 개인 즐겨찾기 |
 | 디자인·언어 | 라이트·다크 모드, 포인트 컬러, 한국어·영어 |
-| Discord 알림 · 개발본 | 채널별 웹훅 연결, 배정·전달·상태 변경·완료 알림과 담당자 멘션 |
+| Discord 알림 | 채널별 웹훅 연결, 배정·전달·상태 변경·완료 알림과 담당자 멘션 |
 | GitHub 동기화 | 작업별 변경 제출·PR·검증·통합, 충돌 확인과 전송 복구 기록 |
 
 ## 시작하기
@@ -50,7 +50,7 @@ Windows 배포 파일은 릴리즈 목록에서 관리합니다. EXE 배포본�
 
 ## Discord 채널 알림
 
-아래 기능은 현재 로컬 개발본에 구현되어 있으며, 공개 소스와 새 배포본 반영은 별도로 진행합니다.
+Windows 1.0.0에 포함된 기능입니다. 별도 서버나 공용 봇 없이 Discord 웹훅을 사용합니다.
 
 프로젝트 소유자가 Discord 채널의 웹훅을 등록하고, 받을 알림 종류와 담당 파트를 선택합니다. 참여자는 본인의 숫자 Discord 사용자 ID를 등록해 멘션을 받을 수 있습니다.
 

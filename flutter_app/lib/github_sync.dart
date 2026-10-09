@@ -9,6 +9,7 @@ import 'store.dart';
 import 'models.dart';
 import 'github_http.dart';
 import 'task_resource_storage.dart';
+import 'discord_outbox.dart';
 
 part 'github_auto_merge.dart';
 part 'sync_payload.dart';
@@ -811,60 +812,6 @@ class GitHubPublisher {
     ];
   }
 
-  /// Removing or reclassifying a status must not reinterpret existing issues.
-  Future<List<String>> workflowStageBlockers(
-    GitHubConfig config,
-    ProjectManifest project,
-    Set<String> stageIds,
-  ) async {
-    if (stageIds.isEmpty) return const [];
-    final snapshot = (await pull(config, ''))!;
-    final remote = _RemoteTasks(snapshot, project.id);
-    if (remote.blocked.isNotEmpty || remote.uncertain) {
-      throw const GitHubFailure('손상된 작업을 복구한 뒤 작업 단계를 삭제하세요.');
-    }
-    final blockers = <String>{
-      for (final task in remote.tasks.values)
-        if (!task.isDeleted && stageIds.contains(task.status)) task.title,
-    };
-    for (final pr in await openRequests(config)) {
-      if (!(pr['head']['ref'] as String).startsWith('ieum/tasks/')) continue;
-      try {
-        final reviewed = await review(config, pr['html_url'] as String);
-        for (final file in reviewed['files'] as List) {
-          final path = file['filename'] as String;
-          final blob = await api.call(
-            'GET',
-            '/repos/${config.slug}/contents/$path',
-            query: {'ref': reviewed['sha'] as String},
-          );
-          final proposal = _decodeTaskProposal(blob, path: path);
-          if (proposal['projectId'] != project.id) continue;
-          final change = (proposal['changes'] as List).single as Map;
-          final task = WorkTask.fromJson(
-            Map<String, dynamic>.from(change['task']),
-          );
-          final base = change['base'] == null
-              ? null
-              : WorkTask.fromJson(Map<String, dynamic>.from(change['base']));
-          final steps = parseWorkflowRevisions(change['steps']) ?? const [];
-          if (stageIds.contains(task.status) ||
-              base != null && stageIds.contains(base.status) ||
-              steps.any((step) => stageIds.contains(step.status))) {
-            blockers.add('통합 대기 PR #${pr['number']} · ${task.title}');
-          }
-        }
-      } on GitHubFailure catch (_) {
-        blockers.add('확인할 수 없는 대기 PR #${pr['number']}');
-      } on StateError catch (_) {
-        blockers.add('확인할 수 없는 대기 PR #${pr['number']}');
-      } on FormatException catch (_) {
-        blockers.add('확인할 수 없는 대기 PR #${pr['number']}');
-      }
-    }
-    return blockers.toList();
-  }
-
   Future<List<Map<String, dynamic>>> openRequests(GitHubConfig config) async {
     final all = <Map<String, dynamic>>[];
     final seen = <dynamic>{};
@@ -1012,6 +959,7 @@ class GitHubSync extends ChangeNotifier {
     store.addListener(_onStoreChange);
   }
   final TaskStore store;
+  bool get isDisposed => _disposed;
   late final GitHubPublisher publisher;
   TaskResourceStorage? _resourceStorage;
   TaskResourceStorage get resourceStorage =>
@@ -1511,6 +1459,9 @@ class GitHubSync extends ChangeNotifier {
         [job['revision'], jsonEncode(job)],
       );
       if (job['state'] == 'merged') {
+        store.transaction(
+          () => DiscordOutbox(store.db).integrated(job, store.profileId),
+        );
         final version =
             (job['proposal']['changes'] as List).single['task']['version'];
         // A confirmed latest receipt subsumes older submissions by this author.

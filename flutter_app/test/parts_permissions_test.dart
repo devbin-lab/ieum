@@ -10,7 +10,6 @@ import 'package:ieum_flutter/roles_panel.dart';
 import 'package:ieum_flutter/settings_shell.dart';
 import 'package:ieum_flutter/store.dart';
 import 'package:ieum_flutter/task_editor.dart';
-import 'package:ieum_flutter/workflow_sheet_handoff.dart';
 
 import 'github_oauth_test.dart' show MemoryVault;
 import 'github_sync_test.dart' show FakeGitHubApi;
@@ -48,7 +47,6 @@ void main() {
       expect(parsed.parts, isEmpty);
       expect(parsed.people.single.parts, isEmpty);
       expect(ProjectManifest.fromJson(parsed.json).parts, isEmpty);
-      expect(sheetHandoffGroups([], []), {'': '모든 작업자', 'role:owner': '관리자'});
     },
   );
 
@@ -85,9 +83,6 @@ void main() {
     expect((await session.loadProject(config)).parts, ['기획']);
     project = await session.savePermissionPart(config, role);
     expect(project.people.last.parts, isEmpty);
-    final groups = sheetHandoffGroups(project.roles, project.parts);
-    expect(groups['part:${role.id}'], '파트 · 디렉터');
-    expect(groups.containsKey('part:아트'), isFalse);
   });
 
   test('duplicate, blank and stale part changes do not overwrite the remote catalogue', () async {
@@ -122,10 +117,6 @@ void main() {
         planning,
         expectedProjectId: 'another',
       ),
-      throwsA(isA<GitHubFailure>()),
-    );
-    await expectLater(
-      session.saveParts(config, ['기획']),
       throwsA(isA<GitHubFailure>()),
     );
   });
@@ -280,7 +271,6 @@ void main() {
         );
         await tester.pumpAndSettle();
         expect(SettingsSection.roles.title, '파트');
-        expect(SettingsSection.assignments.title, '파트');
         await tester.ensureVisible(find.byKey(const Key('system-roles')));
         await tester.tap(find.byKey(const Key('system-roles')));
         await tester.pumpAndSettle();

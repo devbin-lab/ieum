@@ -4,9 +4,6 @@ import 'package:flutter/material.dart';
 
 import 'models.dart';
 
-const permissionGroups = {
-  '참여자 · 역할 관리': ['member.manage', 'role.manage'],
-};
 const permissionDescriptions = {
   'member.manage': '참여 요청을 승인하고 일반 참여자의 파트와 활성 상태를 관리합니다.',
   'role.manage': '파트와 역할을 추가·수정·삭제하고 관리 권한을 설정합니다.',

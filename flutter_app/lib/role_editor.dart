@@ -95,7 +95,7 @@ Future<ProjectRole?> showProjectRoleDialog(
                   ),
                   const SizedBox(height: 12),
                   Text(
-                    tr('작업 등록·진행·검토·통합은 기본 허용됩니다. 작업 전달 조건은 자동화 시트에서 설정합니다.'),
+                    tr('작업은 누구나 등록하고 수정할 수 있습니다. 잠근 작업은 지정된 담당자만 수정할 수 있습니다.'),
                     style: TextStyle(fontSize: 12),
                   ),
                   const SizedBox(height: 14),

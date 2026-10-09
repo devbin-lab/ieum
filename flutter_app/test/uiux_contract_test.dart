@@ -24,6 +24,7 @@ import 'github_auto_merge_test.dart' show AutoMergeApi;
 import 'github_oauth_test.dart' show MemoryVault;
 import 'project_test.dart' show member, task;
 import 'v020_store_test.dart' show legacyFourStages;
+import 'legacy_project_fixture.dart';
 
 const config = GitHubConfig(repository: 'team/data', enabled: true);
 
@@ -227,22 +228,24 @@ void main() {
 
   test('deactivation checks current work and configured recipients through both status and assignment APIs', () async {
     final base = project.workflowSheet!;
-    project = await session.saveWorkflowSheet(
+    project = await writeLegacyProjectFixture(
+      session,
       config,
-      WorkflowSheet(
-        nodes: base.nodes,
-        routes: [
-          for (final r in base.routes)
-            WorkflowSheetRoute(
-              id: r.id,
-              from: r.from,
-              to: r.to,
-              action: r.action,
-              person: r.id == 'default-next-0' ? 'gh-2' : '',
-            ),
-        ],
-      ),
-      expectedSheet: base,
+      overrides: {
+        'workflowSheet': WorkflowSheet(
+          nodes: base.nodes,
+          routes: [
+            for (final r in base.routes)
+              WorkflowSheetRoute(
+                id: r.id,
+                from: r.from,
+                to: r.to,
+                action: r.action,
+                person: r.id == 'default-next-0' ? 'gh-2' : '',
+              ),
+          ],
+        ).json,
+      },
     );
     final store = TaskStore(
       ':memory:',
@@ -279,12 +282,14 @@ void main() {
       expectedVersion: store.find(created.id).version,
     );
     api.addMainProposal(store.exportChanges(), created.id);
-    project = await session.saveWorkflowSheet(
+    project = await writeLegacyProjectFixture(
+      session,
       config,
-      WorkflowSheet.defaultFor(
-        project.workflowStages.map((s) => s.id).toList(),
-      ),
-      expectedSheet: project.workflowSheet,
+      overrides: {
+        'workflowSheet': WorkflowSheet.defaultFor(
+          project.workflowStages.map((s) => s.id).toList(),
+        ).json,
+      },
     );
     final next = await session.setMemberEnabled(config, 'gh-2', false);
     expect(next.people.firstWhere((p) => p.id == 'gh-2').enabled, isFalse);
@@ -292,22 +297,24 @@ void main() {
 
   test('administrator recovery transfers current processing before participant deactivation', () async {
     final base = project.workflowSheet!;
-    project = await session.saveWorkflowSheet(
+    project = await writeLegacyProjectFixture(
+      session,
       config,
-      WorkflowSheet(
-        nodes: base.nodes,
-        routes: [
-          for (final r in base.routes)
-            WorkflowSheetRoute(
-              id: r.id,
-              from: r.from,
-              to: r.to,
-              action: r.action,
-              person: r.id == 'default-next-0' ? 'gh-2' : '',
-            ),
-        ],
-      ),
-      expectedSheet: base,
+      overrides: {
+        'workflowSheet': WorkflowSheet(
+          nodes: base.nodes,
+          routes: [
+            for (final r in base.routes)
+              WorkflowSheetRoute(
+                id: r.id,
+                from: r.from,
+                to: r.to,
+                action: r.action,
+                person: r.id == 'default-next-0' ? 'gh-2' : '',
+              ),
+          ],
+        ).json,
+      },
     );
     final store = TaskStore(
       ':memory:',
@@ -331,12 +338,14 @@ void main() {
       expectedVersion: store.find(created.id).version,
     );
     api.addMainProposal(store.exportChanges(), created.id);
-    project = await session.saveWorkflowSheet(
+    project = await writeLegacyProjectFixture(
+      session,
       config,
-      WorkflowSheet.defaultFor(
-        project.workflowStages.map((s) => s.id).toList(),
-      ),
-      expectedSheet: project.workflowSheet,
+      overrides: {
+        'workflowSheet': WorkflowSheet.defaultFor(
+          project.workflowStages.map((s) => s.id).toList(),
+        ).json,
+      },
     );
     final next = await session.setMemberEnabled(config, 'gh-2', false);
     expect(next.people.firstWhere((p) => p.id == 'gh-2').active, isFalse);

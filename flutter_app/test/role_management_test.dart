@@ -181,10 +181,6 @@ void main() {
     );
     api.identityId = 1;
     await session.signIn();
-    await expectLater(
-      session.deleteRole(config, sourceRole.id),
-      throwsA(isA<GitHubFailure>()),
-    );
     final deleted = await session.deletePermissionPart(config, targetRole.id);
     expect(deleted.roles.any((r) => r.id == targetRole.id), isFalse);
   });

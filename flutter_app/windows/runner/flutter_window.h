@@ -7,6 +7,7 @@
 #include <flutter/encodable_value.h>
 
 #include <memory>
+#include <string>
 
 #include "win32_window.h"
 #include "github_http.h"
@@ -26,13 +27,20 @@ class FlutterWindow : public Win32Window {
                          LPARAM const lparam) noexcept override;
 
  private:
+  void ReleaseDiscordSendMutex();
   // The project to run.
   flutter::DartProject project_;
 
   // The Flutter instance hosted by this window.
   std::unique_ptr<flutter::FlutterViewController> flutter_controller_;
   std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>> credentials_;
+  std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>> discord_credentials_;
+  std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>> discord_process_lock_;
+  HANDLE discord_send_mutex_ = nullptr;
+  std::string discord_send_scope_;
+  std::string discord_send_claim_;
   std::unique_ptr<GitHubHttp> github_http_;
+  std::unique_ptr<GitHubHttp> discord_http_;
 };
 
 #endif  // RUNNER_FLUTTER_WINDOW_H_

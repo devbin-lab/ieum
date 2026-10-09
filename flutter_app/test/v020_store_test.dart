@@ -117,7 +117,7 @@ void main() {
   setUp(() => store = TaskStore(':memory:', project: project, identity: owner));
   tearDown(() => store.dispose());
 
-  test('configured workflow order is preserved in project Kanban columns', () {
+  test('historical workflow order remains readable while active columns use six fixed statuses', () {
     final reordered = ProjectManifest.fromJson({
       ...project.json,
       'workflowStages': [
@@ -138,7 +138,18 @@ void main() {
       'todo',
       'done',
     ]);
-    expect(orderedStore.workflowStatuses.keys, ['doing', 'todo', 'done']);
+    expect(orderedStore.workflowStatuses.keys, [
+      'todo',
+      'doing',
+      'review',
+      'done',
+      'hold',
+      'drop',
+    ]);
+    expect(
+      jsonDecode(orderedStore.meta('project'))['workflowStages'],
+      reordered.workflowStages.map((stage) => stage.json).toList(),
+    );
   });
 
   void move(String id, String state, {String reason = ''}) => store.transition(
@@ -148,7 +159,7 @@ void main() {
     expectedVersion: store.find(id).version,
   );
 
-  test('review remains shared editable and rejection preserves the route while done locks everyone', () {
+  test('review uses comments and locked handoff transfers edit access while completion locks everyone', () {
     store.updateProject(
       ProjectManifest.fromJson({
         ...project.partWorkflowView.json,
@@ -190,16 +201,44 @@ void main() {
     );
 
     store.setMeta('profile', reviewer.id);
-    move(created.id, 'doing', reason: '내용 보완');
+    final commented = store.addTaskComment(
+      created.id,
+      '내용 보완',
+      expectedVersion: rescheduled.version,
+    );
+    expect(commented.status, 'review');
+    expect(commented.comments.single['text'], '내용 보완');
+    expect(commented.reworkReason, isEmpty);
     store.setMeta('profile', worker.id);
-    final rejected = store.find(created.id);
-    expect(store.canEditContent(rejected), isTrue);
-    store.save({
-      ...rejected.data,
-      'description': '보완 완료',
-    }, expectedVersion: rejected.version);
-    move(created.id, 'review');
+    final locked = store.setTaskLocked(
+      created.id,
+      true,
+      expectedVersion: commented.version,
+    );
+    store.confirmHandoff(
+      store.planHandoff(
+        locked,
+        'todo',
+        routeId: 'manual-handoff',
+        receiverPerson: reviewer.id,
+        purpose: 'review',
+      ),
+    );
+    final delivered = store.find(created.id);
+    expect(delivered.status, 'todo');
+    expect(delivered.lockedBy, reviewer.id);
+    for (final actor in [worker, owner]) {
+      store.setMeta('profile', actor.id);
+      expect(store.canEditContent(delivered), isFalse);
+    }
     store.setMeta('profile', reviewer.id);
+    expect(store.canEditContent(delivered), isTrue);
+    move(created.id, 'review');
+    final activeReview = store.find(created.id);
+    store.save({
+      ...activeReview.data,
+      'description': '보완 완료',
+    }, expectedVersion: activeReview.version);
     move(created.id, 'done');
     final completed = store.find(created.id);
     for (final actor in [worker, reviewer, owner]) {
@@ -484,59 +523,89 @@ void main() {
     expect(store.baseline[original.id]!.version, advancedRemote.version);
   });
 
-  test('incoming assignments and review requests create one readable local inbox event', () {
-    final withReview = ProjectManifest.fromJson({
-      ...project.partWorkflowView.json,
-      'workflowSheet': designatedReviewSheet.json,
-    });
-    store.updateProject(withReview);
-    final created = store.save(draft());
-    store.recoverTask(
-      created.id,
-      stageId: 'todo',
-      personId: worker.id,
-      expectedVersion: created.version,
-    );
-    final assigned = store.find(created.id);
-    final client = TaskStore(':memory:', project: withReview, identity: worker);
-    final reviewClient = TaskStore(
-      ':memory:',
-      project: withReview,
-      identity: reviewer,
-    );
-    try {
-      client.importSnapshot(snapshot([assigned], 'main-1'));
-      expect(client.unreadNotificationCount, 1);
-      expect(client.notifications.single['eventType'], 'task.created');
-      expect(client.notifications.single['recipientId'], worker.id);
-      client.importSnapshot(snapshot([assigned], 'main-1'));
-      expect(client.notifications, hasLength(1));
-      client.markNotificationsRead();
-      expect(client.unreadNotificationCount, 0);
-      expect(client.notifications.single['read'], isTrue);
-      reviewClient.importSnapshot(snapshot([assigned], 'main-1'));
-      expect(reviewClient.notifications, isEmpty);
-      store.setMeta('profile', worker.id);
-      move(assigned.id, 'doing');
-      move(assigned.id, 'review');
-      final reviewing = store.find(assigned.id);
-      reviewClient.importSnapshot(snapshot([reviewing]));
-      expect(reviewClient.notifications.single['eventType'], 'task.review');
-      expect(reviewClient.unreadNotificationCount, 1);
-      reviewClient.importSnapshot(snapshot([reviewing]));
-      expect(reviewClient.notifications, hasLength(1));
-      client.importSnapshot(snapshot([reviewing]));
-      expect(client.notifications, hasLength(1));
-      store.setMeta('profile', reviewer.id);
-      move(assigned.id, 'doing', reason: '완료 조건 보완');
-      final rejected = store.find(assigned.id);
-      client.importSnapshot(snapshot([rejected], 'main-3'));
-      expect(client.notifications.first['eventType'], 'task.rejected');
-      expect(client.notifications.first['reason'], '완료 조건 보완');
-      expect(client.unreadNotificationCount, 1);
-    } finally {
-      client.dispose();
-      reviewClient.dispose();
-    }
-  });
+  test(
+    'manual assignments and review delivery create deduplicated inbox events',
+    () {
+      final withReview = ProjectManifest.fromJson({
+        ...project.partWorkflowView.json,
+        'workflowSheet': designatedReviewSheet.json,
+      });
+      store.updateProject(withReview);
+      final created = store.save(draft());
+      store.recoverTask(
+        created.id,
+        stageId: 'todo',
+        personId: worker.id,
+        expectedVersion: created.version,
+      );
+      final assigned = store.find(created.id);
+      final client = TaskStore(
+        ':memory:',
+        project: withReview,
+        identity: worker,
+      );
+      final reviewClient = TaskStore(
+        ':memory:',
+        project: withReview,
+        identity: reviewer,
+      );
+      try {
+        client.importSnapshot(snapshot([assigned], 'main-1'));
+        expect(client.unreadNotificationCount, 1);
+        expect(client.notifications.single['eventType'], 'task.created');
+        expect(client.notifications.single['recipientId'], worker.id);
+        client.importSnapshot(snapshot([assigned], 'main-1'));
+        expect(client.notifications, hasLength(1));
+        client.markNotificationsRead();
+        expect(client.unreadNotificationCount, 0);
+        expect(client.notifications.single['read'], isTrue);
+        reviewClient.importSnapshot(snapshot([assigned], 'main-1'));
+        expect(reviewClient.notifications, isEmpty);
+        store.setMeta('profile', worker.id);
+        move(assigned.id, 'doing');
+        store.confirmHandoff(
+          store.planHandoff(
+            store.find(assigned.id),
+            'todo',
+            routeId: 'manual-handoff',
+            receiverPerson: reviewer.id,
+            purpose: 'review',
+          ),
+        );
+        final reviewing = store.find(assigned.id);
+        reviewClient.importSnapshot(snapshot([reviewing]));
+        expect(reviewClient.notifications.single['eventType'], 'task.review');
+        expect(reviewClient.unreadNotificationCount, 1);
+        reviewClient.importSnapshot(snapshot([reviewing]));
+        expect(reviewClient.notifications, hasLength(1));
+        client.importSnapshot(snapshot([reviewing]));
+        expect(client.notifications, hasLength(1));
+        store.setMeta('profile', reviewer.id);
+        move(assigned.id, 'review');
+        final commented = store.addTaskComment(
+          assigned.id,
+          '완료 조건 보완',
+          expectedVersion: store.find(assigned.id).version,
+        );
+        store.confirmHandoff(
+          store.planHandoff(
+            commented,
+            'todo',
+            routeId: 'manual-handoff',
+            receiverPerson: worker.id,
+            purpose: 'work',
+          ),
+        );
+        final delivered = store.find(assigned.id);
+        client.importSnapshot(snapshot([delivered], 'main-3'));
+        expect(client.notifications.first['eventType'], 'task.assigned');
+        expect(client.find(assigned.id).comments.single['text'], '완료 조건 보완');
+        expect(client.find(assigned.id).reworkReason, isEmpty);
+        expect(client.unreadNotificationCount, 1);
+      } finally {
+        client.dispose();
+        reviewClient.dispose();
+      }
+    },
+  );
 }

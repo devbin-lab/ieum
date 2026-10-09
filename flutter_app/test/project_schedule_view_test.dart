@@ -5,7 +5,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ieum_flutter/models.dart';
 import 'package:ieum_flutter/project_schedule_view.dart';
 import 'package:ieum_flutter/store.dart';
-import 'package:ieum_flutter/workflow_definition_editor.dart';
 
 import 'part_workflow_test_fixtures.dart';
 
@@ -282,35 +281,6 @@ void main() {
     expect(jsonDecode(store.meta('ui.schedule'))['mode'], 'list');
     expect(store.tasks.length, 2);
     expect(store.changes, originalChanges);
-    expect(tester.takeException(), isNull);
-  });
-
-  testWidgets('compact workflow switches state and canvas without overflow', (
-    tester,
-  ) async {
-    await size(tester, const Size(440, 680));
-    final before = store.meta('project');
-    await tester.pumpWidget(
-      MaterialApp(
-        home: Scaffold(body: WorkflowDefinitionEditor(store: store)),
-      ),
-    );
-    await tester.pumpAndSettle();
-    expect(find.byKey(const Key('workflow-compact-view')), findsOneWidget);
-    expect(find.byKey(const Key('workflow-stage-list')), findsOneWidget);
-    await tester.tap(find.text('흐름'));
-    await tester.pumpAndSettle();
-    expect(find.byKey(const Key('workflow-sheet-viewport')), findsOneWidget);
-    expect(tester.takeException(), isNull);
-    await tester.tap(find.text('상태'));
-    await tester.pumpAndSettle();
-    expect(find.byKey(const Key('workflow-stage-list')), findsOneWidget);
-    tester.view.physicalSize = const Size(1200, 800);
-    await tester.pumpAndSettle();
-    expect(find.byKey(const Key('workflow-compact-view')), findsNothing);
-    expect(find.byKey(const Key('workflow-stage-list')), findsOneWidget);
-    expect(find.byKey(const Key('workflow-sheet-viewport')), findsOneWidget);
-    expect(store.meta('project'), before);
     expect(tester.takeException(), isNull);
   });
 }

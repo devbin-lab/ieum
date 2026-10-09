@@ -15,6 +15,7 @@ import 'github_sync_test.dart' show FakeGitHubApi, idle;
 import 'github_auto_merge_test.dart' show AutoMergeApi;
 import 'github_oauth_test.dart' show MemoryVault;
 import 'v020_store_test.dart' show legacyFourStages;
+import 'legacy_project_fixture.dart';
 
 import 'package:ieum_flutter/github_oauth.dart';
 
@@ -386,13 +387,13 @@ void main() {
     });
     var project = await session.assign(config, worker, request: request);
     final owner = project.people.first;
-    project = await session.saveWorkflowDefinition(
+    project = await writeLegacyProjectFixture(
+      session,
       config,
-      legacyFourStages,
-      assignedReviewSheet(worker.id, owner.id),
-      expectedProjectId: project.id,
-      expectedStages: project.workflowStages,
-      expectedSheet: project.workflowSheet,
+      overrides: {
+        'workflowStages': legacyFourStages.map((stage) => stage.json).toList(),
+        'workflowSheet': assignedReviewSheet(worker.id, owner.id).json,
+      },
     );
     final ownerStore = TaskStore(':memory:', project: project, identity: owner);
     final guestStore = TaskStore(

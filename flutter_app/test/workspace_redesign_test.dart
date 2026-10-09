@@ -183,10 +183,7 @@ void main() {
       await check('$width-connections');
       state.notifications();
       await check('$width-inbox');
-      for (final section in SettingsSection.values.where(
-        (s) =>
-            s != SettingsSection.assignments && s != SettingsSection.workflow,
-      )) {
+      for (final section in SettingsSection.values) {
         state.selectSettings(section);
         await check('$width-settings-${section.name}');
       }

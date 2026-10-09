@@ -8,6 +8,7 @@ import 'package:uuid/uuid.dart';
 import 'models.dart';
 import 'sync_recovery_record.dart';
 import 'task_handoff.dart';
+import 'discord_outbox.dart';
 
 class MergeResult {
   final bool applied;
@@ -18,6 +19,8 @@ class MergeResult {
 class TaskStore extends ChangeNotifier {
   final Database db;
   final String filename;
+  String? _projectRaw;
+  ProjectManifest? _projectValue;
   TaskStore(
     this.filename, {
     List<dynamic> seed = const [],
@@ -48,6 +51,7 @@ class TaskStore extends ChangeNotifier {
         'CREATE TABLE IF NOT EXISTS $name(id TEXT PRIMARY KEY,body TEXT NOT NULL)',
       );
     }
+    DiscordOutbox.initialize(db);
     if (meta('initialized').isEmpty) {
       transaction(() {
         setMeta('initialized', '1');
@@ -109,11 +113,20 @@ class TaskStore extends ChangeNotifier {
     return false;
   }
 
-  ProjectManifest? get project => isProject
-      ? ProjectManifest.fromJson(
-          Map<String, dynamic>.from(jsonDecode(meta('project'))),
-        ).partWorkflowView
-      : null;
+  ProjectManifest? get project {
+    // Read metadata on every lookup so another connection or a transaction
+    // rollback is visible without requiring explicit cache invalidation.
+    final raw = meta('project');
+    if (raw == _projectRaw) return _projectValue;
+    final value = raw.isEmpty
+        ? null
+        : ProjectManifest.fromJson(Map<String, dynamic>.from(jsonDecode(raw)))
+              .partWorkflowView;
+    _projectRaw = raw;
+    _projectValue = value;
+    return value;
+  }
+
   List<Person> get people {
     if (!isProject) return members;
     final list = [...project!.people];
@@ -182,40 +195,6 @@ class TaskStore extends ChangeNotifier {
           : statuses[id] ?? id);
   List<String> get customWorkflowStageIds =>
       project?.workflowStages.map((stage) => stage.id).toList() ?? const [];
-  String get workflowFlowLabel {
-    if (!isProject || customWorkflowStageIds.isEmpty) return '작업 단계를 설정하세요.';
-    if (manualWorkflow) {
-      return customWorkflowStageIds.map(workflowStatusName).join(' · ');
-    }
-    final path = <String>[];
-    final visited = <String>{};
-    final sheet = project!.workflowSheet;
-    final initial = sheet == null
-        ? workflowInitialStatus(customWorkflowStageIds)
-        : project!.initialStatusId;
-    if (initial == null) return '작업을 등록할 일반 단계를 설정하세요.';
-    var current = initial;
-    while (visited.add(current)) {
-      path.add(workflowStatusName(current));
-      final String? next;
-      if (sheet != null) {
-        final route = sheet
-            .outgoing(current)
-            .where((r) => r.action != 'reject')
-            .firstOrNull;
-        next = route == null ? null : sheet.stageFor(route.to);
-      } else {
-        next = project!.activeWorkflowConnections
-            .where((c) => c.from == current && c.action != 'reject')
-            .firstOrNull
-            ?.to;
-      }
-      if (next == null) break;
-      current = next;
-    }
-    return path.join(' → ');
-  }
-
   String? get workflowCompletionStatus => !isProject
       ? 'done'
       : project!.workflowStages.where((s) => s.isCompleted).firstOrNull?.id;
@@ -419,12 +398,17 @@ class TaskStore extends ChangeNotifier {
         ),
       )
       .toList();
-  Map<String, WorkTask> get baseline => {
-    for (final row in db.select('SELECT body FROM baseline_tasks'))
-      (jsonDecode(row['body'] as String)['id'] as String): WorkTask.fromJson(
+  Map<String, WorkTask> get baseline {
+    final result = <String, WorkTask>{};
+    for (final row in db.select('SELECT body FROM baseline_tasks')) {
+      final task = WorkTask.fromJson(
         Map<String, dynamic>.from(jsonDecode(row['body'] as String)),
-      ),
-  };
+      );
+      result[task.id] = task;
+    }
+    return result;
+  }
+
   List<Map<String, dynamic>> records(String table) => db
       .select('SELECT body FROM $table ORDER BY rowid DESC LIMIT 30')
       .map((r) => Map<String, dynamic>.from(jsonDecode(r['body'] as String)))
@@ -603,7 +587,12 @@ class TaskStore extends ChangeNotifier {
     notifyListeners();
   }
 
-  void log(WorkTask t, String message, {String? eventType}) {
+  void log(
+    WorkTask t,
+    String message, {
+    String? eventType,
+    String? previousStatus,
+  }) {
     final at = DateTime.now().toUtc().toIso8601String();
     final id = const Uuid().v4();
     db.execute('INSERT INTO activity VALUES (?,?)', [
@@ -644,6 +633,30 @@ class TaskStore extends ChangeNotifier {
       );
     }
     if (eventType != null) {
+      if (isProject && meta('discord.publicRoutes').isNotEmpty) {
+        try {
+          DiscordOutbox(db).capture(
+            task: t,
+            project: project!,
+            actorId: profileId,
+            deviceId: meta('discord.deviceId'),
+            scope: meta('discord.scope'),
+            routes: [
+              for (final route
+                  in jsonDecode(meta('discord.publicRoutes')) as List)
+                Map<String, dynamic>.from(route),
+            ],
+            eventType: eventType,
+            at: at,
+            statusName: workflowStatusName(t.status),
+            previousStatusName: previousStatus == null
+                ? ''
+                : workflowStatusName(previousStatus),
+          );
+        } catch (_) {
+          setMeta('discord.queueNotice', 'Discord 알림 설정을 확인하세요. 작업은 저장되었습니다.');
+        }
+      }
       final id = const Uuid().v4();
       db.execute('INSERT INTO notification_outbox VALUES (?,?)', [
         id,
@@ -1790,6 +1803,7 @@ class TaskStore extends ChangeNotifier {
                   ? 'task.review'
                   : 'task.assigned'
             : 'task.moved',
+        previousStatus: task.status,
       );
       queueGitHub(next);
       return;
@@ -1837,6 +1851,7 @@ class TaskStore extends ChangeNotifier {
                       workflowBoardCategory(next, project) == 'todo')
             ? 'task.review'
             : 'task.$status',
+        previousStatus: task.status,
       );
       queueGitHub(next);
       return;
@@ -1890,6 +1905,7 @@ class TaskStore extends ChangeNotifier {
           : manualWorkflow
           ? 'task.moved'
           : 'task.$status',
+      previousStatus: task.status,
     );
     queueGitHub(next);
   }
@@ -1907,6 +1923,7 @@ class TaskStore extends ChangeNotifier {
       'authorId': profileId,
       'changes': [_change(task, baselineFor(task.id))],
     };
+    final revision = const Uuid().v4();
     db.execute(
       'INSERT INTO github_queue VALUES (?,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body',
       [
@@ -1914,7 +1931,7 @@ class TaskStore extends ChangeNotifier {
         jsonEncode({
           'taskId': task.id,
           'title': task.title,
-          'revision': const Uuid().v4(),
+          'revision': revision,
           'repository': config['repository'],
           'proposal': proposal,
           'configuration': config,
@@ -1925,6 +1942,7 @@ class TaskStore extends ChangeNotifier {
         }),
       ],
     );
+    DiscordOutbox(db).bind(task, revision, project);
   }
 
   List<Map<String, dynamic>> get changes {

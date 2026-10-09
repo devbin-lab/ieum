@@ -24,6 +24,7 @@ import 'package:ieum_flutter/github_oauth.dart';
 
 import 'app_update_test.dart' show FakeUpdates;
 import 'v020_store_test.dart' show legacyFourStages;
+import 'legacy_project_fixture.dart';
 
 const config = GitHubConfig(repository: 'team/data', enabled: true);
 const reviewerRole = ProjectRole('role-reviewer', '검토 전담', {'task.review'});
@@ -459,36 +460,36 @@ void main() {
       const ProjectRole('role-plan', '기획', {}),
     );
     project = await session.savePermissionPart(config, reviewerRole);
-    project = await session.saveWorkflowDefinition(
+    project = await writeLegacyProjectFixture(
+      session,
       config,
-      legacyFourStages,
-      const WorkflowSheet(
-        nodes: [
-          WorkflowSheetNode('todo', 'todo'),
-          WorkflowSheetNode('doing', 'doing'),
-          WorkflowSheetNode('review', 'review'),
-          WorkflowSheetNode('done', 'done'),
-        ],
-        routes: [
-          WorkflowSheetRoute(id: 'start', from: 'todo', to: 'doing'),
-          WorkflowSheetRoute(
-            id: 'submit',
-            from: 'doing',
-            to: 'review',
-            destination: 'part:role-reviewer',
-          ),
-          WorkflowSheetRoute(
-            id: 'approve',
-            from: 'review',
-            to: 'done',
-            source: 'part:role-reviewer',
-            action: 'approve',
-          ),
-        ],
-      ),
-      expectedProjectId: project.id,
-      expectedStages: project.workflowStages,
-      expectedSheet: project.workflowSheet,
+      overrides: {
+        'workflowStages': legacyFourStages.map((stage) => stage.json).toList(),
+        'workflowSheet': const WorkflowSheet(
+          nodes: [
+            WorkflowSheetNode('todo', 'todo'),
+            WorkflowSheetNode('doing', 'doing'),
+            WorkflowSheetNode('review', 'review'),
+            WorkflowSheetNode('done', 'done'),
+          ],
+          routes: [
+            WorkflowSheetRoute(id: 'start', from: 'todo', to: 'doing'),
+            WorkflowSheetRoute(
+              id: 'submit',
+              from: 'doing',
+              to: 'review',
+              destination: 'part:role-reviewer',
+            ),
+            WorkflowSheetRoute(
+              id: 'approve',
+              from: 'review',
+              to: 'done',
+              source: 'part:role-reviewer',
+              action: 'approve',
+            ),
+          ],
+        ).json,
+      },
     );
     project = withGuest(project, role: reviewerRole.id, roles: project.roles);
     await write(session, project);

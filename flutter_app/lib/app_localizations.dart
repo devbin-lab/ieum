@@ -426,7 +426,7 @@ final _english = <String, String>{
   '파트 이름을 입력하세요.': 'Enter a team name.',
   '파트 수정': 'Edit team',
   '예: 기획, PD, 검토 담당': 'For example: Design, Producer, Reviewer',
-  '작업 등록·진행·검토·통합은 기본 허용됩니다. 작업 전달 조건은 자동화 시트에서 설정합니다.': 'Task creation, progress, review, and integration are enabled by default. Handoff conditions are configured in the workflow.',
+  '작업은 누구나 등록하고 수정할 수 있습니다. 잠근 작업은 지정된 담당자만 수정할 수 있습니다.': 'Anyone can create and edit tasks. Locked tasks can only be edited by their assigned person.',
   '저장하지 않은 변경사항': 'Unsaved changes',
   '저장된 파트: {v0}': 'Saved team: {v0}',
   '최신 저장값을 확인했습니다. 초안을 비교한 뒤 다시 저장하세요.':

@@ -7,6 +7,7 @@
 #include <cwctype>
 #include <map>
 #include <mutex>
+#include <regex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -71,7 +72,7 @@ struct Reply {
 };
 
 // The native bridge cannot forward tokens to arbitrary hosts or redirects.
-bool Parse(const Value* argument, RequestData& data) {
+bool Parse(const Value* argument, RequestData& data, GitHubHttp::Service service) {
   const auto* map = argument ? std::get_if<Map>(argument) : nullptr;
   if (!map) return false;
   const auto url_text = Text(*map, "url");
@@ -91,26 +92,43 @@ bool Parse(const Value* argument, RequestData& data) {
   const std::wstring path(parts.lpszUrlPath, parts.dwUrlPathLength);
   const bool oauth = data.host == L"github.com" &&
       (path == L"/login/device/code" || path == L"/login/oauth/access_token");
-  if (!oauth && data.host != L"api.github.com") return false;
+  const bool discord = service == GitHubHttp::Service::discordWebhook;
+  if (discord) {
+    if (data.host != L"discord.com" && data.host != L"discordapp.com") return false;
+    const std::wregex webhook(L"^/api/(v10/)?webhooks/([0-9]{17,20})/[A-Za-z0-9_-]{16,256}$");
+    std::wsmatch match;
+    if (!std::regex_match(path, match, webhook)) return false;
+    try {
+      if (!std::stoull(match[2].str())) return false;
+    } catch (...) { return false; }
+  } else if (!oauth && data.host != L"api.github.com") return false;
   data.path = path;
   if (parts.dwExtraInfoLength) data.path.append(parts.lpszExtraInfo, parts.dwExtraInfoLength);
   if (data.path.find(L'#') != std::wstring::npos) return false;
   data.method = Wide(Text(*map, "method"));
-  if (data.method != L"GET" && data.method != L"POST" && data.method != L"PUT" &&
+  if (discord && data.method != L"GET" && data.method != L"POST") return false;
+  if (!discord && data.method != L"GET" && data.method != L"POST" && data.method != L"PUT" &&
       data.method != L"PATCH" && data.method != L"DELETE" && data.method != L"HEAD") return false;
   if (oauth && data.method != L"POST") return false;
-  const bool blob_download = data.method == L"GET" &&
+  if (discord) {
+    const std::wstring extra = parts.dwExtraInfoLength
+        ? std::wstring(parts.lpszExtraInfo, parts.dwExtraInfoLength) : L"";
+    if ((data.method == L"GET" && !extra.empty()) ||
+        (data.method == L"POST" && extra != L"?wait=true")) return false;
+  }
+  const bool blob_download = !discord && data.method == L"GET" &&
       path.find(L"/git/blobs/") != std::wstring::npos;
-  const bool blob_upload = data.method == L"POST" &&
+  const bool blob_upload = !discord && data.method == L"POST" &&
       path.size() >= 10 && path.substr(path.size() - 10) == L"/git/blobs";
   data.file_transfer = blob_download || blob_upload;
   const auto* size_value = Field(*map, "maxBytes");
   const auto* size = size_value ? std::get_if<int32_t>(size_value) : nullptr;
-  if (!size || *size < 1 || *size > (oauth ? 65536 : (blob_download ? 50 : 32) * 1024 * 1024)) return false;
+  if (!size || *size < 1 || *size > (oauth || discord ? 65536 : (blob_download ? 50 : 32) * 1024 * 1024)) return false;
   data.limit = static_cast<size_t>(*size);
   const auto* body_value = Field(*map, "body");
   const auto* body = body_value ? std::get_if<std::vector<uint8_t>>(body_value) : nullptr;
-  if (!body || body->size() > (oauth ? 65536 : (blob_upload ? 70 : 16) * 1024 * 1024)) return false;
+  if (!body || body->size() > (oauth || discord ? 65536 : (blob_upload ? 70 : 16) * 1024 * 1024) ||
+      (discord && data.method == L"GET" && !body->empty())) return false;
   data.body = *body;
   const auto* headers_value = Field(*map, "headers");
   const auto* headers = headers_value ? std::get_if<Map>(headers_value) : nullptr;
@@ -121,8 +139,10 @@ bool Parse(const Value* argument, RequestData& data) {
     if (!key || !value || value->size() > 16384 ||
         value->find_first_of("\r\n\0", 0, 3) != std::string::npos) return false;
     // Host, cookies, proxy credentials and arbitrary native headers are blocked.
-    if (*key != "Authorization" && *key != "Accept" && *key != "Content-Type" &&
-        *key != "User-Agent" && *key != "X-GitHub-Api-Version") return false;
+    if (discord) {
+      if (*key != "Accept" && *key != "Content-Type" && *key != "User-Agent") return false;
+    } else if (*key != "Authorization" && *key != "Accept" && *key != "Content-Type" &&
+               *key != "User-Agent" && *key != "X-GitHub-Api-Version") return false;
     if (oauth && *key == "Authorization") return false;
     data.headers += Wide(*key + ": " + *value + "\r\n");
   }
@@ -198,17 +218,20 @@ struct GitHubHttp::State {
   std::mutex mutex;
   HWND window;
   bool alive = true;
+  Service service = Service::github;
   uint64_t next = 0;
   std::map<uint64_t, std::unique_ptr<Result>> pending;  // UI thread only.
   std::map<uint64_t, Reply> completed;  // Protected by mutex.
   std::shared_ptr<Session> session;  // Shared connection pool; request cookies are disabled.
 };
 
-GitHubHttp::GitHubHttp(flutter::BinaryMessenger* messenger, HWND window)
+GitHubHttp::GitHubHttp(flutter::BinaryMessenger* messenger, HWND window, Service service)
     : state_(std::make_shared<State>()) {
   state_->window = window;
+  state_->service = service;
   channel_ = std::make_unique<flutter::MethodChannel<Value>>(
-      messenger, "ieum/github_http", &flutter::StandardMethodCodec::GetInstance());
+      messenger, service == Service::discordWebhook ? "ieum/discord_http" : "ieum/github_http",
+      &flutter::StandardMethodCodec::GetInstance());
   channel_->SetMethodCallHandler([this](const auto& call, auto result) {
     Request(call, std::move(result));
   });
@@ -225,7 +248,10 @@ GitHubHttp::~GitHubHttp() {
 void GitHubHttp::Request(const flutter::MethodCall<Value>& call, std::unique_ptr<Result> result) {
   if (call.method_name() != "request") { result->NotImplemented(); return; }
   RequestData data;
-  if (!Parse(call.arguments(), data)) { result->Error("invalid_request", "Invalid GitHub request"); return; }
+  if (!Parse(call.arguments(), data, state_->service)) {
+    result->Error("invalid_request", "Request is outside the allowed provider endpoints");
+    return;
+  }
   if (state_->pending.size() >= 8) { result->Error("network_busy", "Too many requests"); return; }
   const auto id = ++state_->next;
   state_->pending[id] = std::move(result);
@@ -268,7 +294,7 @@ void GitHubHttp::Complete() {
     state_->pending.erase(it);
     auto& reply = entry.second;
     if (reply.error) {
-      result->Error("winhttp_" + std::to_string(reply.error), "GitHub transport failed");
+      result->Error("winhttp_" + std::to_string(reply.error), "Provider transport failed");
     } else {
       result->Success(Value(Map{{Value("status"), Value(static_cast<int32_t>(reply.status))},
           {Value("headers"), Value(std::move(reply.headers))}, {Value("body"), Value(std::move(reply.body))}}));
