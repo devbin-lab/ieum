@@ -147,6 +147,36 @@ void main() {
     },
   );
 
+  testWidgets(
+    'system theme follows device brightness and monochrome contrast',
+    (tester) async {
+      final preferences = AppPreferences();
+      addTearDown(preferences.dispose);
+      addTearDown(
+        tester.binding.platformDispatcher.clearPlatformBrightnessTestValue,
+      );
+      tester.binding.platformDispatcher.platformBrightnessTestValue =
+          Brightness.dark;
+      await preferences.setMonochromeAccent();
+      await tester.pumpWidget(
+        preferenceApp(preferences, const AppearanceSettings()),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('appearance-system')));
+      await tester.pumpAndSettle();
+      expect(preferences.themeMode, ThemeMode.system);
+      final context = tester.element(find.byType(AppearanceSettings));
+      expect(Theme.of(context).brightness, Brightness.dark);
+      expect(Theme.of(context).colorScheme.primary, Colors.white);
+      tester.binding.platformDispatcher.platformBrightnessTestValue =
+          Brightness.light;
+      await tester.pumpAndSettle();
+      expect(Theme.of(context).brightness, Brightness.light);
+      expect(Theme.of(context).colorScheme.primary, Colors.black);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('appearance and language settings fit narrow scaled layouts', (
     tester,
   ) async {

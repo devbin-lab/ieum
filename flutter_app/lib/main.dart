@@ -16,6 +16,7 @@ import 'startup_health.dart';
 import 'window_layout.dart';
 import 'github_oauth.dart';
 import 'app_preferences.dart';
+import 'first_run.dart';
 
 import 'package:screen_retriever/screen_retriever.dart';
 
@@ -89,6 +90,9 @@ Future<void> main() async {
       file: File('$base${Platform.pathSeparator}app-preferences.json'),
     );
     await preferences.load();
+    final projectPreferences = File(
+      '$base${Platform.pathSeparator}project-preferences.json',
+    );
     final placeholder = TaskStore(':memory:');
     runApp(
       UpdateScope(
@@ -102,10 +106,13 @@ Future<void> main() async {
         child: IeumApp(
           store: placeholder,
           preferences: preferences,
-          home: ProjectGate(
-            session: session,
-            preferences: File(
-              '$base${Platform.pathSeparator}project-preferences.json',
+          home: FirstRunGate(
+            preferences: preferences,
+            existingProject: hasSavedProjectCatalog(projectPreferences),
+            builder: (openInitialSettings) => ProjectGate(
+              session: session,
+              preferences: projectPreferences,
+              onOpenInitialSettings: openInitialSettings,
             ),
           ),
         ),

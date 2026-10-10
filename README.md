@@ -18,13 +18,15 @@
 | 작업 자료 | 파일·HTTPS 링크 첨부, Markdown 미리보기, 프로젝트별 파일 용량 한도 |
 | 참여자·파트 | 가입 승인, 사용자 지정 파트 추가·수정·삭제와 참여자 배정 |
 | 팀 바로가기 | 팀 도구 링크 공유, 사이트 아이콘 탐색, 검색과 개인 즐겨찾기 |
-| 디자인·언어 | 라이트·다크 모드, 포인트 컬러, 한국어·영어 |
+| 디자인·언어 | 라이트·다크·시스템 모드, 포인트 컬러, 한국어·영어 |
 | Discord 알림 | 채널별 웹훅 연결, 배정·전달·상태 변경·완료 알림과 담당자 멘션 |
 | GitHub 동기화 | 작업별 변경 제출·PR·검증·통합, 충돌 확인과 전송 복구 기록 |
 
 ## 시작하기
 
-Windows 배포 파일은 릴리즈 목록에서 관리합니다. EXE 배포본은 `Ieum-Windows-x64.exe` 하나를 실행하고, ZIP 배포본은 전체를 압축 해제한 뒤 `ieum_flutter.exe`를 실행합니다. 배포본 실행에는 Git이나 Flutter SDK가 필요하지 않습니다.
+Windows 배포에는 설치형·포터블·ZIP을 제공합니다. 설치형 `Ieum-Setup-x64.exe`는 현재 Windows 계정에 설치하고 시작 메뉴와 선택한 바탕화면 바로가기를 만듭니다. 포터블 배포본은 `Ieum-Windows-x64.exe` 하나를 실행하고, ZIP 배포본은 전체를 압축 해제한 뒤 `ieum_flutter.exe`를 실행합니다. 배포본 실행에는 Git이나 Flutter SDK가 필요하지 않습니다.
+
+새 사용자에게는 첫 실행 설정이 표시됩니다. 언어, 라이트·다크·시스템 화면 모드와 포인트 컬러를 선택한 뒤 GitHub로 로그인합니다. 초기 설정을 건너뛰거나 완료하면 다시 표시하지 않으며, 기존 사용자 설정과 프로젝트도 유지합니다. 설치형 배포를 제거해도 개인 설정과 프로젝트 데이터는 지워지지 않습니다.
 
 1. **GitHub로 로그인**을 선택하고 브라우저에서 인증 코드를 승인합니다.
 2. 프로젝트 관리자는 GitHub 저장소를 지정해 **프로젝트 생성**을 진행합니다.
@@ -84,11 +86,12 @@ flutter analyze
 .\package-windows.ps1
 ```
 
-EXE·ZIP·사용 안내·체크섬은 `dist/windows/<빌드 시각>/`에 생성됩니다. 패키징 스크립트는 버전 일치와 필수 파일을 검사하며 GitHub 릴리즈를 게시하지 않습니다.
+설치형 EXE·포터블 EXE·ZIP·사용 안내·체크섬은 `dist/windows/<빌드 시각>/`에 생성됩니다. 패키징 스크립트는 버전 일치와 필수 파일을 검사하며 GitHub 릴리즈를 게시하지 않습니다.
 
 ## 문서와 소스 구성
 
 - [앱 사용·개발 안내](flutter_app/README.md)
+- [설치와 첫 실행 설계·레퍼런스](docs/installation-onboarding-design.md)
 - [Discord 채널 알림 설계](docs/discord-webhook-design.md)
 - [코드 정리와 검증 내역](docs/maintenance-cleanup.md)
 - [일정·작업 잠금 설계](flutter_app/docs/task-lock-and-schedule-plan.md)

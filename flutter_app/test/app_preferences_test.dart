@@ -118,6 +118,7 @@ void main() {
       'theme': 'dark',
       'accent': '16878c',
       'language': 'en',
+      'onboardingComplete': false,
     });
     expect(preferences.persistenceError, isNull);
     final restored = AppPreferences(file: preferencesFile);
@@ -176,18 +177,28 @@ void main() {
     expect(data['theme'], 'light');
   });
 
-  test('unsupported language and automatic theme are rejected without changing state', () async {
+  test('unsupported language is rejected without changing state', () async {
     final preferences = AppPreferences(file: preferencesFile);
     addTearDown(preferences.dispose);
     expect(() => preferences.setLanguage('fr'), throwsArgumentError);
-    expect(
-      () => preferences.setThemeMode(ThemeMode.system),
-      throwsArgumentError,
-    );
     expect(preferences.languageCode, 'ko');
     expect(preferences.themeMode, ThemeMode.light);
     expect(preferences.persistenceError, isNull);
     expect(await preferencesFile.exists(), isFalse);
+  });
+
+  test('automatic theme and adaptive accent survive reload', () async {
+    final preferences = AppPreferences(file: preferencesFile);
+    addTearDown(preferences.dispose);
+    await preferences.setThemeMode(ThemeMode.system);
+    await preferences.setMonochromeAccent();
+    final restored = AppPreferences(file: preferencesFile);
+    addTearDown(restored.dispose);
+    await restored.load();
+    expect(restored.themeMode, ThemeMode.system);
+    expect(restored.monochromeAccent, isTrue);
+    expect(restored.accentForBrightness(Brightness.dark), Colors.white);
+    expect(restored.accentForBrightness(Brightness.light), Colors.black);
   });
 
   test(

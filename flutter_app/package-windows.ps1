@@ -1,6 +1,7 @@
 ﻿param(
     [string]$BuildId = (Get-Date -Format 'yyyyMMdd-HHmmss'),
-    [string]$ReleaseDirectory = 'build\windows\x64\runner\Release'
+    [string]$ReleaseDirectory = 'build\windows\x64\runner\Release',
+    [string]$InnoCompiler = ''
 )
 $ErrorActionPreference = 'Stop'
 if ($BuildId -notmatch '^[0-9]{8}-[0-9]{6}$') { throw '잘못된 빌드 ID입니다.' }
@@ -25,6 +26,7 @@ foreach ($taskRequired in @(
     'window_manager_plugin.dll', 'data\app.so', 'data\icudtl.dat',
     'data\flutter_assets\AssetManifest.bin',
     'data\flutter_assets\NativeAssetsManifest.json',
+    'data\flutter_assets\assets\branding\app_icon.png',
     'data\flutter_assets\fonts\MaterialIcons-Regular.otf'
     foreach ($taskShortcutIcon in $taskShortcutIcons) {
         "data\flutter_assets\assets\shortcut-services\$taskShortcutIcon"
@@ -50,6 +52,10 @@ if ($taskBinaryVersion -ne $taskVersion) {
 if ((Test-Path -LiteralPath $taskStage) -or (Test-Path -LiteralPath $taskOutput)) {
     throw '같은 빌드 ID의 패키지 폴더가 이미 있습니다. 새로운 BuildId로 실행하세요.'
 }
+if (-not $InnoCompiler) {
+    $InnoCompiler = & (Join-Path $PSScriptRoot 'windows\distribution\get-inno-compiler.ps1')
+}
+if (-not (Test-Path -LiteralPath $InnoCompiler -PathType Leaf)) { throw 'Inno Setup 컴파일러를 찾을 수 없습니다.' }
 New-Item -ItemType Directory -Path $taskPayload,$taskOutput | Out-Null
 Copy-Item -Path "$taskRelease\*" -Destination $taskPayload -Recurse
 $taskShortcutLicenseTarget = Join-Path $taskPayload 'data\licenses\simple-icons'
@@ -99,10 +105,19 @@ $taskCompiler = Join-Path $taskFramework 'csc.exe'
 $taskCompilerArgs = @('/nologo','/target:winexe','/platform:x64','/optimize+',('/out:'+$taskExe),('/resource:'+(Join-Path $taskStage 'payload.zip')+',Ieum.Payload.zip'),('/win32icon:'+(Join-Path $PSScriptRoot 'windows\runner\resources\app_icon.ico')),('/reference:'+(Join-Path $taskFramework 'System.IO.Compression.dll')),('/reference:'+(Join-Path $taskFramework 'System.IO.Compression.FileSystem.dll')),('/reference:'+(Join-Path $taskFramework 'System.Windows.Forms.dll')),('/reference:'+(Join-Path $taskFramework 'System.Runtime.Serialization.dll')),$taskLauncher)
 & $taskCompiler @taskCompilerArgs
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $taskExe)) { throw 'EXE 패키징에 실패했습니다.' }
+$taskSetup = Join-Path $taskOutput 'Ieum-Setup-x64.exe'
+$taskSetupIcon = Join-Path $PSScriptRoot 'windows\runner\resources\app_icon.ico'
+& $InnoCompiler /Qp ("/DAppVersion=$taskVersion") ("/DLauncherPath=$taskExe") ("/DAppIcon=$taskSetupIcon") ("/DOutputDirectory=$taskOutput") (Join-Path $PSScriptRoot 'windows\distribution\ieum-setup.iss')
+if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $taskSetup)) { throw '설치 파일 패키징에 실패했습니다.' }
 $taskInstructions = @"
 이음 $taskVersion / Windows x64 / $BuildId
 
-EXE 하나만 다른 PC로 복사해서 실행하세요.
+설치: Ieum-Setup-x64.exe를 실행하고 설치 위치와 바로가기를 선택하세요.
+현재 Windows 계정에 설치하며 관리자 권한이 필요하지 않습니다.
+시작 메뉴에서 이음을 열 수 있습니다. 바탕 화면 바로가기는 선택 사항입니다.
+Windows 설정 → 앱에서 제거할 수 있습니다. 프로젝트와 개인 설정은 유지됩니다.
+
+포터블: Ieum-Windows-x64.exe 하나만 다른 PC로 복사해서 실행하세요.
 앱 파일은 %LOCALAPPDATA%\Ieum\builds\$BuildId 에 풀립니다.
 Flutter SDK와 개발 도구, Git 설치는 필요하지 않습니다.
 ZIP 배포본은 전체 압축을 풀고 ieum_flutter.exe를 실행하세요.
@@ -141,12 +156,12 @@ Windows 시스템·사용자 프록시와 인증서 설정을 적용합니다.
 앱 시작 시와 4시간마다 새 배포 버전을 확인합니다.
 다운로드 후 다음 실행에 적용하거나 설정 → 일반 → 앱 정보에서 업데이트 후 재시작합니다.
 시작 자체에 실패한 배포본은 가능한 이전 버전으로 복구합니다.
-SHA256SUMS.txt로 EXE와 ZIP의 해시를 확인할 수 있습니다.
+SHA256SUMS.txt로 설치 파일, 포터블 EXE와 ZIP의 해시를 확인할 수 있습니다.
 이 패키지 생성 스크립트는 GitHub Release 게시를 수행하지 않습니다.
 
 "@
 [IO.File]::WriteAllText((Join-Path $taskOutput '사용안내.txt'),$taskInstructions,(New-Object Text.UTF8Encoding($true)))
-$taskChecksums = foreach ($taskPackageName in @('Ieum-Windows-x64.exe', 'Ieum-Windows-x64.zip')) {
+$taskChecksums = foreach ($taskPackageName in @('Ieum-Setup-x64.exe', 'Ieum-Windows-x64.exe', 'Ieum-Windows-x64.zip')) {
     $taskHash = (Get-FileHash -LiteralPath (Join-Path $taskOutput $taskPackageName) -Algorithm SHA256).Hash.ToLowerInvariant()
     "$taskHash  $taskPackageName"
 }

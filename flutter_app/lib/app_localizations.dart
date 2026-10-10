@@ -125,6 +125,7 @@ final _english = <String, String>{
   '화면 모드': 'Theme',
   '라이트': 'Light',
   '다크': 'Dark',
+  '시스템': 'System',
   '포인트 컬러': 'Accent color',
   '사용자 지정 색상': 'Custom color',
   '화면 미리보기': 'Preview',

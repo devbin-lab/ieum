@@ -20,6 +20,9 @@ import 'store.dart';
 import 'settings_shell.dart';
 import 'desktop_platform.dart';
 import 'update_ui.dart';
+import 'startup_surface.dart';
+
+import 'package:flutter_svg/flutter_svg.dart';
 
 class ProjectGate extends StatefulWidget {
   const ProjectGate({
@@ -27,10 +30,12 @@ class ProjectGate extends StatefulWidget {
     required this.preferences,
     this.session,
     this.openBrowser,
+    this.onOpenInitialSettings,
   });
   final File preferences;
   final GitHubSession? session;
   final Future<void> Function(String)? openBrowser;
+  final VoidCallback? onOpenInitialSettings;
   @override
   State<ProjectGate> createState() => _ProjectGateState();
 }
@@ -448,11 +453,7 @@ class _ProjectGateState extends State<ProjectGate> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(
-                Icons.all_inclusive,
-                size: 44,
-                color: WorkspaceUi.colors(context).accent,
-              ),
+              const IeumBrand(size: 52),
               SizedBox(height: 24),
               SizedBox(
                 width: 24,
@@ -501,57 +502,120 @@ class _ProjectGateState extends State<ProjectGate> {
       );
     }
     final signedIn = session.user != null;
-    return Scaffold(
-      body: Center(
-        child: SingleChildScrollView(
-          padding: EdgeInsets.all(
-            MediaQuery.sizeOf(context).width < 600 ? 16 : 36,
+    return StartupSurface(
+      title: isEnglish
+          ? 'Your team’s next step\nstarts here.'
+          : '팀의 다음 단계,\n여기서 시작하세요.',
+      description: isEnglish
+          ? 'Open your project and bring your work together.\nEvery task, schedule, and handoff in one place.'
+          : '프로젝트를 열고 팀의 일을 이어가세요.\n작업과 일정, 전달 기록이 한곳에 모입니다.',
+      footer: widget.onOpenInitialSettings == null
+          ? null
+          : Align(
+              alignment: Alignment.centerRight,
+              child: TextButton.icon(
+                key: const Key('open-initial-settings'),
+                onPressed: busy ? null : widget.onOpenInitialSettings,
+                icon: const Icon(Icons.tune, size: 16),
+                label: Text(isEnglish ? 'Initial preferences' : '초기 설정'),
+              ),
+            ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            signedIn ? tr('프로젝트 시작하기') : tr('이음에 로그인'),
+            style: const TextStyle(
+              fontSize: 24,
+              fontWeight: FontWeight.w600,
+              height: 1.3,
+              letterSpacing: -.5,
+            ),
           ),
-          child: SizedBox(
-            width: 680,
-            child: Container(
-              padding: EdgeInsets.all(
-                MediaQuery.sizeOf(context).width < 600 ? 20 : 32,
+          const SizedBox(height: 10),
+          Text(
+            signedIn
+                ? tr('@{v0} · GitHub 인증 완료', args: {'v0': session.user!.login})
+                : (isEnglish
+                      ? 'Continue with GitHub to get started.'
+                      : 'GitHub 계정으로 로그인하고 프로젝트를 시작하세요.'),
+            style: TextStyle(
+              color: WorkspaceUi.colors(context).muted,
+              fontSize: 12,
+            ),
+          ),
+          const SizedBox(height: 24),
+          if (!signedIn) ...[
+            Text(
+              tr(
+                'GitHub에서 이음의 저장소 접근을 승인하면 로그인됩니다.\n작업 등록·PR·동기화를 위해 저장소 권한을 요청합니다.',
               ),
-              decoration: BoxDecoration(
-                color: WorkspaceUi.colors(context).surface,
-                border: Border.all(color: WorkspaceUi.colors(context).line),
-                borderRadius: BorderRadius.circular(18),
+              style: TextStyle(
+                fontSize: 12,
+                color: WorkspaceUi.colors(context).muted,
+                height: 1.7,
               ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Icon(
-                    Icons.all_inclusive,
-                    size: 44,
-                    color: WorkspaceUi.colors(context).accent,
+            ),
+            const SizedBox(height: 12),
+            Material(
+              color: Colors.transparent,
+              child: CheckboxListTile(
+                contentPadding: EdgeInsets.zero,
+                controlAffinity: ListTileControlAffinity.leading,
+                title: Text(
+                  tr('이 컴퓨터에서 로그인 유지'),
+                  style: TextStyle(fontSize: 12),
+                ),
+                subtitle: Text(
+                  credentialStorageDescription(),
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: WorkspaceUi.colors(context).muted,
                   ),
-                  const SizedBox(height: 16),
-                  Text(
-                    signedIn ? tr('프로젝트 시작하기') : tr('이음에 로그인'),
-                    style: const TextStyle(
-                      fontSize: 26,
-                      fontWeight: FontWeight.w700,
+                ),
+                value: rememberLogin,
+                onChanged: busy
+                    ? null
+                    : (value) => setState(() => rememberLogin = value ?? false),
+              ),
+            ),
+            const SizedBox(height: 12),
+            if (grant != null) ...[
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(18),
+                decoration: BoxDecoration(
+                  color: WorkspaceUi.colors(context).accent
+                      .withValues(alpha: .06),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: WorkspaceUi.colors(context).line),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      tr('GitHub 인증 코드'),
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: WorkspaceUi.colors(context).muted,
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 10),
-                  Text(
-                    signedIn
-                        ? tr(
-                            '@{v0} · GitHub 인증 완료',
-                            args: {'v0': session.user!.login},
-                          )
-                        : tr('GitHub 계정으로 인증한 뒤 프로젝트를 만들거나 참여하세요.'),
-                    style: TextStyle(
-                      color: WorkspaceUi.colors(context).muted,
-                      fontSize: 12,
+                    const SizedBox(height: 8),
+                    SelectableText(
+                      grant!.userCode,
+                      key: const Key('oauth-code'),
+                      style: TextStyle(
+                        fontSize: 26,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 3,
+                        color: WorkspaceUi.colors(context).accent,
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 24),
-                  if (!signedIn) ...[
+                    const SizedBox(height: 8),
                     Text(
                       tr(
-                        'GitHub에서 이음의 저장소 접근을 승인하면 로그인됩니다.\n작업 등록·PR·동기화를 위해 저장소 권한을 요청합니다.',
+                        '브라우저에 위 코드를 입력하고 이음의 접근을 승인하세요.\n인증 코드가 만료되면 다시 로그인할 수 있습니다.',
                       ),
                       style: TextStyle(
                         fontSize: 12,
@@ -559,360 +623,276 @@ class _ProjectGateState extends State<ProjectGate> {
                         height: 1.7,
                       ),
                     ),
-                    const SizedBox(height: 12),
-                    Material(
-                      color: Colors.transparent,
-                      child: CheckboxListTile(
-                        contentPadding: EdgeInsets.zero,
-                        controlAffinity: ListTileControlAffinity.leading,
-                        title: Text(
-                          tr('이 컴퓨터에서 로그인 유지'),
-                          style: TextStyle(fontSize: 12),
-                        ),
-                        subtitle: Text(
-                          credentialStorageDescription(),
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: WorkspaceUi.colors(context).muted,
-                          ),
-                        ),
-                        value: rememberLogin,
-                        onChanged: busy
-                            ? null
-                            : (value) => setState(
-                                () => rememberLogin = value ?? false,
-                              ),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    if (grant != null) ...[
-                      Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.all(18),
-                        decoration: BoxDecoration(
-                          color: WorkspaceUi.colors(context).accent
-                              .withValues(alpha: .06),
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(
-                            color: WorkspaceUi.colors(context).line,
-                          ),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              tr('GitHub 인증 코드'),
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: WorkspaceUi.colors(context).muted,
-                              ),
-                            ),
-                            const SizedBox(height: 8),
-                            SelectableText(
-                              grant!.userCode,
-                              key: const Key('oauth-code'),
-                              style: TextStyle(
-                                fontSize: 26,
-                                fontWeight: FontWeight.w700,
-                                letterSpacing: 3,
-                                color: WorkspaceUi.colors(context).accent,
-                              ),
-                            ),
-                            const SizedBox(height: 8),
-                            Text(
-                              tr(
-                                '브라우저에 위 코드를 입력하고 이음의 접근을 승인하세요.\n인증 코드가 만료되면 다시 로그인할 수 있습니다.',
-                              ),
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: WorkspaceUi.colors(context).muted,
-                                height: 1.7,
-                              ),
-                            ),
-                            const SizedBox(height: 10),
-                            Wrap(
-                              spacing: 8,
-                              children: [
-                                OutlinedButton(
-                                  onPressed: () async {
-                                    await Clipboard.setData(
-                                      ClipboardData(text: grant!.userCode),
-                                    );
-                                  },
-                                  child: Text(tr('코드 복사')),
-                                ),
-                                OutlinedButton(
-                                  onPressed: () => openGitHub(githubDeviceUrl),
-                                  child: Text(tr('GitHub 인증 페이지 열기')),
-                                ),
-                                TextButton(
-                                  key: const Key('oauth-cancel'),
-                                  onPressed: session.signOut,
-                                  child: Text(tr('로그인 취소')),
-                                ),
-                              ],
-                            ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(height: 16),
-                    ],
-                    FilledButton.icon(
-                      key: const Key('github-login'),
-                      icon: const Icon(Icons.login, size: 18),
-                      onPressed: busy ? null : oauthLogin,
-                      label: Text(
-                        busy
-                            ? (grant == null
-                                  ? tr('로그인 확인 중…')
-                                  : tr('GitHub 승인 대기 중…'))
-                            : tr('GitHub로 로그인'),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
+                    const SizedBox(height: 10),
                     Wrap(
                       spacing: 8,
                       children: [
-                        TextButton(
-                          onPressed: busy
-                              ? null
-                              : () => openGitHub('https://github.com/signup'),
-                          child: Text(tr('GitHub 계정 만들기')),
+                        OutlinedButton(
+                          onPressed: () async {
+                            await Clipboard.setData(
+                              ClipboardData(text: grant!.userCode),
+                            );
+                          },
+                          child: Text(tr('코드 복사')),
+                        ),
+                        OutlinedButton(
+                          onPressed: () => openGitHub(githubDeviceUrl),
+                          child: Text(tr('GitHub 인증 페이지 열기')),
                         ),
                         TextButton(
-                          onPressed: busy
-                              ? null
-                              : () => setState(
-                                  () => advancedLogin = !advancedLogin,
-                                ),
-                          child: Text(
-                            advancedLogin ? tr('고급 연결 닫기') : tr('고급 연결'),
-                          ),
-                        ),
-                      ],
-                    ),
-                    if (advancedLogin) ...[
-                      const SizedBox(height: 12),
-                      TextField(
-                        key: const Key('login-token'),
-                        enabled: !busy,
-                        controller: token,
-                        obscureText: true,
-                        autocorrect: false,
-                        enableSuggestions: false,
-                        decoration: InputDecoration(
-                          labelText: tr('세션 토큰 (선택)'),
-                          hintText: tr('비워 두면 컴퓨터에 저장된 Git 인증 사용'),
-                        ),
-                      ),
-                      const SizedBox(height: 14),
-                      Text(
-                        tr(
-                          '토큰은 앱 메모리에만 보관합니다. 이음 비밀번호는 만들지 않습니다.\nGitHub 계정이 없다면 GitHub에서 계정을 만든 뒤 저장소 초대를 받으세요.',
-                        ),
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: WorkspaceUi.colors(context).muted,
-                          height: 1.7,
-                        ),
-                      ),
-                      const SizedBox(height: 24),
-                      FilledButton(
-                        key: const Key('github-advanced-login'),
-                        onPressed: busy ? null : signIn,
-                        child: Text(
-                          busy ? tr('계정 확인 중…') : tr('GitHub 연결 / 로그인'),
-                        ),
-                      ),
-                    ],
-                  ] else ...[
-                    if (recent != null) ...[
-                      OutlinedButton(
-                        key: const Key('reopen-project'),
-                        onPressed: busy ? null : reopen,
-                        child: Text(
-                          store != null
-                              ? tr('현재 프로젝트로 돌아가기')
-                              : tr('최근 프로젝트 열기'),
-                        ),
-                      ),
-                      const SizedBox(height: 20),
-                    ],
-                    SegmentedButton<bool>(
-                      segments: [
-                        ButtonSegment(value: true, label: Text(tr('프로젝트 생성'))),
-                        ButtonSegment(value: false, label: Text(tr('프로젝트 참여'))),
-                      ],
-                      selected: {creating},
-                      onSelectionChanged: busy
-                          ? null
-                          : (value) => setState(() => creating = value.single),
-                    ),
-                    const SizedBox(height: 24),
-                    if (creating) ...[
-                      TextField(
-                        key: const Key('project-name'),
-                        enabled: !busy,
-                        controller: projectName,
-                        decoration: InputDecoration(labelText: tr('프로젝트 이름')),
-                      ),
-                      const SizedBox(height: 16),
-                    ],
-                    TextField(
-                      key: const Key('project-repository'),
-                      enabled: !busy,
-                      controller: repo,
-                      decoration: InputDecoration(
-                        labelText: tr('GitHub 저장소'),
-                        hintText: tr('소유자/저장소 또는 HTTPS 주소'),
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    TextField(
-                      key: const Key('project-nickname'),
-                      enabled: !busy,
-                      controller: nickname,
-                      maxLength: 40,
-                      decoration: InputDecoration(
-                        labelText: tr('이름 / 닉네임'),
-                        counterText: '',
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.all(14),
-                      decoration: BoxDecoration(
-                        color: WorkspaceUi.colors(context).subtle,
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            tr('이 컴퓨터에 안전하게 저장'),
-                            style: TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                          const SizedBox(height: 5),
-                          Text(
-                            tr(
-                              '작업은 자동 저장되고 GitHub와 동기화됩니다.\n인터넷이 끊겨도 저장된 프로젝트에서 작업할 수 있습니다.',
-                            ),
-                            style: TextStyle(
-                              fontSize: 11,
-                              color: WorkspaceUi.colors(context).muted,
-                              height: 1.6,
-                            ),
-                          ),
-                          TextButton.icon(
-                            key: const Key('project-storage-options'),
-                            onPressed: busy
-                                ? null
-                                : () => setState(
-                                    () => advancedStorage = !advancedStorage,
-                                  ),
-                            icon: Icon(
-                              advancedStorage
-                                  ? Icons.expand_less
-                                  : Icons.expand_more,
-                              size: 16,
-                            ),
-                            label: Text(
-                              advancedStorage ? tr('저장 위치 닫기') : tr('저장 위치 변경'),
-                            ),
-                          ),
-                          if (advancedStorage) ...[
-                            const SizedBox(height: 8),
-                            TextField(
-                              key: const Key('project-folder'),
-                              enabled: !busy,
-                              controller: folder,
-                              decoration: InputDecoration(
-                                labelText: tr('로컬 저장 폴더'),
-                              ),
-                            ),
-                            const SizedBox(height: 8),
-                            OutlinedButton.icon(
-                              onPressed: busy
-                                  ? null
-                                  : () async {
-                                      final value = await getDirectoryPath(
-                                        confirmButtonText: tr('저장 위치 선택'),
-                                      );
-                                      if (value != null && mounted) {
-                                        setState(() => folder.text = value);
-                                      }
-                                    },
-                              icon: const Icon(
-                                Icons.folder_open_outlined,
-                                size: 16,
-                              ),
-                              label: Text(tr('폴더 선택')),
-                            ),
-                          ],
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    Text(
-                      creating
-                          ? tr(
-                              '프로젝트를 만들고 팀의 작업을 시작합니다. 파트는 프로젝트 설정에서 추가할 수 있습니다.',
-                            )
-                          : tr(
-                              '먼저 GitHub 저장소 초대를 수락해 주세요. 참여 요청을 관리자가 승인하면 작업을 시작할 수 있습니다.',
-                            ),
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: WorkspaceUi.colors(context).muted,
-                        height: 1.7,
-                      ),
-                    ),
-                    const SizedBox(height: 24),
-                    Wrap(
-                      spacing: 12,
-                      runSpacing: 8,
-                      children: [
-                        FilledButton(
-                          key: const Key('project-submit'),
-                          onPressed: busy ? null : submit,
-                          child: Text(
-                            busy
-                                ? tr('프로젝트 준비 중…')
-                                : creating
-                                ? tr('프로젝트 생성')
-                                : tr('참여 요청'),
-                          ),
-                        ),
-                        TextButton(
-                          onPressed: busy ? null : signOut,
-                          child: Text(tr('로그아웃')),
+                          key: const Key('oauth-cancel'),
+                          onPressed: session.signOut,
+                          child: Text(tr('로그인 취소')),
                         ),
                       ],
                     ),
                   ],
-                  if (error.isNotEmpty || catalog.warning.isNotEmpty)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 20),
-                      child: Text(
-                        [
-                          error,
-                          catalog.warning,
-                        ].where((s) => s.isNotEmpty).join('\n'),
-                        style: const TextStyle(
-                          color: Color(0xffbd6b7a),
-                          fontSize: 12,
-                        ),
-                      ),
+                ),
+              ),
+              const SizedBox(height: 16),
+            ],
+            FilledButton.icon(
+              key: const Key('github-login'),
+              icon: SvgPicture.asset(
+                'assets/shortcut-services/github.svg',
+                width: 18,
+                height: 18,
+                colorFilter: ColorFilter.mode(
+                  WorkspaceUi.colors(context).onAccent,
+                  BlendMode.srcIn,
+                ),
+              ),
+              onPressed: busy ? null : oauthLogin,
+              label: Text(
+                busy
+                    ? (grant == null ? tr('로그인 확인 중…') : tr('GitHub 승인 대기 중…'))
+                    : tr('GitHub로 로그인'),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 8,
+              children: [
+                TextButton(
+                  onPressed: busy
+                      ? null
+                      : () => openGitHub('https://github.com/signup'),
+                  child: Text(tr('GitHub 계정 만들기')),
+                ),
+                TextButton(
+                  onPressed: busy
+                      ? null
+                      : () => setState(() => advancedLogin = !advancedLogin),
+                  child: Text(advancedLogin ? tr('고급 연결 닫기') : tr('고급 연결')),
+                ),
+              ],
+            ),
+            if (advancedLogin) ...[
+              const SizedBox(height: 12),
+              TextField(
+                key: const Key('login-token'),
+                enabled: !busy,
+                controller: token,
+                obscureText: true,
+                autocorrect: false,
+                enableSuggestions: false,
+                decoration: InputDecoration(
+                  labelText: tr('세션 토큰 (선택)'),
+                  hintText: tr('비워 두면 컴퓨터에 저장된 Git 인증 사용'),
+                ),
+              ),
+              const SizedBox(height: 14),
+              Text(
+                tr(
+                  '토큰은 앱 메모리에만 보관합니다. 이음 비밀번호는 만들지 않습니다.\nGitHub 계정이 없다면 GitHub에서 계정을 만든 뒤 저장소 초대를 받으세요.',
+                ),
+                style: TextStyle(
+                  fontSize: 11,
+                  color: WorkspaceUi.colors(context).muted,
+                  height: 1.7,
+                ),
+              ),
+              const SizedBox(height: 24),
+              FilledButton(
+                key: const Key('github-advanced-login'),
+                onPressed: busy ? null : signIn,
+                child: Text(busy ? tr('계정 확인 중…') : tr('GitHub 연결 / 로그인')),
+              ),
+            ],
+          ] else ...[
+            if (recent != null) ...[
+              OutlinedButton(
+                key: const Key('reopen-project'),
+                onPressed: busy ? null : reopen,
+                child: Text(
+                  store != null ? tr('현재 프로젝트로 돌아가기') : tr('최근 프로젝트 열기'),
+                ),
+              ),
+              const SizedBox(height: 20),
+            ],
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                ChoiceChip(
+                  label: Text(tr('프로젝트 생성')),
+                  selected: creating,
+                  onSelected: busy
+                      ? null
+                      : (_) => setState(() => creating = true),
+                ),
+                ChoiceChip(
+                  label: Text(tr('프로젝트 참여')),
+                  selected: !creating,
+                  onSelected: busy
+                      ? null
+                      : (_) => setState(() => creating = false),
+                ),
+              ],
+            ),
+            const SizedBox(height: 24),
+            if (creating) ...[
+              TextField(
+                key: const Key('project-name'),
+                enabled: !busy,
+                controller: projectName,
+                decoration: InputDecoration(labelText: tr('프로젝트 이름')),
+              ),
+              const SizedBox(height: 16),
+            ],
+            TextField(
+              key: const Key('project-repository'),
+              enabled: !busy,
+              controller: repo,
+              decoration: InputDecoration(
+                labelText: tr('GitHub 저장소'),
+                hintText: tr('소유자/저장소 또는 HTTPS 주소'),
+              ),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              key: const Key('project-nickname'),
+              enabled: !busy,
+              controller: nickname,
+              maxLength: 40,
+              decoration: InputDecoration(
+                labelText: tr('이름 / 닉네임'),
+                counterText: '',
+              ),
+            ),
+            const SizedBox(height: 16),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: WorkspaceUi.colors(context).subtle,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    tr('이 컴퓨터에 안전하게 저장'),
+                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                  ),
+                  const SizedBox(height: 5),
+                  Text(
+                    tr(
+                      '작업은 자동 저장되고 GitHub와 동기화됩니다.\n인터넷이 끊겨도 저장된 프로젝트에서 작업할 수 있습니다.',
                     ),
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: WorkspaceUi.colors(context).muted,
+                      height: 1.6,
+                    ),
+                  ),
+                  TextButton.icon(
+                    key: const Key('project-storage-options'),
+                    onPressed: busy
+                        ? null
+                        : () => setState(
+                            () => advancedStorage = !advancedStorage,
+                          ),
+                    icon: Icon(
+                      advancedStorage ? Icons.expand_less : Icons.expand_more,
+                      size: 16,
+                    ),
+                    label: Text(
+                      advancedStorage ? tr('저장 위치 닫기') : tr('저장 위치 변경'),
+                    ),
+                  ),
+                  if (advancedStorage) ...[
+                    const SizedBox(height: 8),
+                    TextField(
+                      key: const Key('project-folder'),
+                      enabled: !busy,
+                      controller: folder,
+                      decoration: InputDecoration(labelText: tr('로컬 저장 폴더')),
+                    ),
+                    const SizedBox(height: 8),
+                    OutlinedButton.icon(
+                      onPressed: busy
+                          ? null
+                          : () async {
+                              final value = await getDirectoryPath(
+                                confirmButtonText: tr('저장 위치 선택'),
+                              );
+                              if (value != null && mounted) {
+                                setState(() => folder.text = value);
+                              }
+                            },
+                      icon: const Icon(Icons.folder_open_outlined, size: 16),
+                      label: Text(tr('폴더 선택')),
+                    ),
+                  ],
                 ],
               ),
             ),
-          ),
-        ),
+            const SizedBox(height: 16),
+            Text(
+              creating
+                  ? tr('프로젝트를 만들고 팀의 작업을 시작합니다. 파트는 프로젝트 설정에서 추가할 수 있습니다.')
+                  : tr(
+                      '먼저 GitHub 저장소 초대를 수락해 주세요. 참여 요청을 관리자가 승인하면 작업을 시작할 수 있습니다.',
+                    ),
+              style: TextStyle(
+                fontSize: 11,
+                color: WorkspaceUi.colors(context).muted,
+                height: 1.7,
+              ),
+            ),
+            const SizedBox(height: 24),
+            Wrap(
+              spacing: 12,
+              runSpacing: 8,
+              children: [
+                FilledButton(
+                  key: const Key('project-submit'),
+                  onPressed: busy ? null : submit,
+                  child: Text(
+                    busy
+                        ? tr('프로젝트 준비 중…')
+                        : creating
+                        ? tr('프로젝트 생성')
+                        : tr('참여 요청'),
+                  ),
+                ),
+                TextButton(
+                  onPressed: busy ? null : signOut,
+                  child: Text(tr('로그아웃')),
+                ),
+              ],
+            ),
+          ],
+          if (error.isNotEmpty || catalog.warning.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 20),
+              child: Text(
+                [error, catalog.warning].where((s) => s.isNotEmpty).join('\n'),
+                style: const TextStyle(color: Color(0xffbd6b7a), fontSize: 12),
+              ),
+            ),
+        ],
       ),
     );
   }

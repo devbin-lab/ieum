@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:ui' show PlatformDispatcher;
 
 import 'package:flutter/material.dart';
 
@@ -13,6 +14,7 @@ class AppPreferences extends ChangeNotifier {
   Color _accentColor = defaultAccent;
   bool _monochromeAccent = false;
   String _languageCode = 'ko';
+  bool _onboardingComplete = false;
   String? _persistenceError;
   Future<void> _writes = Future<void>.value();
   bool _disposed = false;
@@ -20,7 +22,11 @@ class AppPreferences extends ChangeNotifier {
   ThemeMode get themeMode => _themeMode;
   bool get monochromeAccent => _monochromeAccent;
   Color get accentColor => accentForBrightness(
-    _themeMode == ThemeMode.dark ? Brightness.dark : Brightness.light,
+    _themeMode == ThemeMode.system
+        ? PlatformDispatcher.instance.platformBrightness
+        : _themeMode == ThemeMode.dark
+        ? Brightness.dark
+        : Brightness.light,
   );
   Color accentForBrightness(Brightness brightness) => _monochromeAccent
       ? brightness == Brightness.dark
@@ -28,6 +34,7 @@ class AppPreferences extends ChangeNotifier {
             : Colors.black
       : _accentColor;
   String get languageCode => _languageCode;
+  bool get onboardingComplete => _onboardingComplete;
   String? get persistenceError => _persistenceError;
 
   Future<void> load() async {
@@ -35,13 +42,22 @@ class AppPreferences extends ChangeNotifier {
     try {
       final data = jsonDecode(await file!.readAsString());
       if (data is! Map || data['schema'] != 1) return;
-      _themeMode = data['theme'] == 'dark' ? ThemeMode.dark : ThemeMode.light;
+      _themeMode = switch (data['theme']) {
+        'dark' => ThemeMode.dark,
+        'system' => ThemeMode.system,
+        _ => ThemeMode.light,
+      };
       final accent = data['accent'];
       if (accent is String && RegExp(r'^[0-9a-fA-F]{6}$').hasMatch(accent)) {
         _accentColor = Color(0xff000000 | int.parse(accent, radix: 16));
       }
       _monochromeAccent = data['accentMode'] == 'monochrome';
       _languageCode = data['language'] == 'en' ? 'en' : 'ko';
+      // Preferences written before the setup wizard belong to existing users.
+      // A new wizard writes an explicit false while choices are being edited.
+      _onboardingComplete =
+          !data.containsKey('onboardingComplete') ||
+          data['onboardingComplete'] == true;
       _persistenceError = null;
       _notify();
     } on Object {
@@ -52,9 +68,6 @@ class AppPreferences extends ChangeNotifier {
   }
 
   Future<void> setThemeMode(ThemeMode mode) {
-    if (mode == ThemeMode.system) {
-      throw ArgumentError.value(mode, 'mode', 'Choose light or dark');
-    }
     if (_themeMode == mode && _persistenceError == null) {
       return Future<void>.value();
     }
@@ -100,16 +113,30 @@ class AppPreferences extends ChangeNotifier {
     return _save();
   }
 
+  /// Return true only when the explicit completion/skip can survive restart.
+  Future<bool> completeOnboarding() async {
+    final previous = _onboardingComplete;
+    _onboardingComplete = true;
+    await _save();
+    if (_persistenceError != null) {
+      _onboardingComplete = previous;
+      _notify();
+      return false;
+    }
+    return true;
+  }
+
   Future<void> _save() {
     _persistenceError = null;
     final snapshot = jsonEncode({
       'schema': 1,
-      'theme': _themeMode == ThemeMode.dark ? 'dark' : 'light',
+      'theme': _themeMode.name,
       'accent': (_accentColor.toARGB32() & 0xffffff)
           .toRadixString(16)
           .padLeft(6, '0'),
       if (_monochromeAccent) 'accentMode': 'monochrome',
       'language': _languageCode,
+      'onboardingComplete': _onboardingComplete,
     });
     _notify();
     final next = _writes.then((_) async {

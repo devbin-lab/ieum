@@ -93,6 +93,14 @@ class _AppearanceSettingsState extends State<AppearanceSettings> {
                 builder: (context, bounds) {
                   final choices = [
                     _ModeChoice(
+                      key: const Key('appearance-system'),
+                      label: tr('시스템'),
+                      dark: Theme.of(context).brightness == Brightness.dark,
+                      system: true,
+                      selected: preferences.themeMode == ThemeMode.system,
+                      onTap: () => preferences.setThemeMode(ThemeMode.system),
+                    ),
+                    _ModeChoice(
                       key: const Key('appearance-light'),
                       label: tr('라이트'),
                       dark: false,
@@ -107,20 +115,22 @@ class _AppearanceSettingsState extends State<AppearanceSettings> {
                       onTap: () => preferences.setThemeMode(ThemeMode.dark),
                     ),
                   ];
-                  if (bounds.maxWidth < 280) {
+                  if (bounds.maxWidth < 480) {
                     return Column(
                       children: [
-                        choices.first,
-                        const SizedBox(height: 12),
-                        choices.last,
+                        for (var i = 0; i < choices.length; i++) ...[
+                          if (i > 0) const SizedBox(height: 12),
+                          choices[i],
+                        ],
                       ],
                     );
                   }
                   return Row(
                     children: [
-                      Expanded(child: choices.first),
-                      const SizedBox(width: 12),
-                      Expanded(child: choices.last),
+                      for (var i = 0; i < choices.length; i++) ...[
+                        if (i > 0) const SizedBox(width: 12),
+                        Expanded(child: choices[i]),
+                      ],
                     ],
                   );
                 },
@@ -501,11 +511,12 @@ class _ModeChoice extends StatelessWidget {
     super.key,
     required this.label,
     required this.dark,
+    this.system = false,
     required this.selected,
     required this.onTap,
   });
   final String label;
-  final bool dark, selected;
+  final bool dark, selected, system;
   final VoidCallback onTap;
 
   @override
@@ -604,7 +615,9 @@ class _ModeChoice extends StatelessWidget {
                 Row(
                   children: [
                     Icon(
-                      dark
+                      system
+                          ? Icons.settings_brightness_outlined
+                          : dark
                           ? Icons.dark_mode_outlined
                           : Icons.light_mode_outlined,
                       size: 17,
