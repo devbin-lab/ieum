@@ -4,7 +4,7 @@
 
 이음은 팀의 작업, 일정, 자료와 변경 기록을 한곳에서 관리하는 데스크톱 앱입니다. GitHub 저장소를 팀 데이터의 기준으로 사용하고, 각자의 컴퓨터에는 SQLite로 작업을 저장합니다. 작업을 등록하고 다음 담당자에게 전달하며, 필요한 작업만 잠가 편집 범위를 지정할 수 있습니다.
 
-[Windows 1.0.0 다운로드](https://github.com/devbin-lab/ieum/releases/tag/v1.0.0) · [사용 안내](https://github.com/devbin-lab/ieum/blob/v1.0.0/flutter_app/README.md) · [이전 Beta 배포 기록](https://github.com/devbin-lab/ieum/releases/tag/beta)
+[Windows 1.0.0 다운로드](https://github.com/devbin-lab/ieum/releases/tag/v1.0.0) · [사용 안내](https://github.com/devbin-lab/ieum/blob/codex/flutter-desktop/flutter_app/README.md) · [이전 Beta 배포 기록](https://github.com/devbin-lab/ieum/releases/tag/beta)
 
 ## 주요 기능
 
@@ -18,13 +18,15 @@
 | 작업 자료 | 파일·HTTPS 링크 첨부, Markdown 미리보기, 프로젝트별 파일 용량 한도 |
 | 참여자·파트 | 가입 승인, 사용자 지정 파트 추가·수정·삭제와 참여자 배정 |
 | 팀 바로가기 | 팀 도구 링크 공유, 사이트 아이콘 탐색, 검색과 개인 즐겨찾기 |
-| 디자인·언어 | 라이트·다크 모드, 포인트 컬러, 한국어·영어 |
+| 디자인·언어 | 라이트·다크·시스템 모드, 포인트 컬러, 한국어·영어 |
 | Discord 알림 | 채널별 웹훅 연결, 배정·전달·상태 변경·완료 알림과 담당자 멘션 |
 | GitHub 동기화 | 작업별 변경 제출·PR·검증·통합, 충돌 확인과 전송 복구 기록 |
 
 ## 시작하기
 
-Windows 배포 파일은 릴리즈 목록에서 관리합니다. EXE 배포본은 `Ieum-Windows-x64.exe` 하나를 실행하고, ZIP 배포본은 전체를 압축 해제한 뒤 `ieum_flutter.exe`를 실행합니다. 배포본 실행에는 Git이나 Flutter SDK가 필요하지 않습니다.
+Windows 배포에는 설치형·포터블·ZIP을 제공합니다. 설치형 `Ieum-Setup-x64.exe`는 현재 Windows 계정에 설치하고 시작 메뉴와 선택한 바탕화면 바로가기를 만듭니다. 포터블 배포본은 `Ieum-Windows-x64.exe` 하나를 실행하고, ZIP 배포본은 전체를 압축 해제한 뒤 `ieum_flutter.exe`를 실행합니다. 배포본 실행에는 Git이나 Flutter SDK가 필요하지 않습니다.
+
+새 사용자에게는 첫 실행 설정이 표시됩니다. 언어, 라이트·다크·시스템 화면 모드와 포인트 컬러를 선택한 뒤 GitHub로 로그인합니다. 초기 설정을 건너뛰거나 완료하면 다시 표시하지 않으며, 기존 사용자 설정과 프로젝트도 유지합니다. 설치형 배포를 제거해도 개인 설정과 프로젝트 데이터는 지워지지 않습니다.
 
 1. **GitHub로 로그인**을 선택하고 브라우저에서 인증 코드를 승인합니다.
 2. 프로젝트 관리자는 GitHub 저장소를 지정해 **프로젝트 생성**을 진행합니다.
@@ -56,7 +58,7 @@ Windows 1.0.0에 포함된 기능입니다. 별도 서버나 공용 봇 없이 D
 
 작업을 변경한 기기가 **자신의 변경이 GitHub에 반영된 뒤** 알림을 보냅니다. 다른 참여자의 동기화 수신은 같은 알림을 다시 보내지 않습니다. 다른 PC에서도 알림을 보내려면 소유자의 연결 코드와 기기 승인을 거칩니다.
 
-웹훅과 기기 키는 Windows 자격 증명 보관소에 저장하고, 승인 기기에는 암호화해 전달합니다. 앱이 종료된 동안에는 발신하지 않으며, 원본 기기에서 프로젝트를 다시 열면 대기 전송을 이어갑니다. 자세한 설정은 [Discord 채널 알림 안내](https://github.com/devbin-lab/ieum/blob/v1.0.0/docs/discord-webhook-design.md)를 참고하세요.
+웹훅과 기기 키는 Windows 자격 증명 보관소에 저장하고, 승인 기기에는 암호화해 전달합니다. 앱이 종료된 동안에는 발신하지 않으며, 원본 기기에서 프로젝트를 다시 열면 대기 전송을 이어갑니다. 자세한 설정은 [Discord 채널 알림 안내](https://github.com/devbin-lab/ieum/blob/codex/flutter-desktop/docs/discord-webhook-design.md)를 참고하세요.
 
 ## 저장과 동기화
 
@@ -84,15 +86,16 @@ flutter analyze
 .\package-windows.ps1
 ```
 
-EXE·ZIP·사용 안내·체크섬은 `dist/windows/<빌드 시각>/`에 생성됩니다. 패키징 스크립트는 버전 일치와 필수 파일을 검사하며 GitHub 릴리즈를 게시하지 않습니다.
+설치형 EXE·포터블 EXE·ZIP·사용 안내·체크섬은 `dist/windows/<빌드 시각>/`에 생성됩니다. 패키징 스크립트는 버전 일치와 필수 파일을 검사하며 GitHub 릴리즈를 게시하지 않습니다.
 
 ## 문서와 소스 구성
 
-- [앱 사용·개발 안내](https://github.com/devbin-lab/ieum/blob/v1.0.0/flutter_app/README.md)
-- [Discord 채널 알림 설계](https://github.com/devbin-lab/ieum/blob/v1.0.0/docs/discord-webhook-design.md)
-- [코드 정리와 검증 내역](https://github.com/devbin-lab/ieum/blob/v1.0.0/docs/maintenance-cleanup.md)
-- [일정·작업 잠금 설계](https://github.com/devbin-lab/ieum/blob/v1.0.0/flutter_app/docs/task-lock-and-schedule-plan.md)
-- [Linux 실행 안내](https://github.com/devbin-lab/ieum/blob/v1.0.0/flutter_app/linux/README-Linux.md)
+- [앱 사용·개발 안내](https://github.com/devbin-lab/ieum/blob/codex/flutter-desktop/flutter_app/README.md)
+- [설치와 첫 실행 설계·레퍼런스](https://github.com/devbin-lab/ieum/blob/codex/flutter-desktop/docs/installation-onboarding-design.md)
+- [Discord 채널 알림 설계](https://github.com/devbin-lab/ieum/blob/codex/flutter-desktop/docs/discord-webhook-design.md)
+- [코드 정리와 검증 내역](https://github.com/devbin-lab/ieum/blob/codex/flutter-desktop/docs/maintenance-cleanup.md)
+- [일정·작업 잠금 설계](https://github.com/devbin-lab/ieum/blob/codex/flutter-desktop/flutter_app/docs/task-lock-and-schedule-plan.md)
+- [Linux 실행 안내](https://github.com/devbin-lab/ieum/blob/codex/flutter-desktop/flutter_app/linux/README-Linux.md)
 
 Windows가 현재 개발·배포 기준 플랫폼입니다. Linux 실행 환경과 지원 범위는 별도 안내를 확인하세요. Discord 웹훅의 네이티브 자격증명·전송 기능은 Windows용입니다.
 
