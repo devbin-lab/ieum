@@ -253,7 +253,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('view-list')));
       await tester.pumpAndSettle();
-      expect(find.byKey(const Key('task-pin-compact-high')), findsOneWidget);
+      expect(find.byKey(const Key('task-pin-list-high')), findsOneWidget);
       expect(tester.takeException(), isNull);
     },
   );

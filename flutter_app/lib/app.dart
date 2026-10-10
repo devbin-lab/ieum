@@ -32,6 +32,7 @@ import 'work_status_palette.dart' as work_palette;
 import 'task_comments_panel.dart';
 import 'task_detail_toolbar.dart';
 import 'workspace_ui.dart';
+import 'compact_task_list.dart';
 import 'app_preferences.dart';
 import 'app_theme.dart';
 import 'appearance_settings.dart';
@@ -295,6 +296,8 @@ class _WorkspaceState extends State<Workspace>
   TaskView taskView = TaskView.list;
   int lastWorkPage = 6;
   String? focusedTaskId;
+  String? activeTaskId;
+  final focusedTaskRowKey = GlobalKey();
   bool openingRecordTask = false;
   String search = '', part = '', scope = 'all', relatedMember = '';
   String statusFilter = '', deadlineFilter = '', taskSort = 'updated';
@@ -793,8 +796,11 @@ class _WorkspaceState extends State<Workspace>
     );
   }
 
-  void details(WorkTask task) {
-    showGeneralDialog<void>(
+  Future<void> details(WorkTask task) async {
+    final openedFromSchedule = page == 0;
+    var moveToTasks = false;
+    setState(() => activeTaskId = task.id);
+    await showGeneralDialog<void>(
       context: context,
       barrierDismissible: true,
       barrierLabel: tr('작업 상세 닫기'),
@@ -808,13 +814,26 @@ class _WorkspaceState extends State<Workspace>
             child: SafeArea(
               child: AnimatedBuilder(
                 animation: s,
-                builder: (_, _) => detailBody(ctx, s.find(task.id)),
+                builder: (_, _) => detailBody(
+                  ctx,
+                  s.find(task.id),
+                  onOpenInTasks: openedFromSchedule
+                      ? () {
+                          if (moveToTasks) return;
+                          moveToTasks = true;
+                          Navigator.pop(ctx);
+                        }
+                      : null,
+                ),
               ),
             ),
           ),
         ),
       ),
     );
+    if (!mounted) return;
+    if (activeTaskId == task.id) setState(() => activeTaskId = null);
+    if (moveToTasks) await openLocalTask(task.id, preferTasks: true);
   }
 
   Future<void> export() async {
@@ -985,7 +1004,7 @@ class _WorkspaceState extends State<Workspace>
     }
   }
 
-  Future<void> openLocalTask(String taskId) async {
+  Future<void> openLocalTask(String taskId, {bool preferTasks = false}) async {
     if (!mounted) return;
     WorkTask task;
     try {
@@ -999,7 +1018,9 @@ class _WorkspaceState extends State<Workspace>
       return;
     }
     rememberView(() {
-      page = task.isArchived || task.isDropped ? 6 : lastWorkPage;
+      page = preferTasks || task.isArchived || task.isDropped
+          ? 6
+          : lastWorkPage;
       focusedTaskId = task.id;
       scope = task.isArchived ? 'archived' : 'all';
       search = '';
@@ -1009,9 +1030,30 @@ class _WorkspaceState extends State<Workspace>
       deadlineFilter = '';
       taskPage = 0;
       taskSearch.clear();
+      if (page == 6 && taskView == TaskView.list) {
+        final ordered =
+            s.tasks
+                .where((candidate) => candidate.isArchived == task.isArchived)
+                .toList()
+              ..sort(compareTasks);
+        taskPage =
+            max(
+              0,
+              ordered.indexWhere((candidate) => candidate.id == task.id),
+            ) ~/
+            50;
+      }
     });
     await WidgetsBinding.instance.endOfFrame;
     if (mounted) {
+      final target = focusedTaskRowKey.currentContext;
+      if (page == 6 &&
+          taskView == TaskView.list &&
+          target != null &&
+          target.mounted) {
+        await Scrollable.ensureVisible(target, alignment: .35);
+      }
+      if (!mounted) return;
       setState(() => focusedTaskId = null);
       details(s.find(task.id));
     }
@@ -2562,256 +2604,72 @@ class _WorkspaceState extends State<Workspace>
     );
   }
 
-  Widget schedule(List<WorkTask> tasks) => LayoutBuilder(
-    builder: (context, constraints) => constraints.maxWidth < 700
-        ? compactSchedule(tasks)
-        : scheduleTable(tasks),
-  );
+  Widget schedule(List<WorkTask> tasks) => scheduleTable(tasks);
 
-  Widget compactSchedule(List<WorkTask> tasks) => Material(
+  Widget scheduleTable(List<WorkTask> tasks) => CompactTaskList(
     key: const Key('task-list'),
-    color: surface,
-    clipBehavior: Clip.antiAlias,
-    shape: RoundedRectangleBorder(
-      borderRadius: BorderRadius.circular(10),
-      side: BorderSide(color: border),
-    ),
-    child: Column(
-      children: [
-        for (var i = 0; i < tasks.length; i++) ...[
-          if (i > 0) Divider(height: 1, color: border),
-          InkWell(
-            key: Key('compact-task-${tasks[i].id}'),
-            onTap: () => details(tasks[i]),
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          tasks[i].title,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                      taskPinButton(tasks[i], 'compact'),
-                      const SizedBox(width: 12),
-                      badge(
-                        boardStatuses[boardKey(tasks[i])]!,
-                        color: statusColor(boardKey(tasks[i])),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 10),
-                  Wrap(
-                    spacing: 12,
-                    runSpacing: 6,
-                    children: [
-                      Text(
-                        '${taskPartLabel(tasks[i])} · ${taskAssigneeLabel(tasks[i])}',
-                        style: TextStyle(fontSize: 12, color: muted),
-                      ),
-                      Text(
-                        tr(
-                          '{value0} 요청',
-                          args: {'value0': purposeLabel(tasks[i])},
-                        ),
-                        style: TextStyle(fontSize: 12, color: muted),
-                      ),
-                      Text(
-                        tr(
-                          '마감 {value0}',
-                          args: {
-                            'value0': tasks[i].dueDate.isEmpty
-                                ? '미정'
-                                : tasks[i].dueDate,
-                          },
-                        ),
-                        style: TextStyle(fontSize: 12, color: muted),
-                      ),
-                      Text(
-                        priorities[tasks[i].priority]!,
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: priorityColor(tasks[i].priority),
-                        ),
-                      ),
-                    ],
-                  ),
-                  if (taskActions(tasks[i]).isNotEmpty) ...[
-                    const SizedBox(height: 12),
-                    Wrap(
-                      spacing: 6,
-                      runSpacing: 6,
-                      children: [
-                        for (final plan in taskActions(tasks[i]))
-                          handoffButton(plan, compact: true, surface: 'list'),
-                      ],
-                    ),
-                  ],
-                ],
-              ),
-            ),
-          ),
-        ],
-      ],
+    tasks: tasks,
+    selectedTaskId: activeTaskId ?? focusedTaskId,
+    rowKeyBuilder: (task) => task.id == focusedTaskId
+        ? focusedTaskRowKey
+        : ValueKey('compact-task-row-${task.id}'),
+    onOpenTask: details,
+    pinButtonBuilder: (task) => taskPinButton(task, 'list'),
+    actionsBuilder: tableTaskActions,
+    presentationFor: (task) => CompactTaskPresentation(
+      idLabel: shortId(task.id),
+      statusLabel: boardStatuses[boardKey(task)]!,
+      statusColor: statusColor(boardKey(task)),
+      assigneeLabel: taskAssigneeLabel(task),
+      assigneeAvatar: taskAssigneeId(task).isEmpty
+          ? Icon(Icons.groups_outlined, size: 20, color: muted)
+          : avatar(s.member(taskAssigneeId(task)), size: 24),
+      priorityLabel: priorities[task.priority]!,
+      priorityColor: priorityColor(task.priority),
+      contextLabel:
+          '${taskPartLabel(task)} · ${tr('{value0} 요청', args: {'value0': purposeLabel(task)})}',
+      dateLabel: task.assignedDate.isEmpty && task.dueDate.isEmpty
+          ? tr('미정')
+          : task.assignedDate == task.dueDate
+          ? shortDate(task.assignedDate)
+          : '${task.assignedDate.isEmpty ? '—' : shortDate(task.assignedDate)} → ${task.dueDate.isEmpty ? tr('미정') : shortDate(task.dueDate)}',
+      dateTooltip:
+          '${tr('시작일')}: ${displayDate(task.assignedDate)}\n${tr('마감일')}: ${displayDate(task.dueDate)}',
     ),
   );
 
-  Widget scheduleTable(List<WorkTask> tasks) => Container(
-    key: const Key('task-list'),
-    width: double.infinity,
-    decoration: BoxDecoration(
-      color: surface,
-      border: Border.all(color: border),
-      borderRadius: BorderRadius.circular(10),
-    ),
-    child: HorizontalViewport(
-      child: DataTable(
-        showCheckboxColumn: false,
-        columnSpacing: 20,
-        headingRowHeight: 49,
-        dataRowMinHeight: 70,
-        dataRowMaxHeight: 110,
-        headingTextStyle: TextStyle(fontSize: 12, color: muted),
-        dataTextStyle: TextStyle(fontSize: 12, color: ink),
-        dividerThickness: .5,
-        columns: [
-          tr('작업'),
-          tr('상태'),
-          tr('담당자'),
-          tr('우선순위'),
-          tr('시작일'),
-          tr('마감일'),
-          tr('동작'),
-        ].map((label) => DataColumn(label: Text(label))).toList(),
-        rows: tasks
-            .map(
-              (t) => DataRow(
-                onSelectChanged: (_) => details(t),
-                cells: [
-                  DataCell(
-                    SizedBox(
-                      width: 215,
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  t.title,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                                const SizedBox(height: 6),
-                                Text(
-                                  '${t.part} · ${shortId(t.id)}',
-                                  style: TextStyle(fontSize: 9, color: muted),
-                                ),
-                              ],
-                            ),
-                          ),
-                          taskPinButton(t, 'list'),
-                        ],
-                      ),
-                    ),
-                  ),
-                  DataCell(
-                    badge(
-                      boardStatuses[boardKey(t)]!,
-                      color: statusColor(boardKey(t)),
-                    ),
-                  ),
-                  DataCell(
-                    SizedBox(
-                      width: 120,
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            taskAssigneeLabel(t),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          const SizedBox(height: 6),
-                          Text(
-                            tr(
-                              '{value0} · {value1} 요청',
-                              args: {
-                                'value0': taskPartLabel(t),
-                                'value1': purposeLabel(t),
-                              },
-                            ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(fontSize: 10, color: muted),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  DataCell(
-                    badge(
-                      priorities[t.priority]!,
-                      color: priorityColor(t.priority),
-                    ),
-                  ),
-                  DataCell(Text(displayDate(t.assignedDate))),
-                  DataCell(Text(displayDate(t.dueDate))),
-                  DataCell(tableTaskActions(t)),
-                ],
-              ),
-            )
-            .toList(),
-      ),
-    ),
-  );
   Widget tableTaskActions(WorkTask task) {
     final plans = taskActions(task);
-    if (plans.isEmpty) return const SizedBox(width: 140);
-    return SizedBox(
-      width: 140,
-      child: Row(
-        children: [
-          Expanded(
-            child: handoffButton(plans.first, compact: true, surface: 'list'),
-          ),
-          if (plans.length > 1) ...[
-            const SizedBox(width: 6),
-            PopupMenuButton<TaskHandoffPlan>(
-              key: Key('task-actions-more-${task.id}'),
-              tooltip: tr('다른 작업 처리'),
-              enabled: !handoffOpen,
-              icon: const Icon(Icons.more_horiz_rounded, size: 20),
-              onSelected: confirmHandoff,
-              itemBuilder: (_) => [
-                for (final plan in plans.skip(1))
-                  PopupMenuItem(
-                    value: plan,
-                    child: Text(
-                      '${tr(plan.buttonLabel)} · ${plan.recipientLabel}',
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-              ],
-            ),
-          ],
-        ],
+    if (plans.isEmpty) return const SizedBox(width: 32);
+    return PopupMenuButton<TaskHandoffPlan>(
+      key: Key('task-actions-more-${task.id}'),
+      tooltip: tr('작업 처리'),
+      enabled: !handoffOpen,
+      padding: EdgeInsets.zero,
+      offset: const Offset(0, 8),
+      color: surface,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(WorkspaceUi.radius),
+        side: BorderSide(color: colors.line),
       ),
+      elevation: 3,
+      icon: Icon(Icons.more_horiz_rounded, size: 18, color: muted),
+      onSelected: confirmHandoff,
+      itemBuilder: (_) => [
+        for (final plan in plans)
+          PopupMenuItem(
+            key: Key(
+              'task-handoff-list-${task.id}-${plan.action}-${plan.destinationId}${plan.routeId.isEmpty ? '' : '-${plan.routeId}'}',
+            ),
+            value: plan,
+            child: Text(
+              '${tr(plan.buttonLabel)} · ${plan.recipientLabel}',
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 12),
+            ),
+          ),
+      ],
     );
   }
 
@@ -3569,7 +3427,11 @@ class _WorkspaceState extends State<Workspace>
     );
   }
 
-  Widget detailBody(BuildContext ctx, WorkTask t) {
+  Widget detailBody(
+    BuildContext ctx,
+    WorkTask t, {
+    VoidCallback? onOpenInTasks,
+  }) {
     if (t.isDeleted) {
       return Center(
         child: Column(
@@ -3610,6 +3472,7 @@ class _WorkspaceState extends State<Workspace>
           statusKey: boardKey(t),
           statusLabel: boardStatuses[boardKey(t)]!,
           onClose: () => Navigator.pop(ctx),
+          onOpenInTasks: onOpenInTasks,
           onEdit: s.canEdit(t) ? () => edit(t) : null,
           primaryAction: primary == null ? null : handoffButton(primary),
           statusActions: statusActions,

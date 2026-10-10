@@ -37,11 +37,13 @@ class TaskDetailToolbar extends StatelessWidget {
     this.primaryAction,
     this.onEdit,
     this.displayId,
+    this.onOpenInTasks,
   });
   final String taskId, title, statusKey, statusLabel;
   final String? displayId;
   final VoidCallback onClose;
   final VoidCallback? onEdit;
+  final VoidCallback? onOpenInTasks;
   final Widget? primaryAction;
   final List<TaskHandoffPlan> statusActions;
   final ValueChanged<TaskHandoffPlan> onStatusSelected;
@@ -279,6 +281,23 @@ class TaskDetailToolbar extends StatelessWidget {
                 ),
               ),
             ),
+            if (onOpenInTasks != null)
+              TextButton.icon(
+                key: ValueKey('task-open-in-workspace-$taskId'),
+                onPressed: onOpenInTasks,
+                icon: const Icon(Icons.north_east_rounded, size: 15),
+                label: Text(tr('작업으로 이동')),
+                style: TextButton.styleFrom(
+                  foregroundColor: WorkspaceUi.colors(context).muted,
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  minimumSize: const Size(0, 32),
+                  textStyle: const TextStyle(
+                    fontFamily: 'Malgun Gothic',
+                    fontSize: 11,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ),
             if (onEdit != null)
               IconButton(
                 key: ValueKey('task-edit-$taskId'),

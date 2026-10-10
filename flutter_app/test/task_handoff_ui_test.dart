@@ -89,7 +89,7 @@ void main() {
   }
 
   testWidgets(
-    'custom flow destination drives the card action and cancellation has no persistence effects',
+    'legacy automation cannot replace manual start and cancellation preserves work',
     (tester) async {
       final project = ProjectManifest.fromJson({
         ...fixtures.project.json,
@@ -126,13 +126,13 @@ void main() {
         ).json,
       });
       await mount(tester, project: project);
-      final action = handoff('advance', 'stage-preflight');
+      expect(handoff('advance', 'stage-preflight'), findsNothing);
+      final action = handoff('advance', 'doing');
       expect(action, findsOneWidget);
       expect(
-        find.descendant(of: action, matching: find.textContaining('자료 보완')),
+        find.descendant(of: action, matching: find.text('시작')),
         findsOneWidget,
       );
-      expect(handoff('advance', 'doing'), findsOneWidget);
       final before = persistedState();
       await tester.tap(action);
       await tester.pumpAndSettle();
@@ -140,7 +140,7 @@ void main() {
       expect(
         find.descendant(
           of: find.byType(IeumDialog),
-          matching: find.textContaining('자료 보완'),
+          matching: find.textContaining('진행중'),
         ),
         findsWidgets,
       );
@@ -218,6 +218,8 @@ void main() {
       await mount(tester);
       await tester.tap(find.byKey(const Key('view-list')));
       await tester.pumpAndSettle();
+      await tester.tap(find.byKey(Key('task-actions-more-${task.id}')));
+      await tester.pumpAndSettle();
       final action = find.byKey(
         Key(
           'task-handoff-list-${task.id}-advance-doing-${store.planHandoff(task, 'doing').routeId}',
@@ -225,7 +227,7 @@ void main() {
       );
       expect(action, findsOneWidget);
       expect(
-        find.descendant(of: action, matching: find.text('작업 시작')),
+        find.descendant(of: action, matching: find.textContaining('작업 시작')),
         findsOneWidget,
       );
       await tester.ensureVisible(action);
@@ -243,10 +245,9 @@ void main() {
   );
 
   testWidgets(
-    'a changed automation route invalidates an open final confirmation',
+    'a changed task revision invalidates an open final confirmation',
     (tester) async {
       await mount(tester);
-      final before = persistedState();
       await tester.tap(handoff('advance', 'doing'));
       await tester.pumpAndSettle();
       expect(
@@ -257,22 +258,10 @@ void main() {
             .onPressed,
         isNotNull,
       );
-      store.updateProject(
-        ProjectManifest.fromJson({
-          ...store.project!.json,
-          'workflowSheet': WorkflowSheet(
-            nodes: store.project!.workflowSheet!.nodes,
-            routes: store.project!.workflowSheet!.routes
-                .where(
-                  (r) =>
-                      store.project!.workflowSheet!.stageFor(r.from) != 'todo',
-                )
-                .toList(),
-          ).json,
-        }),
-      );
+      store.setTaskPinned(task.id, true, expectedVersion: task.version);
+      final before = persistedState();
       await tester.pumpAndSettle();
-      expect(find.text('작업 또는 프로젝트 설정이 변경되었습니다. 다시 확인하세요.'), findsOneWidget);
+      expect(find.text('작업 정보가 변경되었습니다. 창을 닫고 다시 시도하세요.'), findsOneWidget);
       expect(
         tester
             .widget<ButtonStyleButton>(
